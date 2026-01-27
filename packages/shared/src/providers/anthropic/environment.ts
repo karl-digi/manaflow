@@ -177,10 +177,41 @@ echo "[CMUX Stop Hook] Task completed for task run ID: \${CMUX_TASK_RUN_ID:-unkn
 # Always allow Claude to stop (don't block)
 exit 0`;
 
+  const notifyHookScript = `#!/bin/bash
+# Claude Code notification hook for cmux needs-input alerts
+LOG_FILE="/root/lifecycle/claude-notify.log"
+
+echo "[CMUX Notify Hook] Script started at $(date)" >> "$LOG_FILE"
+echo "[CMUX Notify Hook] CMUX_TASK_RUN_ID=\${CMUX_TASK_RUN_ID}" >> "$LOG_FILE"
+echo "[CMUX Notify Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
+
+if [ -n "\${CMUX_TASK_RUN_JWT}" ] && [ -n "\${CMUX_TASK_RUN_ID}" ] && [ -n "\${CMUX_CALLBACK_URL}" ]; then
+  (
+    echo "[CMUX Notify Hook] Calling notifications/agent-needs-input..." >> "$LOG_FILE"
+    curl -s -X POST "\${CMUX_CALLBACK_URL}/api/notifications/agent-needs-input" \\
+      -H "Content-Type: application/json" \\
+      -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+      -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\"}" \\
+      >> "$LOG_FILE" 2>&1
+    echo "" >> "$LOG_FILE"
+    echo "[CMUX Notify Hook] API call completed at $(date)" >> "$LOG_FILE"
+  ) &
+else
+  echo "[CMUX Notify Hook] Missing required env vars, skipping API call" >> "$LOG_FILE"
+fi
+
+# Always allow Claude to continue
+exit 0`;
+
   // Add stop hook script to files array (like Codex does) to ensure it's created before git init
   files.push({
     destinationPath: `${claudeLifecycleDir}/stop-hook.sh`,
     contentBase64: Buffer.from(stopHookScript).toString("base64"),
+    mode: "755",
+  });
+  files.push({
+    destinationPath: `${claudeLifecycleDir}/notify-hook.sh`,
+    contentBase64: Buffer.from(notifyHookScript).toString("base64"),
     mode: "755",
   });
 
@@ -229,7 +260,7 @@ exit 0`;
           hooks: [
             {
               type: "command",
-              command: `${claudeLifecycleDir}/stop-hook.sh`,
+              command: `${claudeLifecycleDir}/notify-hook.sh`,
             },
           ],
         },

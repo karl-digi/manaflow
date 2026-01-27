@@ -7,7 +7,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
-import { CheckCircle, Circle, XCircle } from "lucide-react";
+import { CheckCircle, Circle, MessageCircle, XCircle } from "lucide-react";
 import { useCallback, type MouseEvent } from "react";
 
 // Type for notifications from the API
@@ -17,7 +17,7 @@ interface NotificationData {
   taskRunId?: Id<"taskRuns">;
   teamId: string;
   userId: string;
-  type: "run_completed" | "run_failed";
+  type: "run_completed" | "run_failed" | "run_needs_input";
   message?: string;
   createdAt: number;
   isUnread: boolean;
@@ -139,8 +139,25 @@ function NotificationItem({
   onMarkAsRead: (taskRunId: Id<"taskRuns"> | undefined) => void;
   onMarkAsUnread: (taskRunId: Id<"taskRuns"> | undefined) => void;
 }) {
-  const isCompleted = notification.type === "run_completed";
-  const Icon = isCompleted ? CheckCircle : XCircle;
+  const notificationVariant =
+    notification.type === "run_completed"
+      ? {
+          label: "Run completed",
+          icon: CheckCircle,
+          colorClass: "text-green-600 dark:text-green-500",
+        }
+      : notification.type === "run_failed"
+        ? {
+            label: "Run failed",
+            icon: XCircle,
+            colorClass: "text-red-600 dark:text-red-500",
+          }
+        : {
+            label: "Input needed",
+            icon: MessageCircle,
+            colorClass: "text-amber-600 dark:text-amber-400",
+          };
+  const Icon = notificationVariant.icon;
   const isUnread = notification.isUnread;
 
   const taskName =
@@ -151,6 +168,8 @@ function NotificationItem({
   const truncatedTaskName = taskName.length >= 60 ? `${taskName}...` : taskName;
 
   const timeAgo = getTimeAgo(notification.createdAt);
+  const detailText =
+    notification.message?.trim() || truncatedTaskName;
 
   const handleClick = () => {
     // Only mark as read if currently unread
@@ -207,9 +226,7 @@ function NotificationItem({
         <div
           className={clsx(
             "mt-0.5 flex-shrink-0",
-            isCompleted
-              ? "text-green-600 dark:text-green-500"
-              : "text-red-600 dark:text-red-500"
+            notificationVariant.colorClass
           )}
         >
           <Icon className="size-5" />
@@ -224,7 +241,7 @@ function NotificationItem({
                   : "font-medium text-neutral-700 dark:text-neutral-300"
               )}
             >
-              {isCompleted ? "Run completed" : "Run failed"}
+              {notificationVariant.label}
             </p>
             <span className="text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0">
               {timeAgo}
@@ -238,7 +255,7 @@ function NotificationItem({
                 : "text-neutral-600 dark:text-neutral-400"
             )}
           >
-            {truncatedTaskName}
+            {detailText}
           </p>
           {notification.taskRun?.agentName && (
             <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-1">

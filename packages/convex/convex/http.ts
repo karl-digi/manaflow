@@ -6,7 +6,7 @@ import {
   crownWorkerFinalize,
   crownWorkerComplete,
 } from "./crown_http";
-import { agentStopped } from "./notifications_http";
+import { agentNeedsInput, agentStopped } from "./notifications_http";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./screenshots_http";
 import {
   codeReviewFileCallback,
@@ -82,6 +82,12 @@ http.route({
   path: "/api/notifications/agent-stopped",
   method: "POST",
   handler: agentStopped,
+});
+
+http.route({
+  path: "/api/notifications/agent-needs-input",
+  method: "POST",
+  handler: agentNeedsInput,
 });
 
 http.route({
