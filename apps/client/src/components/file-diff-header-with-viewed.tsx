@@ -124,9 +124,7 @@ export function FileDiffHeaderWithViewed({
           }}
           className={cn(
             "flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] font-medium transition-colors",
-            isViewed
-              ? "text-emerald-700 dark:text-emerald-300"
-              : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+            "text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70"
           )}
           title={isViewed ? "Mark as not viewed" : "Mark as viewed"}
         >
@@ -134,7 +132,7 @@ export function FileDiffHeaderWithViewed({
             className={cn(
               "h-3.5 w-3.5 flex items-center justify-center rounded-[3px] border transition-colors",
               isViewed
-                ? "bg-emerald-500 border-emerald-500 text-white"
+                ? "border-neutral-400 dark:border-neutral-500 text-neutral-500 dark:text-neutral-400"
                 : "border-neutral-300 dark:border-neutral-600"
             )}
           >

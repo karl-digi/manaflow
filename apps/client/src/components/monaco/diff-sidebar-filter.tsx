@@ -318,7 +318,7 @@ const FileTreeNavigator = memo(function FileTreeNavigatorComponent({
               className={cn(
                 "flex-shrink-0 h-4 w-4 flex items-center justify-center rounded-[4px] border transition-colors mr-2",
                 isViewed
-                  ? "bg-emerald-500 border-emerald-500 text-white"
+                  ? "border-neutral-400 dark:border-neutral-500 text-neutral-500 dark:text-neutral-400"
                   : "border-neutral-300 dark:border-neutral-600 hover:border-neutral-400 dark:hover:border-neutral-500"
               )}
               title={isViewed ? "Mark as not viewed" : "Mark as viewed"}
