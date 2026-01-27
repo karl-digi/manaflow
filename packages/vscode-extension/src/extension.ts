@@ -22,6 +22,22 @@ let isSetupComplete = false;
 let fileWatcher: vscode.FileSystemWatcher | null = null;
 let refreshDebounceTimer: NodeJS.Timeout | null = null;
 
+type GitRepository = {
+  rootUri: vscode.Uri;
+};
+
+type GitApi = {
+  repositories: GitRepository[];
+  toGitUri: (uri: vscode.Uri, ref: string) => vscode.Uri;
+};
+
+type GitExtensionExports = {
+  getAPI: (version: number) => GitApi;
+};
+
+const GIT_REPO_SCAN_MAX_ATTEMPTS = 20;
+const GIT_REPO_SCAN_DELAY_MS = 1000;
+
 function log(message: string, ...args: unknown[]) {
   const safeStringify = (value: unknown): string => {
     if (value instanceof Error) {
@@ -131,39 +147,69 @@ async function resolveMergeBase(
   return mergeBase && /^[0-9a-f]{7,40}$/i.test(mergeBase) ? mergeBase : null;
 }
 
-// Track the current multi-diff editor URI
-let _currentMultiDiffUri: string | null = null;
-
-async function openMultiDiffEditor(
-  baseRef?: string,
-  useMergeBase: boolean = true
-) {
-  log("=== openMultiDiffEditor called ===");
-  log("baseRef:", baseRef);
-  log("useMergeBase:", useMergeBase);
-
-  // Get the Git extension and ensure it's activated
-  const gitExtension = vscode.extensions.getExtension("vscode.git");
+async function getGitApi(): Promise<GitApi | null> {
+  const gitExtension =
+    vscode.extensions.getExtension<GitExtensionExports>("vscode.git");
   if (!gitExtension) {
     vscode.window.showErrorMessage("Git extension not found");
-    return;
+    return null;
   }
 
-  // Wait for git extension to be activated if it isn't already
   if (!gitExtension.isActive) {
     log("Waiting for git extension to activate...");
     await gitExtension.activate();
     log("Git extension activated");
   }
 
-  const git = gitExtension.exports;
-  const api = git.getAPI(1);
+  return gitExtension.exports.getAPI(1);
+}
 
-  // Get the first repository (or you can select a specific one)
-  const repository = api.repositories[0];
+async function waitForGitRepository(
+  api: GitApi,
+  maxAttempts: number = GIT_REPO_SCAN_MAX_ATTEMPTS,
+  delayMs: number = GIT_REPO_SCAN_DELAY_MS
+): Promise<GitRepository | null> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const repository = api.repositories[0];
+    if (repository) {
+      if (attempt > 1) {
+        log(`Git repository detected after ${attempt} attempts`);
+      }
+      return repository;
+    }
+
+    log(
+      `Waiting for Git repository scan... (attempt ${attempt}/${maxAttempts})`
+    );
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  log(`Git repository not detected after ${maxAttempts} attempts`);
+  return null;
+}
+
+// Track the current multi-diff editor URI
+let _currentMultiDiffUri: string | null = null;
+
+async function openMultiDiffEditor(
+  baseRef?: string,
+  useMergeBase: boolean = true
+): Promise<GitRepository | null> {
+  log("=== openMultiDiffEditor called ===");
+  log("baseRef:", baseRef);
+  log("useMergeBase:", useMergeBase);
+
+  const api = await getGitApi();
+  if (!api) {
+    return null;
+  }
+
+  const repository = await waitForGitRepository(api);
   if (!repository) {
     vscode.window.showErrorMessage("No Git repository found");
-    return;
+    return null;
   }
 
   const repoPath = repository.rootUri.fsPath;
@@ -271,6 +317,7 @@ async function openMultiDiffEditor(
       );
     }
   } catch (error: unknown) {
+    console.error("[cmux] Error opening diff:", error);
     log("Error opening diff:", error);
     if (error instanceof Error) {
       log("Error stack:", error.stack);
@@ -280,7 +327,10 @@ async function openMultiDiffEditor(
     } else {
       vscode.window.showErrorMessage("Failed to open changes");
     }
+    return null;
   }
+
+  return repository;
 }
 
 async function waitForTmuxSession(
@@ -562,47 +612,40 @@ export function activate(context: vscode.ExtensionContext) {
   const openAllChangesVsBase = vscode.commands.registerCommand(
     "cmux.git.openAllChangesAgainstBase",
     async () => {
-      await openMultiDiffEditor(undefined, true);
+      const repository = await openMultiDiffEditor(undefined, true);
 
       // Set up file watcher for auto-refresh if not already set up
-      if (!fileWatcher && vscode.workspace.workspaceFolders) {
-        const gitExtension = vscode.extensions.getExtension("vscode.git");
-        if (gitExtension) {
-          const git = gitExtension.exports;
-          const api = git.getAPI(1);
-          const repository = api.repositories[0];
+      if (!fileWatcher && vscode.workspace.workspaceFolders && repository) {
+        const repoPath = repository.rootUri.fsPath;
+        log("Setting up file watcher for auto-refresh");
 
-          if (repository) {
-            const repoPath = repository.rootUri.fsPath;
-            log("Setting up file watcher for auto-refresh");
+        // Watch all files in the repository
+        const pattern = new vscode.RelativePattern(repoPath, "**/*");
+        fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
 
-            // Watch all files in the repository
-            const pattern = new vscode.RelativePattern(repoPath, "**/*");
-            fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-            // Debounced refresh function
-            const refreshDiffView = () => {
-              // Clear existing timer
-              if (refreshDebounceTimer) {
-                clearTimeout(refreshDebounceTimer);
-              }
-
-              // Set new timer to refresh after 500ms of no changes
-              refreshDebounceTimer = setTimeout(async () => {
-                log("Auto-refreshing diff view due to file changes");
-                await openMultiDiffEditor(undefined, true);
-              }, 500);
-            };
-
-            // Watch for file changes
-            fileWatcher.onDidChange(refreshDiffView);
-            fileWatcher.onDidCreate(refreshDiffView);
-            fileWatcher.onDidDelete(refreshDiffView);
-
-            // Clean up watcher on disposal
-            context.subscriptions.push(fileWatcher);
+        // Debounced refresh function
+        const refreshDiffView = () => {
+          // Clear existing timer
+          if (refreshDebounceTimer) {
+            clearTimeout(refreshDebounceTimer);
           }
-        }
+
+          // Set new timer to refresh after 500ms of no changes
+          refreshDebounceTimer = setTimeout(async () => {
+            log("Auto-refreshing diff view due to file changes");
+            await openMultiDiffEditor(undefined, true);
+          }, 500);
+        };
+
+        // Watch for file changes
+        fileWatcher.onDidChange(refreshDiffView);
+        fileWatcher.onDidCreate(refreshDiffView);
+        fileWatcher.onDidDelete(refreshDiffView);
+
+        // Clean up watcher on disposal
+        context.subscriptions.push(fileWatcher);
+      } else if (!repository) {
+        log("Skipping file watcher setup: no Git repository found");
       }
     }
   );
