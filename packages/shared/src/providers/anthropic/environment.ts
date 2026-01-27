@@ -128,53 +128,81 @@ export async function getClaudeEnvironment(
   );
 
   // Create the stop hook script in /root/lifecycle (outside git repo)
+  // This script accepts an optional argument: --notification for when it's triggered by the Notification hook
+  // When triggered by Notification hook, it means Claude is asking a question (pending user input)
   const stopHookScript = `#!/bin/bash
-# Claude Code stop hook for cmux task completion detection
-# This script is called when Claude Code finishes responding
+# Claude Code hook for cmux task completion and notification detection
+# This script is called when Claude Code finishes responding or sends a notification
+# Usage: stop-hook.sh [--notification]
+# --notification: Indicates this was triggered by Claude asking a question
 
 LOG_FILE="/root/lifecycle/claude-hook.log"
+IS_NOTIFICATION=false
 
-echo "[CMUX Stop Hook] Script started at $(date)" >> "$LOG_FILE"
-echo "[CMUX Stop Hook] CMUX_TASK_RUN_ID=\${CMUX_TASK_RUN_ID}" >> "$LOG_FILE"
-echo "[CMUX Stop Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
+# Check for --notification flag
+for arg in "$@"; do
+  if [ "$arg" = "--notification" ]; then
+    IS_NOTIFICATION=true
+  fi
+done
+
+echo "[CMUX Hook] Script started at $(date)" >> "$LOG_FILE"
+echo "[CMUX Hook] IS_NOTIFICATION=\${IS_NOTIFICATION}" >> "$LOG_FILE"
+echo "[CMUX Hook] CMUX_TASK_RUN_ID=\${CMUX_TASK_RUN_ID}" >> "$LOG_FILE"
+echo "[CMUX Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
 
 if [ -n "\${CMUX_TASK_RUN_JWT}" ] && [ -n "\${CMUX_TASK_RUN_ID}" ] && [ -n "\${CMUX_CALLBACK_URL}" ]; then
   (
-    # Call crown/complete for status updates
-    echo "[CMUX Stop Hook] Calling crown/complete..." >> "$LOG_FILE"
-    curl -s -X POST "\${CMUX_CALLBACK_URL}/api/crown/complete" \\
-      -H "Content-Type: application/json" \\
-      -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
-      -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\", \\"exitCode\\": 0}" \\
-      >> "$LOG_FILE" 2>&1
-    echo "" >> "$LOG_FILE"
+    if [ "\$IS_NOTIFICATION" = "false" ]; then
+      # Only call crown/complete for Stop hook (actual completion), not for notifications
+      echo "[CMUX Hook] Calling crown/complete..." >> "$LOG_FILE"
+      curl -s -X POST "\${CMUX_CALLBACK_URL}/api/crown/complete" \\
+        -H "Content-Type: application/json" \\
+        -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+        -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\", \\"exitCode\\": 0}" \\
+        >> "$LOG_FILE" 2>&1
+      echo "" >> "$LOG_FILE"
+    fi
 
     # Call notifications endpoint for user notification
-    echo "[CMUX Stop Hook] Calling notifications/agent-stopped..." >> "$LOG_FILE"
-    curl -s -X POST "\${CMUX_CALLBACK_URL}/api/notifications/agent-stopped" \\
-      -H "Content-Type: application/json" \\
-      -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
-      -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\"}" \\
-      >> "$LOG_FILE" 2>&1
+    # Pass isAskingQuestion=true when triggered by Notification hook (Claude asking a question)
+    echo "[CMUX Hook] Calling notifications/agent-stopped (isAskingQuestion=\$IS_NOTIFICATION)..." >> "$LOG_FILE"
+    if [ "\$IS_NOTIFICATION" = "true" ]; then
+      curl -s -X POST "\${CMUX_CALLBACK_URL}/api/notifications/agent-stopped" \\
+        -H "Content-Type: application/json" \\
+        -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+        -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\", \\"isAskingQuestion\\": true}" \\
+        >> "$LOG_FILE" 2>&1
+    else
+      curl -s -X POST "\${CMUX_CALLBACK_URL}/api/notifications/agent-stopped" \\
+        -H "Content-Type: application/json" \\
+        -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+        -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\"}" \\
+        >> "$LOG_FILE" 2>&1
+    fi
     echo "" >> "$LOG_FILE"
-    echo "[CMUX Stop Hook] API calls completed at $(date)" >> "$LOG_FILE"
+    echo "[CMUX Hook] API calls completed at $(date)" >> "$LOG_FILE"
   ) &
 else
-  echo "[CMUX Stop Hook] Missing required env vars, skipping API calls" >> "$LOG_FILE"
+  echo "[CMUX Hook] Missing required env vars, skipping API calls" >> "$LOG_FILE"
 fi
 
-# Write completion marker for backward compatibility
-if [ -n "\${CMUX_TASK_RUN_ID}" ]; then
+# Write completion marker for backward compatibility (only for Stop hook, not notifications)
+if [ "\$IS_NOTIFICATION" = "false" ] && [ -n "\${CMUX_TASK_RUN_ID}" ]; then
   COMPLETE_MARKER="/root/lifecycle/claude-complete-\${CMUX_TASK_RUN_ID}"
-  echo "[CMUX Stop Hook] Creating completion marker at \${COMPLETE_MARKER}" >> "$LOG_FILE"
+  echo "[CMUX Hook] Creating completion marker at \${COMPLETE_MARKER}" >> "$LOG_FILE"
   mkdir -p "$(dirname "$COMPLETE_MARKER")"
   touch "$COMPLETE_MARKER"
 fi
 
 # Also log to stderr for visibility
-echo "[CMUX Stop Hook] Task completed for task run ID: \${CMUX_TASK_RUN_ID:-unknown}" >&2
+if [ "\$IS_NOTIFICATION" = "true" ]; then
+  echo "[CMUX Hook] Claude asking question for task run ID: \${CMUX_TASK_RUN_ID:-unknown}" >&2
+else
+  echo "[CMUX Hook] Task completed for task run ID: \${CMUX_TASK_RUN_ID:-unknown}" >&2
+fi
 
-# Always allow Claude to stop (don't block)
+# Always allow Claude to continue (don't block)
 exit 0`;
 
   // Add stop hook script to files array (like Codex does) to ensure it's created before git init
@@ -229,7 +257,8 @@ exit 0`;
           hooks: [
             {
               type: "command",
-              command: `${claudeLifecycleDir}/stop-hook.sh`,
+              // Pass --notification flag to indicate Claude is asking a question
+              command: `${claudeLifecycleDir}/stop-hook.sh --notification`,
             },
           ],
         },

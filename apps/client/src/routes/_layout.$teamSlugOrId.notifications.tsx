@@ -7,7 +7,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
-import { CheckCircle, Circle, XCircle } from "lucide-react";
+import { CheckCircle, Circle, HelpCircle, XCircle } from "lucide-react";
 import { useCallback, type MouseEvent } from "react";
 
 // Type for notifications from the API
@@ -17,7 +17,7 @@ interface NotificationData {
   taskRunId?: Id<"taskRuns">;
   teamId: string;
   userId: string;
-  type: "run_completed" | "run_failed";
+  type: "run_completed" | "run_failed" | "run_pending";
   message?: string;
   createdAt: number;
   isUnread: boolean;
@@ -140,7 +140,8 @@ function NotificationItem({
   onMarkAsUnread: (taskRunId: Id<"taskRuns"> | undefined) => void;
 }) {
   const isCompleted = notification.type === "run_completed";
-  const Icon = isCompleted ? CheckCircle : XCircle;
+  const isPending = notification.type === "run_pending";
+  const Icon = isCompleted ? CheckCircle : isPending ? HelpCircle : XCircle;
   const isUnread = notification.isUnread;
 
   const taskName =
@@ -209,7 +210,9 @@ function NotificationItem({
             "mt-0.5 flex-shrink-0",
             isCompleted
               ? "text-green-600 dark:text-green-500"
-              : "text-red-600 dark:text-red-500"
+              : isPending
+                ? "text-amber-600 dark:text-amber-500"
+                : "text-red-600 dark:text-red-500"
           )}
         >
           <Icon className="size-5" />
@@ -224,7 +227,7 @@ function NotificationItem({
                   : "font-medium text-neutral-700 dark:text-neutral-300"
               )}
             >
-              {isCompleted ? "Run completed" : "Run failed"}
+              {isCompleted ? "Run completed" : isPending ? "Waiting for input" : "Run failed"}
             </p>
             <span className="text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0">
               {timeAgo}

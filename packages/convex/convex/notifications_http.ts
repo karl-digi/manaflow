@@ -15,6 +15,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const AgentStoppedRequestSchema = z.object({
   taskRunId: typedZid("taskRuns"),
+  isAskingQuestion: z.boolean().optional(), // True when agent is waiting for user input
 });
 
 /**
@@ -97,6 +98,7 @@ export const agentStopped = httpAction(async (ctx, req) => {
       taskId: taskRun.taskId,
       teamId: taskRun.teamId,
       userId: taskRun.userId,
+      isAskingQuestion: validation.data.isAskingQuestion,
     }
   );
 
@@ -118,6 +120,7 @@ export const createAgentStoppedNotification = internalMutation({
     taskId: v.id("tasks"),
     teamId: v.string(),
     userId: v.string(),
+    isAskingQuestion: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -135,8 +138,19 @@ export const createAgentStoppedNotification = internalMutation({
     if (!existingNotifications) {
       // Fetch the task run to determine the notification type based on actual status
       const taskRun = await ctx.db.get(args.taskRunId);
-      const notificationType =
-        taskRun?.status === "completed" ? "run_completed" : "run_failed";
+
+      // Determine notification type:
+      // - If agent is asking a question and run is still active -> run_pending
+      // - If status is "completed" -> run_completed
+      // - Otherwise -> run_failed
+      let notificationType: "run_completed" | "run_failed" | "run_pending";
+      if (args.isAskingQuestion && taskRun?.status === "running") {
+        notificationType = "run_pending";
+      } else if (taskRun?.status === "completed") {
+        notificationType = "run_completed";
+      } else {
+        notificationType = "run_failed";
+      }
 
       await ctx.db.insert("taskNotifications", {
         taskId: args.taskId,

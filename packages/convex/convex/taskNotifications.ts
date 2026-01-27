@@ -315,7 +315,7 @@ export const createInternal = internalMutation({
     taskRunId: v.optional(v.id("taskRuns")),
     teamId: v.string(),
     userId: v.string(),
-    type: v.union(v.literal("run_completed"), v.literal("run_failed")),
+    type: v.union(v.literal("run_completed"), v.literal("run_failed"), v.literal("run_pending")),
     message: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
