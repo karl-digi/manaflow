@@ -236,13 +236,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     <div
       ref={containerRef}
       data-onboarding="sidebar"
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
+      className="cmux-sidebar relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh pr-1 w-[75vw] snap-start snap-always md:snap-align-none"
       style={
         {
           display: isHidden ? "none" : "flex",
-          width: undefined,
-          minWidth: undefined,
-          maxWidth: undefined,
           userSelect: isResizing ? ("none" as const) : undefined,
           "--sidebar-width": `${width}px`,
         } as CSSProperties

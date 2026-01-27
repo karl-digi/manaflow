@@ -514,10 +514,12 @@ pre,
 
 /* Sidebar responsive width */
 @media (min-width: 768px) {
-  [style*="--sidebar-width"] {
-    width: var(--sidebar-width) !important;
-    min-width: var(--sidebar-width) !important;
-    max-width: var(--sidebar-width) !important;
+  .cmux-sidebar {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+    max-width: var(--sidebar-width);
+    flex-grow: 0;
+    flex-shrink: 0;
   }
 }
 
