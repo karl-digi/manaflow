@@ -686,7 +686,7 @@ const ReviewProgressIndicator = memo(function ReviewProgressIndicator({
     processedFileCount === null || pendingFileCount > 0;
 
   return (
-    <div className="border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+    <div className="px-3 py-3 text-xs text-neutral-600 dark:text-neutral-300">
       <div className="flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         <span>Review progress</span>
         <span>{Math.round(progressPercent)}%</span>
@@ -797,7 +797,7 @@ function HeatmapThresholdControl({
   );
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+    <div className="px-3 py-3 text-sm text-neutral-700 dark:text-neutral-200">
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={sliderId} className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
           &ldquo;Should review&rdquo; threshold
@@ -2332,7 +2332,7 @@ export function GitDiffHeatmapReviewViewer({
                 ) : null}
               </div>
               {/* Scrollable content below - only the file tree */}
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-1">
+              <div className="flex-1 min-h-0 overflow-y-auto py-1">
                 <FileTreeNavigator
                   nodes={fileTree}
                   activePath={activeAnchor}
