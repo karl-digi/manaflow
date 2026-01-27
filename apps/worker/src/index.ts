@@ -45,6 +45,7 @@ import { checkDockerReadiness } from "./checkDockerReadiness";
 import { detectTerminalIdle } from "./detectTerminalIdle";
 import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
+import { CloudToLocalSyncManager } from "./cloudToLocalSync";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
@@ -372,6 +373,9 @@ let mainServerSocket: Socket<
 // Track active file watchers by taskRunId
 const activeFileWatchers: Map<string, FileWatcher> = new Map();
 
+// Cloud-to-local sync manager (syncs cloud workspace changes back to local)
+let cloudToLocalSyncManager: CloudToLocalSyncManager | null = null;
+
 // Queue for pending events when mainServerSocket is not connected
 interface PendingEvent<
   K extends WorkerToServerEventNames = WorkerToServerEventNames,
@@ -416,6 +420,11 @@ function emitToMainServer<K extends WorkerToServerEventNames>(
     });
   }
 }
+
+// Initialize cloud-to-local sync manager
+cloudToLocalSyncManager = new CloudToLocalSyncManager((data) => {
+  emitToMainServer("worker:sync-files", data);
+});
 
 /**
  * Send all pending events to the main server
@@ -1079,6 +1088,13 @@ managementIO.on("connection", (socket) => {
       const validated = WorkerUploadFilesSchema.parse(data);
       const workspaceRoot = "/root/workspace";
 
+      // Mark files as synced from local BEFORE writing to prevent echo loops
+      // This tells cloud-to-local sync to ignore these files when detected
+      if (cloudToLocalSyncManager) {
+        const relativePaths = validated.files.map((f) => f.destinationPath);
+        cloudToLocalSyncManager.markSyncedFromLocalAllSessions(relativePaths);
+      }
+
       for (const file of validated.files) {
         const action = file.action ?? "write";
         const resolvedPath = path.resolve(workspaceRoot, file.destinationPath);
@@ -1208,6 +1224,37 @@ managementIO.on("connection", (socket) => {
       watcher.stop();
       activeFileWatchers.delete(taskRunId);
       log("INFO", `[Worker] Stopped file watcher for task ${taskRunId}`);
+    }
+  });
+
+  // Handle cloud-to-local sync start request
+  socket.on("worker:start-cloud-sync", async (data) => {
+    const { taskRunId, workspacePath } = data;
+
+    if (!taskRunId || !workspacePath) {
+      log("ERROR", "Missing taskRunId or workspacePath for cloud sync");
+      return;
+    }
+
+    if (cloudToLocalSyncManager) {
+      await cloudToLocalSyncManager.startSync({
+        taskRunId,
+        workspacePath,
+      });
+      log(
+        "INFO",
+        `[Worker] Started cloud-to-local sync for task ${taskRunId} at ${workspacePath}`
+      );
+    }
+  });
+
+  // Handle cloud-to-local sync stop request
+  socket.on("worker:stop-cloud-sync", async (data) => {
+    const { taskRunId } = data;
+
+    if (cloudToLocalSyncManager) {
+      await cloudToLocalSyncManager.stopSync(taskRunId);
+      log("INFO", `[Worker] Stopped cloud-to-local sync for task ${taskRunId}`);
     }
   });
 

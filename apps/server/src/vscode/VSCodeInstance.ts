@@ -173,6 +173,14 @@ export abstract class VSCodeInstance extends EventEmitter {
         this.emit("file-changes", data);
       });
 
+      this.workerSocket.on("worker:sync-files", (data) => {
+        dockerLogger.info(
+          `[VSCodeInstance ${this.instanceId}] Sync files received:`,
+          { taskId: data.taskRunId, fileCount: data.files.length }
+        );
+        this.emit("sync-files", data);
+      });
+
       this.workerSocket.on("worker:error", (data) => {
         dockerLogger.error(
           `[VSCodeInstance ${this.instanceId}] Worker error:`,
@@ -218,6 +226,40 @@ export abstract class VSCodeInstance extends EventEmitter {
         `[VSCodeInstance ${this.instanceId}] Stopping file watch`
       );
       this.workerSocket.emit("worker:stop-file-watch", {
+        taskRunId: this.taskRunId,
+      });
+    }
+  }
+
+  /**
+   * Start cloud-to-local sync: worker watches files and sends changes back to server.
+   */
+  startCloudSync(): void {
+    if (this.workerSocket && this.workerConnected) {
+      const containerWorkspace = "/root/workspace";
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Starting cloud-to-local sync at ${containerWorkspace}`
+      );
+      this.workerSocket.emit("worker:start-cloud-sync", {
+        taskRunId: this.taskRunId,
+        workspacePath: containerWorkspace,
+      });
+    } else {
+      dockerLogger.warn(
+        `[VSCodeInstance ${this.instanceId}] Cannot start cloud sync - worker not connected`
+      );
+    }
+  }
+
+  /**
+   * Stop cloud-to-local sync.
+   */
+  stopCloudSync(): void {
+    if (this.workerSocket && this.workerConnected) {
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Stopping cloud-to-local sync`
+      );
+      this.workerSocket.emit("worker:stop-cloud-sync", {
         taskRunId: this.taskRunId,
       });
     }

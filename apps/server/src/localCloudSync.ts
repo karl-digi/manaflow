@@ -1,6 +1,7 @@
 import type { Id } from "@cmux/convex/dataModel";
 import type {
   ServerToWorkerEvents,
+  WorkerSyncFiles,
   WorkerToServerEvents,
   WorkerUploadFiles,
 } from "@cmux/shared";
@@ -130,6 +131,8 @@ class LocalCloudSyncSession {
   private lastSyncTime: number | null = null;
   private lastSyncFileCount = 0;
   private lastSyncError: string | null = null;
+  // Track files recently written by cloud sync to avoid echo loops
+  private recentlySyncedFromCloud = new Set<string>();
   private readonly onWorkerConnected = () => {
     this.scheduleFlush(250);
   };
@@ -284,6 +287,18 @@ class LocalCloudSyncSession {
     }
   }
 
+  /**
+   * Mark a file as recently synced from cloud, so we don't echo it back.
+   */
+  markSyncedFromCloud(relativePath: string): void {
+    const normalized = normalizeRelativePath(relativePath);
+    this.recentlySyncedFromCloud.add(normalized);
+    // Clear after 3 seconds to allow future human edits
+    setTimeout(() => {
+      this.recentlySyncedFromCloud.delete(normalized);
+    }, 3000);
+  }
+
   private recordChange(filePath: string, action: SyncAction): void {
     if (this.disposed) {
       return;
@@ -293,6 +308,15 @@ class LocalCloudSyncSession {
       return;
     }
     const normalizedRel = normalizeRelativePath(rel);
+
+    // Skip if this change was caused by cloud->local sync (avoid echo loop)
+    if (this.recentlySyncedFromCloud.has(normalizedRel)) {
+      serverLogger.debug(
+        `[localCloudSync] Ignoring echo for ${normalizedRel} (recently synced from cloud)`
+      );
+      return;
+    }
+
     const absolutePath = path.join(this.localPath, rel);
     this.pending.set(normalizedRel, {
       action,
@@ -504,7 +528,25 @@ class LocalCloudSyncSession {
         continue;
       }
 
-      const content = await fs.readFile(entry.absolutePath);
+      let content: Buffer;
+      try {
+        content = await fs.readFile(entry.absolutePath);
+      } catch (readError) {
+        // File may have been deleted or become unreadable between lstat and readFile
+        console.error(
+          `[localCloudSync] Failed to read file ${entry.absolutePath}, treating as delete`,
+          readError
+        );
+        batch.push({
+          destinationPath: entry.relativePath,
+          action: "delete",
+        });
+        if (batch.length >= MAX_BATCH_FILES) {
+          await flushBatch();
+        }
+        continue;
+      }
+
       const estimatedSize = stats.size;
       if (
         batch.length > 0 &&
@@ -530,6 +572,8 @@ class LocalCloudSyncSession {
 
 export class LocalCloudSyncManager {
   private sessions = new Map<string, LocalCloudSyncSession>();
+  // Reverse lookup: cloudTaskRunId -> localPath
+  private cloudToLocalMap = new Map<string, string>();
 
   async startSync({
     localWorkspacePath,
@@ -561,6 +605,7 @@ export class LocalCloudSyncManager {
       ignoreMatcher,
     });
     this.sessions.set(resolvedPath, session);
+    this.cloudToLocalMap.set(cloudTaskRunId, resolvedPath);
 
     try {
       await session.start();
@@ -572,6 +617,7 @@ export class LocalCloudSyncManager {
       serverLogger.error("[localCloudSync] Failed to start sync", error);
       session.stop();
       this.sessions.delete(resolvedPath);
+      this.cloudToLocalMap.delete(cloudTaskRunId);
     }
   }
 
@@ -579,8 +625,10 @@ export class LocalCloudSyncManager {
     const resolvedPath = path.resolve(localWorkspacePath);
     const session = this.sessions.get(resolvedPath);
     if (session) {
+      const cloudId = session.getStatus().cloudTaskRunId;
       session.stop();
       this.sessions.delete(resolvedPath);
+      this.cloudToLocalMap.delete(cloudId);
       serverLogger.info(`[localCloudSync] Stopped sync for ${resolvedPath}`);
     }
   }
@@ -631,4 +679,93 @@ export class LocalCloudSyncManager {
       status: session.getStatus(),
     }));
   }
+
+  /**
+   * Handle incoming file sync from cloud worker.
+   * Writes files from the cloud workspace to the local workspace.
+   */
+  async handleCloudSync(data: WorkerSyncFiles): Promise<void> {
+    const { taskRunId, files, timestamp } = data;
+
+    // Find the local path for this cloud task run
+    const localPath = this.cloudToLocalMap.get(taskRunId);
+    if (!localPath) {
+      serverLogger.warn(
+        `[localCloudSync] No local workspace found for cloud taskRun ${taskRunId}`
+      );
+      return;
+    }
+
+    // Get the session so we can mark files as synced from cloud
+    const session = this.sessions.get(localPath);
+
+    serverLogger.info(
+      `[localCloudSync] Receiving ${files.length} files from cloud ${taskRunId} -> ${localPath}`
+    );
+
+    for (const file of files) {
+      const absolutePath = path.join(localPath, file.relativePath);
+
+      // Mark this file as recently synced from cloud BEFORE writing
+      // This prevents the file watcher from echoing it back to the cloud
+      if (session) {
+        session.markSyncedFromCloud(file.relativePath);
+      }
+
+      // Security: ensure path is within workspace
+      const resolvedPath = path.resolve(absolutePath);
+      if (!resolvedPath.startsWith(localPath)) {
+        serverLogger.warn(
+          `[localCloudSync] Path traversal attempt blocked: ${file.relativePath}`
+        );
+        continue;
+      }
+
+      try {
+        if (file.action === "delete") {
+          try {
+            await fs.unlink(absolutePath);
+            serverLogger.debug(
+              `[localCloudSync] Deleted ${file.relativePath}`
+            );
+          } catch (error) {
+            // File may already be deleted
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+              throw error;
+            }
+          }
+        } else if (file.action === "write" && file.contentBase64) {
+          // Ensure directory exists
+          const dir = path.dirname(absolutePath);
+          await fs.mkdir(dir, { recursive: true });
+
+          // Write file
+          const content = Buffer.from(file.contentBase64, "base64");
+          await fs.writeFile(absolutePath, content);
+
+          // Set file mode if provided
+          if (file.mode) {
+            const mode = parseInt(file.mode, 8);
+            await fs.chmod(absolutePath, mode);
+          }
+
+          serverLogger.debug(
+            `[localCloudSync] Wrote ${file.relativePath} (${content.length} bytes)`
+          );
+        }
+      } catch (error) {
+        serverLogger.error(
+          `[localCloudSync] Failed to sync file ${file.relativePath}:`,
+          error
+        );
+      }
+    }
+
+    serverLogger.info(
+      `[localCloudSync] Cloud sync complete: ${files.length} files from ${taskRunId} at ${new Date(timestamp).toISOString()}`
+    );
+  }
 }
+
+// Singleton instance - exported to avoid circular dependency issues
+export const localCloudSyncManager = new LocalCloudSyncManager();

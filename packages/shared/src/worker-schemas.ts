@@ -318,6 +318,13 @@ export interface ServerToWorkerEvents {
     worktreePath: string;
   }) => void;
   "worker:stop-file-watch": (data: { taskRunId: Id<"taskRuns"> }) => void;
+
+  // Cloud-to-local sync: start/stop syncing cloud changes back to local
+  "worker:start-cloud-sync": (data: {
+    taskRunId: Id<"taskRuns">;
+    workspacePath: string;
+  }) => void;
+  "worker:stop-cloud-sync": (data: { taskRunId: Id<"taskRuns"> }) => void;
   "worker:start-screenshot-collection": (
     data: WorkerStartScreenshotCollection | undefined
   ) => void;
@@ -342,6 +349,23 @@ export interface WorkerFileChange {
   path: string;
   timestamp: number;
 }
+
+// Cloud-to-local sync schemas
+export const WorkerSyncFileSchema = z.object({
+  relativePath: z.string(), // Path relative to workspace root
+  action: z.enum(["write", "delete"]),
+  contentBase64: z.string().optional(), // Base64 encoded content (required for write)
+  mode: z.string().optional(), // File permissions (e.g., "644")
+});
+
+export const WorkerSyncFilesSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+  files: z.array(WorkerSyncFileSchema),
+  timestamp: z.number(),
+});
+
+export type WorkerSyncFile = z.infer<typeof WorkerSyncFileSchema>;
+export type WorkerSyncFiles = z.infer<typeof WorkerSyncFilesSchema>;
 
 export interface WorkerFileDiff {
   path: string;
@@ -374,6 +398,9 @@ export interface WorkerToServerEvents {
     fileDiffs: WorkerFileDiff[];
     timestamp: number;
   }) => void;
+
+  // Cloud-to-local sync: worker sends file changes to be written locally
+  "worker:sync-files": (data: WorkerSyncFiles) => void;
 
   // Error reporting
   "worker:error": (data: { workerId: string; error: string }) => void;

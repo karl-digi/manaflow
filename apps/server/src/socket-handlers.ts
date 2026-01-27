@@ -47,7 +47,7 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
-import { LocalCloudSyncManager } from "./localCloudSync";
+import { localCloudSyncManager } from "./localCloudSync";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
@@ -267,8 +267,6 @@ function buildServeWebWorkspaceUrl(
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
 }
-
-const localCloudSyncManager = new LocalCloudSyncManager();
 
 export function setupSocketHandlers(
   rt: RealtimeServer,
