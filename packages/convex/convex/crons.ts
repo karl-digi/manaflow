@@ -35,4 +35,12 @@ crons.interval(
   internal.crown.recoverStuckEvaluations
 );
 
+// Auto-refresh crown evaluations that succeeded with empty diffs
+// Runs every 5 minutes to re-evaluate when fresh diffs may be available from GitHub
+crons.interval(
+  "auto-refresh empty diff evaluations",
+  { minutes: 5 },
+  internal.crown.autoRefreshEmptyDiffEvaluations
+);
+
 export default crons;

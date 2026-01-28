@@ -4,7 +4,10 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
-import { parseCrownEvaluationPrompt } from "./crown/retryData";
+import {
+  detectEmptyDiffs,
+  parseCrownEvaluationPrompt,
+} from "./crown/retryData";
 
 const CROWN_RETRY_COOLDOWN_MS = 30_000;
 
@@ -345,6 +348,7 @@ export const retryCrownEvaluation = authMutation({
         crownEvaluationError: undefined,
         crownEvaluationRetryCount: nextRetryCount,
         crownEvaluationLastRetryAt: now,
+        crownEvaluationIsRefreshing: false,
         updatedAt: now,
       });
 
@@ -372,6 +376,7 @@ export const retryCrownEvaluation = authMutation({
       crownEvaluationError: undefined,
       crownEvaluationRetryCount: nextRetryCount,
       crownEvaluationLastRetryAt: now,
+      crownEvaluationIsRefreshing: false,
       updatedAt: now,
     });
 
@@ -382,6 +387,172 @@ export const retryCrownEvaluation = authMutation({
 
     console.log(`[Crown] Scheduled retry evaluation for task ${args.taskId}`);
     return "pending";
+  },
+});
+
+/**
+ * Refresh a succeeded crown evaluation that had empty diffs.
+ * Similar to retry, but works on succeeded evaluations to fetch fresh diffs from GitHub.
+ * Non-destructive: existing evaluation is preserved until new diffs are successfully fetched.
+ */
+export const refreshCrownEvaluation = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    if (task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    // Allow refresh when status is "succeeded"
+    if (task.crownEvaluationStatus !== "succeeded") {
+      throw new Error(
+        `Cannot refresh: evaluation status is "${task.crownEvaluationStatus}", expected "succeeded"`
+      );
+    }
+
+    // Check cooldown
+    const now = Date.now();
+    const lastRetryAt = task.crownEvaluationLastRetryAt ?? 0;
+    if (now - lastRetryAt < CROWN_RETRY_COOLDOWN_MS) {
+      const remainingSeconds = Math.ceil(
+        (CROWN_RETRY_COOLDOWN_MS - (now - lastRetryAt)) / 1000
+      );
+      throw new Error(
+        `Please wait ${remainingSeconds}s before refreshing the crown evaluation.`
+      );
+    }
+
+    // Get the existing evaluation
+    const existingEvaluation = await ctx.db
+      .query("crownEvaluations")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter(
+        (q) =>
+          q.eq(q.field("teamId"), teamId) && q.eq(q.field("userId"), userId)
+      )
+      .first();
+
+    if (!existingEvaluation) {
+      throw new Error("No evaluation found to refresh");
+    }
+
+    // Get completed task runs
+    const taskRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .filter((q) => q.eq(q.field("status"), "completed"))
+      .collect();
+
+    if (taskRuns.length === 0) {
+      throw new Error(
+        "Cannot refresh: No completed task runs found for this task."
+      );
+    }
+
+    // NON-DESTRUCTIVE: Don't delete evaluation or uncrown winner here.
+    // The action will do this only after successfully fetching fresh diffs.
+    // This preserves the prior result if GitHub fetch fails.
+
+    // Mark task as refreshing (keep status "succeeded" until action starts)
+    const nextRetryCount = (task.crownEvaluationRetryCount ?? 0) + 1;
+    await ctx.db.patch(args.taskId, {
+      crownEvaluationIsRefreshing: true,
+      crownEvaluationRetryCount: nextRetryCount,
+      crownEvaluationLastRetryAt: now,
+      updatedAt: now,
+    });
+
+    // Schedule fresh evaluation to fetch new diffs from GitHub
+    // Pass existing evaluation/winner IDs so action can clean them up on success
+    await ctx.scheduler.runAfter(
+      0,
+      internal.crown.actions.retryEvaluationFresh,
+      {
+        taskId: args.taskId,
+        teamId,
+        userId,
+        taskRunIds: taskRuns.map((r) => r._id),
+        isRefresh: true,
+        existingEvaluationId: existingEvaluation._id,
+        existingWinnerRunId: existingEvaluation.winnerRunId,
+      }
+    );
+
+    console.log(
+      `[Crown] Scheduled refresh evaluation for task ${args.taskId}`
+    );
+    return "pending";
+  },
+});
+
+/**
+ * Clean up old evaluation and uncrown winner before creating new evaluation.
+ * Called by retryEvaluationFresh after successfully fetching fresh diffs.
+ * Part of non-destructive refresh pattern.
+ */
+export const cleanupOldEvaluation = internalMutation({
+  args: {
+    existingEvaluationId: v.id("crownEvaluations"),
+    existingWinnerRunId: v.optional(v.id("taskRuns")),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    // Uncrown the old winner
+    if (args.existingWinnerRunId) {
+      const winnerRun = await ctx.db.get(args.existingWinnerRunId);
+      if (winnerRun) {
+        await ctx.db.patch(args.existingWinnerRunId, {
+          isCrowned: false,
+          crownReason: undefined,
+          summary: undefined,
+          updatedAt: now,
+        });
+      }
+    }
+
+    // Delete the old evaluation
+    const existingEval = await ctx.db.get(args.existingEvaluationId);
+    if (existingEval) {
+      await ctx.db.delete(args.existingEvaluationId);
+    }
+
+    console.log(
+      `[Crown] Cleaned up old evaluation ${args.existingEvaluationId}`
+    );
+  },
+});
+
+/**
+ * Restore task to succeeded state after failed refresh (non-destructive pattern).
+ * Called when GitHub diff fetch fails but old evaluation still exists.
+ */
+export const restoreAfterFailedRefresh = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    errorMessage: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    await ctx.db.patch(args.taskId, {
+      crownEvaluationStatus: "succeeded",
+      crownEvaluationIsRefreshing: false,
+      crownEvaluationError: args.errorMessage,
+      updatedAt: now,
+    });
+    console.log(
+      `[Crown] Restored task ${args.taskId} to succeeded after failed refresh`
+    );
   },
 });
 
@@ -439,6 +610,8 @@ export const workerFinalize = internalMutation({
     isFallback: v.optional(v.boolean()),
     /** Human-readable note about the evaluation process */
     evaluationNote: v.optional(v.string()),
+    /** Auto-refresh count to persist across re-evaluations */
+    autoRefreshCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
@@ -517,6 +690,7 @@ export const workerFinalize = internalMutation({
         crownEvaluationRetryData: retryDataToStore,
         crownEvaluationRetryCount: currentRetryCount,
         crownEvaluationLastRetryAt: task.crownEvaluationLastRetryAt,
+        crownEvaluationIsRefreshing: undefined,
         isCompleted: true, // Mark completed to unblock the task flow
         updatedAt: now,
       });
@@ -524,6 +698,10 @@ export const workerFinalize = internalMutation({
       console.log(`[Crown] Stored retry data for task ${args.taskId}`);
       return null;
     }
+
+    // Parse candidates from evaluation prompt to detect empty diffs
+    const parsed = parseCrownEvaluationPrompt(args.evaluationPrompt);
+    const hadEmptyDiffs = parsed ? detectEmptyDiffs(parsed.candidates) : false;
 
     // Proceed with normal winner crowning
     await ctx.db.insert("crownEvaluations", {
@@ -538,6 +716,8 @@ export const workerFinalize = internalMutation({
       teamId: args.teamId,
       ...(args.isFallback !== undefined ? { isFallback: args.isFallback } : {}),
       ...(args.evaluationNote ? { evaluationNote: args.evaluationNote } : {}),
+      ...(hadEmptyDiffs ? { hadEmptyDiffs } : {}),
+      ...(args.autoRefreshCount !== undefined ? { autoRefreshCount: args.autoRefreshCount } : {}),
     });
 
     const runsForTeam = await ctx.db
@@ -588,6 +768,7 @@ export const workerFinalize = internalMutation({
       crownEvaluationRetryData: undefined,
       crownEvaluationRetryCount: undefined,
       crownEvaluationLastRetryAt: undefined,
+      crownEvaluationIsRefreshing: undefined,
       ...(finalPullRequestTitle ? { pullRequestTitle: finalPullRequestTitle } : {}),
       ...(args.pullRequestDescription
         ? { pullRequestDescription: args.pullRequestDescription }
@@ -607,7 +788,7 @@ export const workerFinalize = internalMutation({
  */
 export const recoverStuckEvaluations = internalMutation({
   handler: async (ctx) => {
-    const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+    const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
     const cutoffTime = Date.now() - STUCK_THRESHOLD_MS;
 
     // Find tasks stuck in pending/in_progress for >5 minutes
@@ -686,6 +867,129 @@ export const recoverStuckEvaluations = internalMutation({
 
     console.log(`[crown] Recovered ${recoveredCount} stuck crown evaluations`);
     return { recovered: recoveredCount };
+  },
+});
+
+const MAX_AUTO_REFRESH_COUNT = 2;
+const AUTO_REFRESH_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Auto-refresh crown evaluations that succeeded with empty diffs.
+ * Runs every 5 minutes via cron job to detect and re-evaluate when fresh diffs may be available.
+ */
+export const autoRefreshEmptyDiffEvaluations = internalMutation({
+  handler: async (ctx) => {
+    const now = Date.now();
+    const cutoffTime = now - AUTO_REFRESH_LOOKBACK_MS;
+
+    // Find evaluations with empty diffs in the last 24 hours
+    const emptyDiffEvaluations = await ctx.db
+      .query("crownEvaluations")
+      .withIndex("by_empty_diffs", (q) =>
+        q.eq("hadEmptyDiffs", true).gt("evaluatedAt", cutoffTime)
+      )
+      .collect();
+
+    if (emptyDiffEvaluations.length === 0) {
+      return { refreshed: 0, skipped: 0 };
+    }
+
+    console.log(
+      `[crown] Found ${emptyDiffEvaluations.length} evaluations with empty diffs to check`
+    );
+
+    let refreshedCount = 0;
+    let skippedCount = 0;
+
+    for (const evaluation of emptyDiffEvaluations) {
+      // Skip if already hit max auto-refresh count
+      const currentAutoRefreshCount = evaluation.autoRefreshCount ?? 0;
+      if (currentAutoRefreshCount >= MAX_AUTO_REFRESH_COUNT) {
+        skippedCount++;
+        continue;
+      }
+
+      // Get the task to verify it can be refreshed
+      const task = await ctx.db.get(evaluation.taskId);
+      if (!task) {
+        console.log(
+          `[crown] Skipping evaluation ${evaluation._id}: task not found`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // Skip if task is not in succeeded state
+      if (task.crownEvaluationStatus !== "succeeded") {
+        skippedCount++;
+        continue;
+      }
+
+      // Get completed task runs
+      const taskRuns = await ctx.db
+        .query("taskRuns")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .filter((q) => q.eq(q.field("teamId"), task.teamId))
+        .filter((q) => q.eq(q.field("userId"), task.userId))
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .collect();
+
+      if (taskRuns.length === 0) {
+        skippedCount++;
+        continue;
+      }
+
+      // Check if we can potentially get fresh diffs (need newBranch info)
+      const hasRefreshableBranches = taskRuns.some(
+        (run) => run.newBranch && task.projectFullName && task.baseBranch
+      );
+
+      if (!hasRefreshableBranches) {
+        console.log(
+          `[crown] Skipping evaluation ${evaluation._id}: no refreshable branches`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      console.log(
+        `[crown] Auto-refreshing evaluation for task ${task._id} (attempt ${currentAutoRefreshCount + 1})`
+      );
+
+      // NON-DESTRUCTIVE: Don't delete evaluation or uncrown winner here.
+      // The action will do this only after successfully fetching fresh diffs.
+      const newAutoRefreshCount = currentAutoRefreshCount + 1;
+
+      // Mark task as refreshing (keep status "succeeded" until action starts)
+      await ctx.db.patch(task._id, {
+        crownEvaluationIsRefreshing: true,
+        updatedAt: now,
+      });
+
+      // Schedule fresh evaluation to fetch new diffs from GitHub
+      // Pass existing evaluation/winner IDs so action can clean them up on success
+      await ctx.scheduler.runAfter(
+        0,
+        internal.crown.actions.retryEvaluationFresh,
+        {
+          taskId: task._id,
+          teamId: task.teamId,
+          userId: task.userId,
+          taskRunIds: taskRuns.map((r) => r._id),
+          isRefresh: true,
+          autoRefreshCount: newAutoRefreshCount,
+          existingEvaluationId: evaluation._id,
+          existingWinnerRunId: evaluation.winnerRunId,
+        }
+      );
+
+      refreshedCount++;
+    }
+
+    console.log(
+      `[crown] Auto-refresh complete: ${refreshedCount} refreshed, ${skippedCount} skipped`
+    );
+    return { refreshed: refreshedCount, skipped: skippedCount };
   },
 });
 

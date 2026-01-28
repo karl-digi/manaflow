@@ -7,6 +7,37 @@ export type CrownStoredCandidate = {
   index?: number;
 };
 
+/**
+ * Placeholder values that indicate no meaningful code changes were captured.
+ */
+const EMPTY_DIFF_PLACEHOLDERS = [
+  "<no code changes>",
+  "<no code changes captured>",
+  "<git diff not available>",
+  "<no branch available>",
+];
+
+/**
+ * Checks if a single diff is considered "empty" (placeholder or very short).
+ */
+export function isEmptyDiff(gitDiff: string | null | undefined): boolean {
+  if (!gitDiff) return true;
+  const trimmed = gitDiff.trim();
+  if (trimmed.length < 10) return true;
+  return EMPTY_DIFF_PLACEHOLDERS.some(
+    (placeholder) => trimmed.toLowerCase() === placeholder.toLowerCase()
+  );
+}
+
+/**
+ * Detects if all candidates have empty or placeholder diffs.
+ * Returns true if every candidate's gitDiff is empty, a placeholder, or very short.
+ */
+export function detectEmptyDiffs(candidates: CrownStoredCandidate[]): boolean {
+  if (candidates.length === 0) return true;
+  return candidates.every((c) => isEmptyDiff(c.gitDiff));
+}
+
 export type ParsedCrownEvaluationPrompt = {
   prompt: string;
   candidates: Array<
