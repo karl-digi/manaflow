@@ -13,6 +13,7 @@ import { useClipboard } from "@mantine/hooks";
 import {
   useMutation,
   useQueries,
+  useQueryClient,
   type DefaultError,
 } from "@tanstack/react-query";
 import {
@@ -38,6 +39,7 @@ import {
   FolderOpen,
   GitBranch,
   GitMerge,
+  RefreshCw,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -95,6 +97,9 @@ function AdditionsAndDeletions({
   defaultBaseRef?: string;
   defaultHeadRef?: string;
 }) {
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const repoConfigs = useMemo(() => {
     const normalizedDefaults = {
       base: normalizeGitRef(defaultBaseRef),
@@ -153,6 +158,22 @@ function AdditionsAndDeletions({
     return Boolean(query.error);
   });
 
+  // useCallback must be called before any early returns to comply with React's rules of hooks
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    const toastId = toast.loading("Refreshing git diff...");
+    try {
+      // Invalidate all git-diff queries to force a fresh fetch from the server
+      await queryClient.invalidateQueries({ queryKey: ["git-diff"] });
+      toast.success("Git diff refreshed", { id: toastId });
+    } catch (error) {
+      console.error("[AdditionsAndDeletions] Failed to refresh git diff:", error);
+      toast.error("Failed to refresh git diff", { id: toastId });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [queryClient]);
+
   if (!isLoading && firstError?.error) {
     return (
       <div className="flex items-center gap-2 text-[11px] ml-2 shrink-0">
@@ -196,6 +217,22 @@ function AdditionsAndDeletions({
           </span>
         )}
       </Skeleton>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={isLoading || isRefreshing}
+        className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Refresh git diff"
+        title="Refresh git diff"
+        style={isElectron ? { WebkitAppRegion: "no-drag" } as React.CSSProperties : undefined}
+      >
+        <RefreshCw
+          className={cn(
+            "w-3.5 h-3.5",
+            isRefreshing && "animate-spin"
+          )}
+        />
+      </button>
     </div>
   );
 }
