@@ -505,7 +505,14 @@ sandboxesRouter.openapi(
         );
       }
 
-      const exposed = instance.networking.httpServices;
+      // SDK bug: instances.start() returns empty httpServices array
+      // Re-fetch instance to get the actual networking data
+      const refreshedInstance =
+        instance.networking.httpServices.length === 0
+          ? await client.instances.get({ instanceId: instance.id })
+          : instance;
+
+      const exposed = refreshedInstance.networking.httpServices;
       const vscodeService = exposed.find((s) => s.port === 39378);
       const workerService = exposed.find((s) => s.port === 39377);
       const vncService = exposed.find((s) => s.port === 39380);
