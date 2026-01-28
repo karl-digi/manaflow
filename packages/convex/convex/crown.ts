@@ -462,6 +462,29 @@ export const workerFinalize = internalMutation({
 
     const now = Date.now();
 
+    // Determine if this is a crown competition (multiple candidates)
+    // Single-run scenarios (1 candidate) should NOT have [Crown] prefix
+    const isCrownCompetition = args.candidateRunIds.length > 1;
+
+    // Compute the correct PR title based on candidate count
+    // This ensures consistent behavior regardless of worker-provided title format
+    const computePullRequestTitle = (prompt: string): string => {
+      const base = prompt.trim() || "cmux changes";
+      const title = isCrownCompetition ? `[Crown] ${base}` : base;
+      return title.length > 72 ? `${title.slice(0, 69)}...` : title;
+    };
+
+    // Compute the final PR title, overriding worker-provided title if format is wrong
+    let finalPullRequestTitle = args.pullRequestTitle;
+    if (args.pullRequestTitle) {
+      const hasWrongPrefix = !isCrownCompetition && args.pullRequestTitle.startsWith("[Crown] ");
+      const missingPrefix = isCrownCompetition && !args.pullRequestTitle.startsWith("[Crown] ");
+      if (hasWrongPrefix || missingPrefix) {
+        // Re-derive from task text (the task prompt)
+        finalPullRequestTitle = computePullRequestTitle(task.text || "cmux changes");
+      }
+    }
+
     const summaryMissing = !args.summary || args.summary.trim().length === 0;
 
     // If no winner was selected, or summarization failed, mark task as error and store retry data
@@ -565,7 +588,7 @@ export const workerFinalize = internalMutation({
       crownEvaluationRetryData: undefined,
       crownEvaluationRetryCount: undefined,
       crownEvaluationLastRetryAt: undefined,
-      ...(args.pullRequestTitle ? { pullRequestTitle: args.pullRequestTitle } : {}),
+      ...(finalPullRequestTitle ? { pullRequestTitle: finalPullRequestTitle } : {}),
       ...(args.pullRequestDescription
         ? { pullRequestDescription: args.pullRequestDescription }
         : {}),
