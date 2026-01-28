@@ -847,75 +847,64 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
         )}
       >
         <div className="flex flex-col">
-          {/* Header */}
-          <div
+          {/* Header - matches FileDiffHeader styling */}
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
             className={cn(
-              "w-full px-3 py-2 flex items-center transition-colors text-left group bg-neutral-50/80 dark:bg-neutral-900/70 border-b border-neutral-200/80 dark:border-neutral-800/70 sticky top-0 z-30"
+              "w-full px-3 py-2 flex items-center hover:bg-neutral-100/70 dark:hover:bg-neutral-800/60 transition-colors text-left group bg-neutral-50/80 dark:bg-neutral-900/70 border-b border-neutral-200/80 dark:border-neutral-800/70 sticky top-[var(--cmux-diff-header-offset,0px)] z-[var(--z-sticky-low)]"
             )}
+            aria-expanded={!isCollapsed}
           >
-            <button
-              type="button"
-              onClick={handleToggleCollapse}
-              className="flex items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors flex-1 min-w-0"
-              aria-expanded={!isCollapsed}
-            >
-              <div className="flex items-center" style={{ width: "20px" }}>
-                <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
-                  {isCollapsed ? (
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  )}
-                </div>
+            <div className="flex items-center" style={{ width: "20px" }}>
+              <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
+                {isCollapsed ? (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
               </div>
-              <div className="flex items-center" style={{ width: "20px" }}>
-                <div className={cn("flex-shrink-0", statusMeta.colorClassName)}>
-                  {statusMeta.icon}
-                  <span className="sr-only">{statusMeta.label}</span>
-                </div>
-              </div>
-              <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
-                <div className="min-w-0 flex flex-col">
-                  <span className="font-sans font-medium text-[13px] text-neutral-700 dark:text-neutral-300 truncate select-none">
-                    {filename}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="text-green-600 dark:text-green-400 font-medium select-none">
-                    +{additions}
-                  </span>
-                  <span className="text-red-600 dark:text-red-400 font-medium select-none">
-                    −{deletions}
-                  </span>
-                </div>
-              </div>
-            </button>
-
-            {/* Loading indicator - matches Viewed checkbox position */}
-            <div className="flex items-center gap-1.5 ml-2">
-              {isLoading ? (
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <span className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
-                      <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="bottom"
-                    align="start"
-                    showArrow={false}
-                    className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                  >
-                    AI review in progress...
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <span className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] font-medium text-neutral-500 dark:text-neutral-400 invisible">
-                  <span className="h-3.5 w-3.5" />
-                </span>
-              )}
             </div>
-          </div>
+            <div className="flex items-center" style={{ width: "20px" }}>
+              <div className={cn("flex-shrink-0", statusMeta.colorClassName)}>
+                {statusMeta.icon}
+                <span className="sr-only">{statusMeta.label}</span>
+              </div>
+            </div>
+            <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex flex-col">
+                <span className="font-sans font-medium text-[13px] text-neutral-700 dark:text-neutral-300 truncate select-none">
+                  {filename}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-green-600 dark:text-green-400 font-medium select-none">
+                  +{additions}
+                </span>
+                <span className="text-red-600 dark:text-red-400 font-medium select-none">
+                  −{deletions}
+                </span>
+                {/* Loading indicator */}
+                {isLoading && (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center">
+                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="end"
+                      showArrow={false}
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      AI review in progress...
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+          </button>
 
           {/* Diff Content */}
           {!isCollapsed && (
