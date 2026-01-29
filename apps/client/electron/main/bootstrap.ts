@@ -34,15 +34,17 @@ try {
 }
 
 // Sentry must initialize before the Electron app "ready" event fires.
-Sentry.init({
-  dsn: SENTRY_ELECTRON_DSN,
-  ipcMode: Sentry.IPCMode.Both,
-  ipcNamespace: "sentry-ipc",
-  getSessions: () => [
-    session.defaultSession,
-    session.fromPartition(PARTITION),
-  ],
-});
+if (SENTRY_ELECTRON_DSN) {
+  Sentry.init({
+    dsn: SENTRY_ELECTRON_DSN,
+    ipcMode: Sentry.IPCMode.Both,
+    ipcNamespace: "sentry-ipc",
+    getSessions: () => [
+      session.defaultSession,
+      session.fromPartition(PARTITION),
+    ],
+  });
+}
 
 function timestamp(): string {
   return new Date().toISOString();
