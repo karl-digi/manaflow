@@ -11,7 +11,7 @@ Environment=HOME=/root
 LogsDirectory=cmux
 ExecStartPre=/bin/mkdir -p /var/log/cmux
 ExecStartPre=/bin/bash -lc 'exec /usr/local/lib/cmux/configure-coder'
-ExecStart=/bin/bash -lc 'exec /app/code-server/bin/code-server --user-data-dir /root/.code-server --disable-workspace-trust --bind-addr 0.0.0.0:39378 /root/workspace'
+ExecStart=/bin/bash -lc 'exec /app/code-server/bin/code-server --user-data-dir /root/.code-server --extensions-dir /root/.code-server/extensions --disable-workspace-trust --bind-addr 0.0.0.0:39378 /root/workspace'
 Restart=on-failure
 RestartSec=2
 StandardOutput=append:/var/log/cmux/coder.log

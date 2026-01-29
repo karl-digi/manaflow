@@ -3,36 +3,36 @@
     {
       "publisher": "anthropic",
       "name": "claude-code",
-      "version": "2.1.19"
+      "version": "2.1.23"
     },
     {
       "publisher": "openai",
       "name": "chatgpt",
-      "version": "0.5.67"
+      "version": "0.5.68"
     },
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20260125"
+      "version": "6.0.20260128"
     },
     {
       "publisher": "ms-python",
       "name": "python",
-      "version": "2026.1.2026012301"
+      "version": "2026.1.2026012801"
     },
     {
       "publisher": "ms-python",
       "name": "debugpy",
-      "version": "2025.19.2026012601"
+      "version": "2025.19.2026012701"
     }
   ],
   "packages": {
-    "@openai/codex": "0.91.0",
+    "@openai/codex": "0.92.0",
     "@anthropic-ai/claude-code": "2.1.7",
-    "@google/gemini-cli": "0.25.2",
-    "opencode-ai": "1.1.36",
-    "codebuff": "1.0.601",
+    "@google/gemini-cli": "0.26.0",
+    "opencode-ai": "1.1.42",
+    "codebuff": "1.0.602",
     "@devcontainers/cli": "0.82.0",
-    "@sourcegraph/amp": "0.0.1769464397-g1d7d52"
+    "@sourcegraph/amp": "0.0.1769665028-g800523"
   }
 }

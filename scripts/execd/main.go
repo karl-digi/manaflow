@@ -170,8 +170,14 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 	go readPipe(clientCtx, stdout, "stdout", &wg, w, flusher)
 	go readPipe(clientCtx, stderr, "stderr", &wg, w, flusher)
 
-	waitErr := cmd.Wait()
+	// IMPORTANT: Wait for all pipe reads to complete BEFORE calling cmd.Wait().
+	// According to Go's documentation: "It is incorrect to call Wait before all
+	// reads from the pipe have completed." The pipes are closed when the command
+	// exits, which causes EOF to be sent to the reading goroutines. After they
+	// finish reading all data (including any buffered data), cmd.Wait() can be
+	// called safely.
 	wg.Wait()
+	waitErr := cmd.Wait()
 
 	exitCode := 0
 	ctxErr := baseCtx.Err()

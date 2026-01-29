@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-01-26T22:28:07Z",
+  "updatedAt": "2026-01-29T06:51:38Z",
   "presets": [
     {
       "presetId": "4vcpu_8gb_32gb",
@@ -152,6 +152,72 @@
           "snapshotId": "snapshot_6d9850c8",
           "templateVmid": 9005,
           "capturedAt": "2026-01-26T22:27:39Z"
+        },
+        {
+          "version": 25,
+          "snapshotId": "snapshot_2b214495",
+          "templateVmid": 9021,
+          "capturedAt": "2026-01-29T00:21:55Z"
+        },
+        {
+          "version": 26,
+          "snapshotId": "snapshot_a7c3ef26",
+          "templateVmid": 9023,
+          "capturedAt": "2026-01-29T00:37:45Z"
+        },
+        {
+          "version": 27,
+          "snapshotId": "snapshot_6552b075",
+          "templateVmid": 9026,
+          "capturedAt": "2026-01-29T01:01:44Z"
+        },
+        {
+          "version": 28,
+          "snapshotId": "snapshot_68043c45",
+          "templateVmid": 9028,
+          "capturedAt": "2026-01-29T01:17:31Z"
+        },
+        {
+          "version": 29,
+          "snapshotId": "snapshot_a34af4d8",
+          "templateVmid": 9029,
+          "capturedAt": "2026-01-29T01:37:59Z"
+        },
+        {
+          "version": 30,
+          "snapshotId": "snapshot_d5a14e4a",
+          "templateVmid": 9030,
+          "capturedAt": "2026-01-29T01:45:46Z"
+        },
+        {
+          "version": 31,
+          "snapshotId": "snapshot_740cd183",
+          "templateVmid": 9041,
+          "capturedAt": "2026-01-29T04:14:51Z"
+        },
+        {
+          "version": 32,
+          "snapshotId": "snapshot_da8981e3",
+          "templateVmid": 9042,
+          "capturedAt": "2026-01-29T04:21:07Z"
+        },
+        {
+          "version": 33,
+          "snapshotId": "snapshot_13beefdf",
+          "templateVmid": 9043,
+          "capturedAt": "2026-01-29T04:29:31Z"
+        },
+        {
+          "version": 34,
+          "snapshotId": "snapshot_11a3a45c",
+          "templateVmid": 9044,
+          "capturedAt": "2026-01-29T04:35:44Z"
+        },
+        {
+          "version": 35,
+          "snapshotId": "snapshot_3ef9c9ca",
+          "templateVmid": 9050,
+          "capturedAt": "2026-01-29T06:51:35Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -309,6 +375,33 @@
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
+    },
+    {
+      "presetId": "6vcpu_8gb_32gb",
+      "label": "Performance workspace",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_7bbee934",
+          "templateVmid": 9022,
+          "capturedAt": "2026-01-29T00:21:58Z"
+        },
+        {
+          "version": 2,
+          "snapshotId": "snapshot_5f84f8d2",
+          "templateVmid": 9024,
+          "capturedAt": "2026-01-29T00:37:48Z"
+        },
+        {
+          "version": 3,
+          "snapshotId": "snapshot_f908ee4f",
+          "templateVmid": 9051,
+          "capturedAt": "2026-01-29T06:51:38Z"
+        }
+      ]
     }
   ],
   "node": "karl-ws",
