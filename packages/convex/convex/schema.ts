@@ -171,6 +171,8 @@ const convexSchema = defineSchema({
     screenshotFileName: v.optional(v.string()),
     screenshotCommitSha: v.optional(v.string()),
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+    /** Denormalized: ID of the selected task run (crowned run, or latest non-archived run) */
+    selectedTaskRunId: v.optional(v.id("taskRuns")),
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])

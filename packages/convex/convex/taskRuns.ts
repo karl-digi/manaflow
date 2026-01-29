@@ -425,7 +425,11 @@ export const create = authMutation({
 
     // Update task's lastActivityAt for sorting
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
-    const taskPatch: { generatedBranchName?: string; lastActivityAt: number } = {
+    const taskPatch: {
+      generatedBranchName?: string;
+      lastActivityAt: number;
+      selectedTaskRunId?: Id<"taskRuns">;
+    } = {
       lastActivityAt: now,
     };
     if (
@@ -434,6 +438,20 @@ export const create = authMutation({
     ) {
       taskPatch.generatedBranchName = generatedBranchName;
     }
+
+    // Update selectedTaskRunId if task has no crowned run
+    // (new run becomes the selected run by default)
+    const hasCrownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (!hasCrownedRun) {
+      taskPatch.selectedTaskRunId = taskRunId;
+    }
+
     await ctx.db.patch(args.taskId, taskPatch);
     const jwt = await new SignJWT({
       taskRunId,
@@ -1957,6 +1975,24 @@ export const archive = authMutation({
         }),
       ),
     );
+
+    // Recalculate selectedTaskRunId if we archived/unarchived a run that might affect the selection
+    const task = await ctx.db.get(run.taskId);
+    if (task) {
+      const targetIdsSet = new Set(targetIds);
+      // Need to recalculate if:
+      // 1. We archived the currently selected run, OR
+      // 2. We unarchived runs (might have unarchived a crowned run or newer run)
+      const needsRecalculation =
+        (args.archive && task.selectedTaskRunId && targetIdsSet.has(task.selectedTaskRunId)) ||
+        !args.archive;
+
+      if (needsRecalculation) {
+        await ctx.runMutation(internal.taskRuns.updateSelectedTaskRunForTask, {
+          taskId: run.taskId,
+        });
+      }
+    }
   },
 });
 
@@ -2182,5 +2218,44 @@ export const createForPreview = internalMutation({
       .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
     return { taskRunId, jwt };
+  },
+});
+
+/**
+ * Internal mutation to recalculate and update the selectedTaskRunId for a task.
+ * Selects the crowned run if one exists, otherwise falls back to the latest non-archived run.
+ */
+export const updateSelectedTaskRunForTask = internalMutation({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      return;
+    }
+
+    // Find crowned run first
+    const crownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (crownedRun) {
+      await ctx.db.patch(args.taskId, { selectedTaskRunId: crownedRun._id });
+      return;
+    }
+
+    // Fall back to latest non-archived run
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .order("desc")
+      .first();
+
+    await ctx.db.patch(args.taskId, {
+      selectedTaskRunId: latestRun?._id,
+    });
   },
 });

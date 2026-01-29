@@ -49,10 +49,11 @@ export const get = authQuery({
 
     // Get unread task runs for this user in this team
     // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    // Limit to 1000 to avoid large scans (users rarely have 1000+ unread)
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
       .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
-      .collect();
+      .take(1000);
 
     // Build set of taskIds that have unread runs (direct access, no joins needed)
     // Filter out undefined taskIds (pre-migration data)
@@ -101,12 +102,13 @@ export const getArchivedPaginated = authQuery({
     const paginatedResult = await q.order("desc").paginate(args.paginationOpts);
 
     // Get unread task runs for this user in this team
+    // Limit to 1000 to avoid large scans (users rarely have 1000+ unread)
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
       .withIndex("by_team_user", (q) =>
         q.eq("teamId", teamId).eq("userId", userId),
       )
-      .collect();
+      .take(1000);
 
     // Build set of taskIds that have unread runs
     const tasksWithUnread = new Set(
@@ -174,10 +176,11 @@ export const getWithNotificationOrder = authQuery({
 
     // Get unread task runs for this user in this team
     // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    // Limit to 1000 to avoid large scans (users rarely have 1000+ unread)
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
       .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
-      .collect();
+      .take(1000);
 
     // Build set of taskIds that have unread runs (direct access, no joins needed)
     // Filter out undefined taskIds (pre-migration data)
@@ -198,6 +201,139 @@ export const getWithNotificationOrder = authQuery({
       ...task,
       hasUnread: tasksWithUnread.has(task._id),
     }));
+  },
+});
+
+// Paginated version of get() for infinite scroll
+export const getPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    projectFullName: v.optional(v.string()),
+    archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Use by_team_user_activity index for server-side sorting
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_activity", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      );
+
+    if (args.archived === true) {
+      q = q.filter((qq) => qq.eq(qq.field("isArchived"), true));
+    } else {
+      q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
+    }
+
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
+
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
+
+    if (args.projectFullName) {
+      q = q.filter((qq) =>
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
+      );
+    }
+
+    // Server-side sort by lastActivityAt desc (via index)
+    const paginatedResult = await q.order("desc").paginate(args.paginationOpts);
+
+    // Limit unread fetch to avoid large scans
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
+      .take(1000);
+
+    const tasksWithUnread = new Set(
+      unreadRuns
+        .map((ur) => ur.taskId)
+        .filter((id): id is Id<"tasks"> => id !== undefined),
+    );
+
+    return {
+      ...paginatedResult,
+      page: paginatedResult.page.map((task) => ({
+        ...task,
+        hasUnread: tasksWithUnread.has(task._id),
+      })),
+    };
+  },
+});
+
+// Paginated version of getWithNotificationOrder() for infinite scroll
+// Uses by_team_user_activity index for efficient server-side sorting by lastActivityAt
+export const getWithNotificationOrderPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    projectFullName: v.optional(v.string()),
+    archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Use by_team_user_activity index for server-side sorting by lastActivityAt
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_activity", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      );
+
+    if (args.archived === true) {
+      q = q.filter((qq) => qq.eq(qq.field("isArchived"), true));
+    } else {
+      q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
+    }
+
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
+
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
+
+    if (args.projectFullName) {
+      q = q.filter((qq) =>
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
+      );
+    }
+
+    // Server-side sort by lastActivityAt desc (via index)
+    const paginatedResult = await q.order("desc").paginate(args.paginationOpts);
+
+    // Limit unread fetch to avoid large scans
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
+      .take(1000);
+
+    const tasksWithUnread = new Set(
+      unreadRuns
+        .map((ur) => ur.taskId)
+        .filter((id): id is Id<"tasks"> => id !== undefined),
+    );
+
+    return {
+      ...paginatedResult,
+      page: paginatedResult.page.map((task) => ({
+        ...task,
+        hasUnread: tasksWithUnread.has(task._id),
+      })),
+    };
   },
 });
 
@@ -312,39 +448,32 @@ export const getTasksWithTaskRuns = authQuery({
     }
 
     const tasks = await q.collect();
+
+    // Collect unique selectedTaskRunIds (filter out undefined)
+    const runIds = tasks
+      .map((t) => t.selectedTaskRunId)
+      .filter((id): id is Id<"taskRuns"> => id !== undefined);
+
+    // Batch fetch all selected runs using direct ID lookups (much cheaper than indexed queries)
+    const runs = await Promise.all(runIds.map((id) => ctx.db.get(id)));
+    const runMap = new Map(
+      runs
+        .filter((r): r is NonNullable<typeof r> => r !== null)
+        .map((r) => [r._id, r]),
+    );
+
+    // Sort by createdAt desc
     const sortedTasks = tasks.sort(
       (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
     );
 
-    const tasksWithRuns = await Promise.all(
-      sortedTasks.map(async (task) => {
-        const crownedRun = await ctx.db
-          .query("taskRuns")
-          .withIndex("by_task", (query) => query.eq("taskId", task._id))
-          .filter((query) => query.eq(query.field("isCrowned"), true))
-          .filter((query) => query.neq(query.field("isArchived"), true))
-          .first();
-
-        let selectedTaskRun = crownedRun ?? null;
-
-        if (!selectedTaskRun) {
-          const [latestRun] = await ctx.db
-            .query("taskRuns")
-            .withIndex("by_task", (query) => query.eq("taskId", task._id))
-            .filter((query) => query.neq(query.field("isArchived"), true))
-            .order("desc")
-            .take(1);
-          selectedTaskRun = latestRun ?? null;
-        }
-
-        return {
-          ...task,
-          selectedTaskRun,
-        };
-      }),
-    );
-
-    return tasksWithRuns;
+    // Map tasks with their selected runs from the batch-fetched map
+    return sortedTasks.map((task) => ({
+      ...task,
+      selectedTaskRun: task.selectedTaskRunId
+        ? runMap.get(task.selectedTaskRunId) ?? null
+        : null,
+    }));
   },
 });
 

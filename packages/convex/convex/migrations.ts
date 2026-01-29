@@ -384,3 +384,43 @@ export const backfillTaskRunPullRequestsContinue = internalMutation({
     return { totalProcessed, totalInserted, isDone: results.isDone };
   },
 });
+
+// Backfill selectedTaskRunId for existing tasks.
+// Sets it to the crowned run if one exists, otherwise the latest non-archived run.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillTasksSelectedTaskRunId"}'
+export const backfillTasksSelectedTaskRunId = migrations.define({
+  table: "tasks",
+  migrateOne: async (ctx, doc) => {
+    // Skip if already set
+    if (doc.selectedTaskRunId !== undefined) {
+      return;
+    }
+
+    // Find crowned run first
+    const crownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", doc._id))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (crownedRun) {
+      return { selectedTaskRunId: crownedRun._id };
+    }
+
+    // Fall back to latest non-archived run
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", doc._id))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .order("desc")
+      .first();
+
+    if (latestRun) {
+      return { selectedTaskRunId: latestRun._id };
+    }
+
+    // No runs found, leave undefined
+    return;
+  },
+});

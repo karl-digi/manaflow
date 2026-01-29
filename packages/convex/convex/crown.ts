@@ -54,6 +54,8 @@ export const evaluateAndCrownWinner = authMutation({
             isCrowned: true,
             crownReason: "Only one model completed the task",
           });
+          // Update selectedTaskRunId on the task
+          await ctx.db.patch(args.taskId, { selectedTaskRunId: taskRuns[0]._id });
         }
         return taskRuns[0]?._id || null;
       }
@@ -155,10 +157,11 @@ export const setCrownWinner = authMutation({
       }
     }
 
-    // Clear crown evaluation error
+    // Clear crown evaluation error and update selectedTaskRunId
     await ctx.db.patch(taskRun.taskId, {
       crownEvaluationStatus: "succeeded",
       crownEvaluationError: undefined,
+      selectedTaskRunId: args.taskRunId,
       updatedAt: Date.now(),
     });
 
