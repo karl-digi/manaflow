@@ -6,15 +6,20 @@ enum UITestMockData {
     private static let jankTranscript: [String] = [
         "optimistic return 1769512215538",
         """
-I see you've provided what appears to be a number or identifier: `1769512215538`. Could you please clarify what you'd like me to do with this?
+        I see you've provided what appears to be a number or identifier: `1769512215538`. Could you please clarify what you'd like me to do with this?
 
-Are you looking to:
-- Search for this value in a codebase?
-- Convert or interpret this number in some way?
-- Something else?
+        Are you looking to:
+        - Search for this value in a codebase?
+        - Convert or interpret this number in some way?
+        - Something else?
 
-Please provide more context about what task you'd like help with.
-"""
+        Please provide more context about what task you'd like help with.
+        """
+    ]
+    private static let tinyConversationId = "ts78emy26kmwvaj753cqxeb7ah807rd0"
+    private static let tinyTranscript: [String] = [
+        "6+6",
+        "12"
     ]
     private static let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
     private static let morphTranscript: [String] = [
@@ -117,6 +122,16 @@ Please provide more context about what task you'd like help with.
             updatedAt: now
         )
 
+        let tinyConversation = makeConversation(
+            id: tinyConversationId,
+            title: "Calculate 6 plus 6",
+            providerId: "claude",
+            previewText: tinyTranscript.first ?? "UI test conversation",
+            teamId: teamId,
+            createdAt: earlier - 15_000,
+            updatedAt: now
+        )
+
         let claude = makeConversation(
             id: "uitest_conversation_claude",
             title: "Claude",
@@ -137,7 +152,7 @@ Please provide more context about what task you'd like help with.
             updatedAt: earlier
         )
 
-        return [succession, morphSnapshot, claude, alex]
+        return [succession, morphSnapshot, tinyConversation, claude, alex]
     }
 
     static func messages(for conversationId: String) -> [ConvexMessage] {
@@ -173,6 +188,32 @@ Please provide more context about what task you'd like help with.
         }
         if conversationId == morphConversationId {
             let transcript = morphTranscript
+            let start = now - Double(transcript.count) * 1200
+            let lastUserIndex = transcript.indices.last { $0 % 2 == 0 }
+            let lastAssistantIndex = transcript.indices.last { $0 % 2 == 1 }
+            return transcript.enumerated().map { index, text in
+                let isAssistant = index % 2 == 1
+                let role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum =
+                    isAssistant ? .assistant : .user
+                let id: String
+                if let lastUserIndex, index == lastUserIndex {
+                    id = "\(conversationId)_user"
+                } else if let lastAssistantIndex, index == lastAssistantIndex {
+                    id = "\(conversationId)_assistant"
+                } else {
+                    id = "\(conversationId)_transcript_\(index + 1)"
+                }
+                return makeMessage(
+                    id: id,
+                    conversationId: conversationId,
+                    role: role,
+                    text: text,
+                    createdAt: start + Double(index) * 1200
+                )
+            }
+        }
+        if conversationId == tinyConversationId {
+            let transcript = tinyTranscript
             let start = now - Double(transcript.count) * 1200
             let lastUserIndex = transcript.indices.last { $0 % 2 == 0 }
             let lastAssistantIndex = transcript.indices.last { $0 % 2 == 1 }

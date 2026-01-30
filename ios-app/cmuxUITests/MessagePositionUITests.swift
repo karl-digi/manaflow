@@ -10,6 +10,7 @@ final class MessagePositionUITests: XCTestCase {
     private let jankDownwardTolerance: CGFloat = 1.0
     private let topThresholdRatio: CGFloat = 0.75
     private let jankConversationId = "ts79xr7rr98pbr98rb6vssta75800802"
+    private let tinyConversationId = "ts78emy26kmwvaj753cqxeb7ah807rd0"
     private let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
 
     override func setUp() {
@@ -357,6 +358,98 @@ final class MessagePositionUITests: XCTestCase {
                 context: "short thread keyboard closed"
             )
         }
+    }
+
+    func testTinyConversationMessagesStayFixedWhenKeyboardOpens() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = tinyConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let userMessage = messageElement(app: app, fullId: "chat.message.\(tinyConversationId)_user")
+        XCTAssertTrue(userMessage.waitForExistence(timeout: 6))
+        let assistantMessage = messageElement(app: app, fullId: "chat.message.\(tinyConversationId)_assistant")
+        XCTAssertTrue(assistantMessage.waitForExistence(timeout: 6))
+
+        let pill = waitForInputPill(app: app)
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        if snapClosed.waitForExistence(timeout: 1) {
+            snapClosed.tap()
+        }
+        waitForScrollSettle()
+
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "tiny thread baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "tiny thread baseline"
+        )
+
+        let baselineUserY = waitForStableMinY(
+            element: userMessage,
+            timeout: 3,
+            tolerance: 0.25,
+            stableSamples: 3
+        )
+        let baselineAssistantY = waitForStableMinY(
+            element: assistantMessage,
+            timeout: 3,
+            tolerance: 0.25,
+            stableSamples: 3
+        )
+
+        let overlapMarker = app.otherElements["chat.keyboardOverlapValue"]
+        XCTAssertTrue(overlapMarker.waitForExistence(timeout: 4))
+        let baselineOverlap = waitForStableNumericValue(
+            element: overlapMarker,
+            timeout: 4,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+
+        let snapOpen = app.buttons["chat.fakeKeyboard.snapOpen"]
+        if snapOpen.waitForExistence(timeout: 1) {
+            snapOpen.tap()
+        } else {
+            focusKeyboard(app: app)
+        }
+        let openOverlap = waitForNumericValueAtLeast(
+            element: overlapMarker,
+            minimum: baselineOverlap + openOverlapMinDelta,
+            timeout: 6
+        )
+        XCTAssertGreaterThanOrEqual(
+            openOverlap,
+            baselineOverlap + openOverlapMinDelta,
+            "Keyboard overlap never reached the open threshold: overlap=\(openOverlap) baseline=\(baselineOverlap)"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "tiny thread keyboard open"
+        )
+        assertMessagePositionsStable(
+            userMessage: userMessage,
+            assistantMessage: assistantMessage,
+            baselineUserY: baselineUserY,
+            baselineAssistantY: baselineAssistantY,
+            duration: 0.8,
+            context: "tiny thread keyboard open"
+        )
     }
 
     func testSingleUserMessageStartsNearTop() {
