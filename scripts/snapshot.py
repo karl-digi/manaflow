@@ -1164,7 +1164,7 @@ async def task_install_go_toolchain(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        GO_VERSION="1.25.2"
+        GO_VERSION="1.25.5"
         ARCH="$(uname -m)"
         case "${ARCH}" in
           x86_64)

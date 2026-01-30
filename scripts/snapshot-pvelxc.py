@@ -2536,7 +2536,11 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
   "security.workspace.trust.enabled": false,
   "telemetry.telemetryLevel": "off",
   "update.mode": "none",
-  "extensions.verifySignature": false
+  "extensions.verifySignature": false,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000
 }
 EOF
 
