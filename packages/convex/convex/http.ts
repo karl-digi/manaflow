@@ -33,6 +33,23 @@ import {
   anthropicEventLogging,
 } from "./anthropic_http";
 import { serveMedia } from "./media_proxy_http";
+import {
+  createInstance as devboxCreateInstance,
+  listInstances as devboxListInstances,
+  instanceActionRouter as devboxInstanceActionRouter,
+  instanceGetRouter as devboxInstanceGetRouter,
+} from "./devbox_http";
+import {
+  createInstance as dbaCreateInstance,
+  listInstances as dbaListInstances,
+  listSnapshots as dbaListSnapshots,
+  getSnapshot as dbaGetSnapshot,
+  getConfig as dbaGetConfig,
+  getMe as dbaGetMe,
+  instanceActionRouter as dbaInstanceActionRouter,
+  instanceGetRouter as dbaInstanceGetRouter,
+  instanceDeleteRouter as dbaInstanceDeleteRouter,
+} from "./dba_http";
 
 const http = httpRouter();
 
@@ -187,6 +204,94 @@ http.route({
   pathPrefix: "/api/media/",
   method: "GET",
   handler: serveMedia,
+});
+
+// =============================================================================
+// v1/devbox API - Morph instance management with user authentication
+// =============================================================================
+
+http.route({
+  path: "/api/v1/devbox/instances",
+  method: "POST",
+  handler: devboxCreateInstance,
+});
+
+http.route({
+  path: "/api/v1/devbox/instances",
+  method: "GET",
+  handler: devboxListInstances,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v1/devbox/instances/",
+  method: "GET",
+  handler: devboxInstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v1/devbox/instances/",
+  method: "POST",
+  handler: devboxInstanceActionRouter,
+});
+
+// =============================================================================
+// v1/dba API - Morph instance management for dba CLI
+// =============================================================================
+
+http.route({
+  path: "/api/v1/dba/instances",
+  method: "POST",
+  handler: dbaCreateInstance,
+});
+
+http.route({
+  path: "/api/v1/dba/instances",
+  method: "GET",
+  handler: dbaListInstances,
+});
+
+http.route({
+  path: "/api/v1/dba/snapshots",
+  method: "GET",
+  handler: dbaListSnapshots,
+});
+
+http.route({
+  pathPrefix: "/api/v1/dba/snapshots/",
+  method: "GET",
+  handler: dbaGetSnapshot,
+});
+
+http.route({
+  path: "/api/v1/dba/config",
+  method: "GET",
+  handler: dbaGetConfig,
+});
+
+http.route({
+  path: "/api/v1/dba/me",
+  method: "GET",
+  handler: dbaGetMe,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v1/dba/instances/",
+  method: "GET",
+  handler: dbaInstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v1/dba/instances/",
+  method: "POST",
+  handler: dbaInstanceActionRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v1/dba/instances/",
+  method: "DELETE",
+  handler: dbaInstanceDeleteRouter,
 });
 
 export default http;
