@@ -30,7 +30,11 @@ import { Agent, fetch as undiciFetch } from "undici";
 // ============================================================================
 
 const PAUSE_HOURS_THRESHOLD = 20;
+// Provider-specific threshold for PVE LXC
+// PVE LXC doesn't preserve memory state on pause, so use longer pause threshold
+const PAUSE_DAYS_THRESHOLD_PVE = 3;
 const STOP_DAYS_THRESHOLD = 14; // 2 weeks
+const ORPHAN_MIN_AGE_DAYS = 7;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 const BATCH_SIZE = 5;
 
@@ -482,12 +486,16 @@ export const pauseOldSandboxInstances = internalAction({
 
     const providerConfigs = getProviderConfigs();
     const now = Date.now();
-    const thresholdMs = PAUSE_HOURS_THRESHOLD * MILLISECONDS_PER_HOUR;
 
     let totalSuccess = 0;
     let totalFailure = 0;
 
     for (const config of providerConfigs) {
+      const thresholdMs =
+        config.provider === "pve-lxc"
+          ? PAUSE_DAYS_THRESHOLD_PVE * 24 * MILLISECONDS_PER_HOUR
+          : PAUSE_HOURS_THRESHOLD * MILLISECONDS_PER_HOUR;
+
       if (!config.available || !config.client) {
         console.log(
           `[sandboxMaintenance:pause] Skipping ${config.provider}: ${config.error}`
@@ -495,15 +503,17 @@ export const pauseOldSandboxInstances = internalAction({
         continue;
       }
 
+      const client = config.client;
+
       console.log(
         `[sandboxMaintenance:pause] Processing provider: ${config.provider}`
       );
 
       try {
-        const instances = await config.client.listInstances();
+        const instances = await client.listInstances();
 
         // Filter for cmux instances that are ready/running and older than threshold
-        const staleInstances = instances
+        let staleInstances = instances
           .filter((inst) => inst.metadata?.app?.startsWith("cmux"))
           .filter((inst) => inst.status === "ready" || inst.status === "running")
           .filter((inst) => {
@@ -545,6 +555,8 @@ export const pauseOldSandboxInstances = internalAction({
             );
             continue;
           }
+
+          staleInstances = filteredStale;
         }
 
         console.log(
@@ -568,20 +580,15 @@ export const pauseOldSandboxInstances = internalAction({
                 `[sandboxMaintenance:pause] Pausing ${instance.id} (${ageHours}h old)...`
               );
 
-              await config.client!.pauseInstance(instance.id);
+              await client.pauseInstance(instance.id);
 
               // Record in activity table
-              await ctx.runMutation(
-                internal.sandboxInstances.recordPauseInternal,
-                {
-                  instanceId: instance.id,
-                  provider: config.provider,
-                }
-              );
+              await ctx.runMutation(internal.sandboxInstances.recordPauseInternal, {
+                instanceId: instance.id,
+                provider: config.provider,
+              });
 
-              console.log(
-                `[sandboxMaintenance:pause] Paused ${instance.id}`
-              );
+              console.log(`[sandboxMaintenance:pause] Paused ${instance.id}`);
               return instance.id;
             })
           );
@@ -641,12 +648,14 @@ export const stopOldSandboxInstances = internalAction({
         continue;
       }
 
+      const client = config.client;
+
       console.log(
         `[sandboxMaintenance:stop] Processing provider: ${config.provider}`
       );
 
       try {
-        const instances = await config.client.listInstances();
+        const instances = await client.listInstances();
 
         // Filter for cmux instances that are paused/stopped
         const pausedInstances = instances
@@ -689,6 +698,15 @@ export const stopOldSandboxInstances = internalAction({
                 return { skipped: true, reason: "already_stopped" };
               }
 
+              // PVE LXC doesn't expose creation time; created is 0 in the provider list.
+              // If we also have no activity record, we can't safely determine age/inactivity.
+              if (!activity && instance.created === 0) {
+                console.warn(
+                  `[sandboxMaintenance:stop] Skipping ${instance.id} - unknown creation time (no activity record)`
+                );
+                return { skipped: true, reason: "unknown_creation_time" };
+              }
+
               // Determine last activity time
               const lastActivityAt =
                 activity?.lastResumedAt ??
@@ -712,20 +730,15 @@ export const stopOldSandboxInstances = internalAction({
                 `[sandboxMaintenance:stop] Stopping ${instance.id} (inactive ${inactiveDays} days)...`
               );
 
-              await config.client!.stopInstance(instance.id);
+              await client.stopInstance(instance.id);
 
               // Record in activity table
-              await ctx.runMutation(
-                internal.sandboxInstances.recordStopInternal,
-                {
-                  instanceId: instance.id,
-                  provider: config.provider,
-                }
-              );
+              await ctx.runMutation(internal.sandboxInstances.recordStopInternal, {
+                instanceId: instance.id,
+                provider: config.provider,
+              });
 
-              console.log(
-                `[sandboxMaintenance:stop] Stopped ${instance.id}`
-              );
+              console.log(`[sandboxMaintenance:stop] Stopped ${instance.id}`);
               return { skipped: false };
             })
           );
@@ -782,6 +795,8 @@ export const cleanupOrphanedContainers = internalAction({
   args: {},
   handler: async (ctx) => {
     console.log("[sandboxMaintenance:orphanCleanup] Starting orphan cleanup...");
+    const now = Date.now();
+    const orphanMinAgeMs = ORPHAN_MIN_AGE_DAYS * 24 * MILLISECONDS_PER_HOUR;
 
     const configs = getProviderConfigs();
     let totalCleaned = 0;
@@ -798,32 +813,62 @@ export const cleanupOrphanedContainers = internalAction({
       try {
         // Get all instances from provider
         const instances = await config.client.listInstances();
+        const managedInstances = instances.filter((inst) =>
+          inst.metadata?.app?.startsWith("cmux")
+        );
         console.log(
-          `[sandboxMaintenance:orphanCleanup] ${config.provider}: Found ${instances.length} instances`
+          `[sandboxMaintenance:orphanCleanup] ${config.provider}: Found ${managedInstances.length} managed instances`
         );
 
-        if (instances.length === 0) continue;
+        if (managedInstances.length === 0) continue;
 
         // Get activity records for these instances from Convex
-        const instanceIds = instances.map((i) => i.id);
+        const instanceIds = managedInstances.map((i) => i.id);
         const activities = await ctx.runQuery(
           internal.sandboxInstances.getActivitiesByInstanceIdsInternal,
           { instanceIds }
         );
 
         // Find orphans: instances with no activity record
-        const orphans = instances.filter((inst) => !activities[inst.id]);
+        const orphans = managedInstances.filter((inst) => !activities[inst.id]);
 
         console.log(
           `[sandboxMaintenance:orphanCleanup] ${config.provider}: Found ${orphans.length} orphaned instances`
         );
 
         for (const orphan of orphans) {
-          // Safety: only clean up stopped containers
-          // "ready" is Morph's term for running, PVE uses status directly
-          if (orphan.status === "ready" || orphan.status === "running") {
+          // Safety: only clean up stopped/paused containers
+          if (orphan.status !== "stopped" && orphan.status !== "paused") {
             console.log(
-              `[sandboxMaintenance:orphanCleanup] Skipping running orphan: ${orphan.id}`
+              `[sandboxMaintenance:orphanCleanup] Skipping non-stopped orphan: ${orphan.id} (status=${orphan.status})`
+            );
+            totalSkipped++;
+            continue;
+          }
+
+          // Extra safety for PVE: only delete stopped containers.
+          // PVE doesn't preserve memory state on stop, and doesn't expose creation time in our provider list.
+          if (config.provider === "pve-lxc" && orphan.status !== "stopped") {
+            console.log(
+              `[sandboxMaintenance:orphanCleanup] Skipping PVE orphan not stopped: ${orphan.id} (status=${orphan.status})`
+            );
+            totalSkipped++;
+            continue;
+          }
+
+          if (orphan.created === 0) {
+            console.warn(
+              `[sandboxMaintenance:orphanCleanup] Skipping orphan with unknown creation time: ${orphan.id} (provider=${config.provider})`
+            );
+            totalSkipped++;
+            continue;
+          }
+
+          const ageMs = now - orphan.created * 1000;
+          const ageDays = Math.floor(ageMs / (24 * MILLISECONDS_PER_HOUR));
+          if (ageMs < orphanMinAgeMs) {
+            console.log(
+              `[sandboxMaintenance:orphanCleanup] Skipping young orphan: ${orphan.id} (${ageDays}d old, provider=${config.provider})`
             );
             totalSkipped++;
             continue;
