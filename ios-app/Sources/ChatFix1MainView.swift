@@ -3301,9 +3301,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             return false
         }
         let keyboardOverlap = currentKeyboardOverlap()
-        if isKeyboardVisible || keyboardOverlap > 1 {
-            return false
-        }
+        let keyboardVisible = isKeyboardVisible || keyboardOverlap > 1
         let boundsHeight = scrollView.bounds.height
         let topInset = scrollView.adjustedContentInset.top
         let desiredGap = max(-20, min(120, bottomMessageGap))
@@ -3320,6 +3318,16 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             viewBottomY: viewBottomY,
             scale: scale
         )
+        let keyboardBottomInset = pixelAlign(max(0, viewBottomY - pillTopY + desiredGap), scale: scale)
+        let keyboardFits = contentFitsAboveInput(
+            contentHeight: contentHeight,
+            boundsHeight: boundsHeight,
+            topInset: topInset,
+            bottomInset: keyboardBottomInset
+        )
+        if keyboardVisible {
+            return messageCount <= 3 && keyboardFits
+        }
         if messageCount <= 3 {
             let fallbackBottomInset = min(scrollView.contentInset.bottom, boundsHeight * 0.5)
             let fallbackFits = contentFitsAboveInput(
