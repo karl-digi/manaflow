@@ -1006,3 +1006,52 @@ morphRouter.openapi(
     }
   }
 );
+
+// =============================================================================
+// CLI Credentials - Provides Morph API key to authenticated CLI users
+// =============================================================================
+
+const CliCredentialsResponse = z
+  .object({
+    morphApiKey: z.string(),
+    baseSnapshotId: z.string(),
+  })
+  .openapi("CliCredentialsResponse");
+
+morphRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/morph/cli-credentials",
+    tags: ["Morph"],
+    summary: "Get CLI credentials for authenticated user",
+    description:
+      "Returns the Morph API key and default snapshot ID for CLI tools (dba, cmux). " +
+      "Requires authentication via Stack Auth Bearer token.",
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: CliCredentialsResponse,
+          },
+        },
+        description: "CLI credentials",
+      },
+      401: { description: "Unauthorized" },
+    },
+  }),
+  async (c) => {
+    // Authenticate user via Stack Auth
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+
+    // Return the Morph API key
+    // Note: In the future, this could be scoped per-user or per-team
+    // For now, we return the shared API key to authenticated users
+    return c.json({
+      morphApiKey: env.MORPH_API_KEY,
+      baseSnapshotId: DEFAULT_MORPH_SNAPSHOT_ID,
+    });
+  }
+);

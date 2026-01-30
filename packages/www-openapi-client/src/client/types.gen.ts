@@ -441,6 +441,11 @@ export type InstanceInfo = {
 
 export type ListInstancesResponse = Array<InstanceInfo>;
 
+export type CliCredentialsResponse = {
+    morphApiKey: string;
+    baseSnapshotId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -2066,6 +2071,29 @@ export type GetApiMorphInstancesResponses = {
 };
 
 export type GetApiMorphInstancesResponse = GetApiMorphInstancesResponses[keyof GetApiMorphInstancesResponses];
+
+export type GetApiMorphCliCredentialsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/morph/cli-credentials';
+};
+
+export type GetApiMorphCliCredentialsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiMorphCliCredentialsResponses = {
+    /**
+     * CLI credentials
+     */
+    200: CliCredentialsResponse;
+};
+
+export type GetApiMorphCliCredentialsResponse = GetApiMorphCliCredentialsResponses[keyof GetApiMorphCliCredentialsResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;
