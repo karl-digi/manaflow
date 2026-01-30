@@ -55,8 +55,10 @@ export const configureGithubAccess = async (
       // This prevents stale entries from accumulating across refreshes
       // We explicitly set GH_CONFIG_DIR and HOME to ensure gh uses the correct paths
       // regardless of what profile scripts might set (bash -l sources ~/.profile etc.)
+      // NOTE: The \\$ escapes are critical - they prevent the outer shell (cmux-execd's bash -c)
+      // from expanding variables before bash -l runs. Without this, $GH_CONFIG_DIR expands to empty.
       const ghAuthRes = await instance.exec(
-        `bash -lc "export GH_CONFIG_DIR=/root/.config/gh HOME=/root && rm -rf \\"$GH_CONFIG_DIR\\" && mkdir -p \\"$GH_CONFIG_DIR\\" && printf %s ${singleQuote(token)} | gh auth login --with-token && gh auth setup-git 2>&1"`
+        `bash -lc "export GH_CONFIG_DIR=/root/.config/gh HOME=/root && rm -rf \\"\\$GH_CONFIG_DIR\\" && mkdir -p \\"\\$GH_CONFIG_DIR\\" && printf %s ${singleQuote(token)} | gh auth login --with-token && gh auth setup-git 2>&1"`
       );
 
       if (ghAuthRes.exit_code === 0) {
