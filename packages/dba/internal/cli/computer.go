@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/dba-cli/dba/internal/auth"

@@ -138,13 +138,17 @@ const path = require('path');
 const PORT = process.env.PORT || 39377;
 const OWNER_ID_FILE = '/var/run/dba/owner-id';
 const PROJECT_ID_FILE = '/var/run/dba/stack-project-id';
+const SESSION_SECRET_FILE = '/var/run/dba/session-secret';
 
 // Auth configuration - loaded at startup
 let ownerId = null;
 let projectId = null;
+let sessionSecret = null;
 let jwksCache = null;
 let jwksCacheTime = 0;
 const JWKS_CACHE_TTL = 3600000; // 1 hour
+const SESSION_COOKIE_NAME = 'dba_session';
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
 /**
  * Load auth configuration from files
@@ -154,11 +158,124 @@ function loadAuthConfig() {
     ownerId = fs.readFileSync(OWNER_ID_FILE, 'utf8').trim();
     projectId = fs.readFileSync(PROJECT_ID_FILE, 'utf8').trim();
     console.log(`Auth config loaded: owner=${ownerId}, project=${projectId}`);
-    return true;
   } catch (e) {
     console.error('Warning: Could not load auth config:', e.message);
-    console.error('JWT auth will be disabled. Set up owner-id and stack-project-id files.');
-    return false;
+    console.error('JWT auth will be disabled.');
+  }
+
+  // Load or generate session secret for cookie signing
+  try {
+    sessionSecret = fs.readFileSync(SESSION_SECRET_FILE, 'utf8').trim();
+  } catch (e) {
+    // Generate new session secret
+    sessionSecret = crypto.randomBytes(32).toString('hex');
+    try {
+      fs.mkdirSync('/var/run/dba', { recursive: true });
+      fs.writeFileSync(SESSION_SECRET_FILE, sessionSecret);
+      console.log('Generated new session secret');
+    } catch (writeErr) {
+      console.error('Warning: Could not save session secret:', writeErr.message);
+    }
+  }
+
+  return !!(ownerId && projectId);
+}
+
+/**
+ * Sign a value for session cookie
+ */
+function signSession(userId) {
+  const data = JSON.stringify({ userId, exp: Date.now() + SESSION_MAX_AGE * 1000 });
+  const signature = crypto.createHmac('sha256', sessionSecret).update(data).digest('base64url');
+  return Buffer.from(data).toString('base64url') + '.' + signature;
+}
+
+/**
+ * Verify and decode session cookie
+ */
+function verifySession(cookie) {
+  try {
+    const [dataB64, signature] = cookie.split('.');
+    const data = Buffer.from(dataB64, 'base64url').toString();
+    const expectedSig = crypto.createHmac('sha256', sessionSecret).update(data).digest('base64url');
+    if (signature !== expectedSig) return null;
+    const parsed = JSON.parse(data);
+    if (parsed.exp < Date.now()) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Parse cookies from request
+ */
+function parseCookies(req) {
+  const cookies = {};
+  const header = req.headers.cookie || '';
+  header.split(';').forEach(cookie => {
+    const [name, ...rest] = cookie.trim().split('=');
+    if (name) cookies[name] = rest.join('=');
+  });
+  return cookies;
+}
+
+/**
+ * Generate access denied page HTML
+ */
+function getAccessDeniedHtml() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Access Denied - DBA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a; color: #fafafa;
+      min-height: 100vh; margin: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .container { text-align: center; padding: 2rem; max-width: 400px; }
+    h1 { margin-bottom: 0.5rem; }
+    p { color: #888; line-height: 1.6; }
+    code { background: #222; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Access Denied</h1>
+    <p>This DBA workspace requires authentication.</p>
+    <p>Use the CLI to open this workspace:</p>
+    <p><code>dba code &lt;instance-id&gt;</code></p>
+    <p><code>dba vnc &lt;instance-id&gt;</code></p>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Verify one-time login token (signed by CLI)
+ * Token format: base64url(JSON{userId, exp}).signature
+ */
+function verifyLoginToken(token) {
+  try {
+    const [dataB64, signature] = token.split('.');
+    if (!dataB64 || !signature) return null;
+
+    const data = Buffer.from(dataB64, 'base64url').toString();
+    const expectedSig = crypto.createHmac('sha256', sessionSecret).update(data).digest('base64url');
+
+    if (signature !== expectedSig) return null;
+
+    const parsed = JSON.parse(data);
+    // Token expires after 5 minutes
+    if (!parsed.exp || parsed.exp < Date.now()) return null;
+    if (!parsed.userId) return null;
+
+    return parsed;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -361,13 +478,133 @@ function sendJson(res, data, status = 200) {
 }
 
 /**
+ * Proxy request to nginx (port 80)
+ * Used for VS Code, VNC, and other browser-accessible services
+ */
+function proxyToNginx(req, res, originalHost) {
+  const proxyReq = http.request({
+    hostname: '127.0.0.1',
+    port: 80,
+    path: req.url,
+    method: req.method,
+    headers: {
+      ...req.headers,
+      // Keep original host for proper redirects
+      host: originalHost || req.headers.host || 'localhost',
+    },
+  }, (proxyRes) => {
+    // Rewrite Location header if it points to localhost
+    const headers = { ...proxyRes.headers };
+    if (headers.location && originalHost) {
+      headers.location = headers.location
+        .replace(/^http:\/\/localhost(:\d+)?/i, `https://${originalHost}`)
+        .replace(/^http:\/\/127\.0\.0\.1(:\d+)?/i, `https://${originalHost}`);
+    }
+    res.writeHead(proxyRes.statusCode, headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Proxy error:', err.message);
+    res.writeHead(502);
+    res.end('Bad Gateway');
+  });
+
+  req.pipe(proxyReq);
+}
+
+/**
+ * Check if path should be proxied to nginx (browser access)
+ */
+function isBrowserPath(pathname) {
+  // Root path serves VS Code
+  if (pathname === '/') return true;
+  // VS Code paths
+  if (pathname.startsWith('/code')) return true;
+  // VNC paths
+  if (pathname.startsWith('/vnc')) return true;
+  // WebSocket for VNC
+  if (pathname.startsWith('/websockify')) return true;
+  // Static assets from VS Code
+  if (pathname.startsWith('/static')) return true;
+  if (pathname.startsWith('/stable')) return true;
+  if (pathname.startsWith('/vscode')) return true;
+  // VS Code internal paths (but not our /_dba/ endpoints)
+  if (pathname.startsWith('/_') && !pathname.startsWith('/_dba')) return true;
+  // Favicon, manifest, etc.
+  if (pathname === '/favicon.ico') return true;
+  if (pathname === '/manifest.json') return true;
+  return false;
+}
+
+/**
  * Handle requests
  */
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const reqPath = url.pathname;
 
-  // CORS headers
+  // Health check - no auth
+  if (reqPath === '/health') {
+    sendJson(res, { status: 'ok' });
+    return;
+  }
+
+  // Auth endpoint - CLI generates URL with signed token, sets session cookie
+  // URL format: /_dba/auth?token=xxx&return=/code/
+  if (reqPath === '/_dba/auth') {
+    const token = url.searchParams.get('token');
+    const returnTo = url.searchParams.get('return') || '/code/';
+
+    if (!token) {
+      res.writeHead(400, { 'Content-Type': 'text/html' });
+      res.end(getAccessDeniedHtml());
+      return;
+    }
+
+    // Verify the one-time login token
+    const tokenData = verifyLoginToken(token);
+    if (!tokenData) {
+      res.writeHead(401, { 'Content-Type': 'text/html' });
+      res.end('<html><body><h1>Invalid or expired link</h1><p>Please use the CLI to generate a new link: <code>dba code &lt;id&gt;</code></p></body></html>');
+      return;
+    }
+
+    // Check user is the instance owner
+    if (tokenData.userId !== ownerId) {
+      res.writeHead(403, { 'Content-Type': 'text/html' });
+      res.end('<html><body><h1>Access Denied</h1><p>You are not the owner of this workspace.</p></body></html>');
+      return;
+    }
+
+    // Create session cookie and redirect
+    const sessionValue = signSession(tokenData.userId);
+    res.writeHead(302, {
+      'Location': returnTo,
+      'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionValue}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+    });
+    res.end();
+    return;
+  }
+
+  // Browser paths (VS Code, VNC) - require session cookie
+  if (isBrowserPath(reqPath)) {
+    const cookies = parseCookies(req);
+    const session = cookies[SESSION_COOKIE_NAME] ? verifySession(cookies[SESSION_COOKIE_NAME]) : null;
+
+    if (!session || session.userId !== ownerId) {
+      // No valid session - show access denied page
+      res.writeHead(401, { 'Content-Type': 'text/html' });
+      res.end(getAccessDeniedHtml());
+      return;
+    }
+
+    // Valid session - proxy to nginx
+    proxyToNginx(req, res, req.headers.host);
+    return;
+  }
+
+  // CORS headers for API endpoints
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -378,13 +615,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // Health check doesn't require auth
-  if (reqPath === '/health') {
-    sendJson(res, { status: 'ok' });
-    return;
-  }
-
-  // All other endpoints require authentication
+  // API endpoints require JWT authentication
   const authResult = await verifyAuth(req);
   if (!authResult.valid) {
     sendJson(res, { error: 'Unauthorized', message: authResult.error || 'Authentication required' }, 401);
@@ -400,6 +631,18 @@ async function handleRequest(req, res) {
     }
 
     switch (reqPath) {
+
+      // Generate one-time auth token for browser access (CLI calls this)
+      case '/_dba/generate-token':
+        const tokenData = {
+          userId: ownerId,
+          exp: Date.now() + 5 * 60 * 1000 // 5 minutes
+        };
+        const tokenJson = JSON.stringify(tokenData);
+        const tokenB64 = Buffer.from(tokenJson).toString('base64url');
+        const tokenSig = crypto.createHmac('sha256', sessionSecret).update(tokenJson).digest('base64url');
+        result = { token: `${tokenB64}.${tokenSig}` };
+        break;
 
       case '/snapshot':
         const snapshotArgs = ['snapshot'];

@@ -116,13 +116,16 @@ def wait_for_instance_ready(instance, timeout=300):
 
 def run_setup_script(instance, script_path):
     """Upload and run the setup script on the instance."""
+    import base64
+
     log_info("Reading setup script...")
     with open(script_path, 'r') as f:
         script_content = f.read()
 
-    # Upload script
+    # Upload script using base64 to avoid heredoc conflicts
     log_info("Uploading setup script to VM...")
-    instance.exec(f"cat > /tmp/setup_base_snapshot.sh << 'ENDOFSCRIPT'\n{script_content}\nENDOFSCRIPT")
+    script_b64 = base64.b64encode(script_content.encode()).decode()
+    instance.exec(f"echo '{script_b64}' | base64 -d > /tmp/setup_base_snapshot.sh")
     instance.exec("chmod +x /tmp/setup_base_snapshot.sh")
 
     # Run the script

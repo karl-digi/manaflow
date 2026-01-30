@@ -310,6 +310,59 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 	return result.Stdout, result.Stderr, result.ExitCode, nil
 }
 
+// GenerateAuthToken generates a one-time auth token for browser access
+func (c *Client) GenerateAuthToken(ctx context.Context, instanceID string) (string, error) {
+	if c.teamSlug == "" {
+		return "", fmt.Errorf("team slug not set")
+	}
+
+	// First, get the instance to get the worker URL
+	instance, err := c.GetInstance(ctx, instanceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get instance: %w", err)
+	}
+	if instance.WorkerURL == "" {
+		return "", fmt.Errorf("worker URL not available")
+	}
+
+	// Get access token for worker auth
+	accessToken, err := auth.GetAccessToken()
+	if err != nil {
+		return "", fmt.Errorf("not authenticated: %w", err)
+	}
+
+	// Call the worker's /_dba/generate-token endpoint
+	workerURL := strings.TrimRight(instance.WorkerURL, "/") + "/_dba/generate-token"
+
+	req, err := http.NewRequestWithContext(ctx, "POST", workerURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call worker: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Token, nil
+}
+
 // GetSSHCredentials gets SSH credentials for an instance
 func (c *Client) GetSSHCredentials(ctx context.Context, instanceID string) (string, error) {
 	if c.teamSlug == "" {

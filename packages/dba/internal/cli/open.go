@@ -4,6 +4,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -14,6 +15,28 @@ import (
 	"github.com/dba-cli/dba/internal/vm"
 	"github.com/spf13/cobra"
 )
+
+func buildAuthURL(workerURL, targetPath, token string) (string, error) {
+	parsed, err := url.Parse(workerURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	parsed.Path = "/_dba/auth"
+	query := parsed.Query()
+	query.Set("token", token)
+	query.Set("return", targetPath)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// getAuthToken calls the worker to generate a one-time auth token
+func getAuthToken(ctx context.Context, client *vm.Client, instanceID string) (string, error) {
+	token, err := client.GenerateAuthToken(ctx, instanceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate auth token: %w", err)
+	}
+	return token, nil
+}
 
 var codeCmd = &cobra.Command{
 	Use:   "code <id>",
@@ -45,12 +68,24 @@ Examples:
 			return fmt.Errorf("failed to get instance: %w", err)
 		}
 
-		if instance.VSCodeURL == "" {
-			return fmt.Errorf("VS Code URL not available")
+		if instance.WorkerURL == "" {
+			return fmt.Errorf("worker URL not available")
 		}
 
-		fmt.Printf("Opening VS Code: %s\n", instance.VSCodeURL)
-		return openBrowser(instance.VSCodeURL)
+		// Generate one-time auth token
+		token, err := getAuthToken(ctx, client, instanceID)
+		if err != nil {
+			return err
+		}
+
+		// Build auth URL that sets session cookie and redirects to VS Code
+		authURL, err := buildAuthURL(instance.WorkerURL, "/code/", token)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Opening VS Code...\n")
+		return openBrowser(authURL)
 	},
 }
 
@@ -84,12 +119,24 @@ Examples:
 			return fmt.Errorf("failed to get instance: %w", err)
 		}
 
-		if instance.VNCURL == "" {
-			return fmt.Errorf("VNC URL not available")
+		if instance.WorkerURL == "" {
+			return fmt.Errorf("worker URL not available")
 		}
 
-		fmt.Printf("Opening VNC: %s\n", instance.VNCURL)
-		return openBrowser(instance.VNCURL)
+		// Generate one-time auth token
+		token, err := getAuthToken(ctx, client, instanceID)
+		if err != nil {
+			return err
+		}
+
+		// Build auth URL that sets session cookie and redirects to VNC
+		authURL, err := buildAuthURL(instance.WorkerURL, "/vnc/vnc.html?path=vnc/websockify", token)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Opening VNC...\n")
+		return openBrowser(authURL)
 	},
 }
 
@@ -176,11 +223,31 @@ Examples:
 
 		fmt.Printf("ID:       %s\n", instance.ID)
 		fmt.Printf("Status:   %s\n", instance.Status)
-		if instance.VSCodeURL != "" {
-			fmt.Printf("VS Code:  %s\n", instance.VSCodeURL)
-		}
-		if instance.VNCURL != "" {
-			fmt.Printf("VNC:      %s\n", instance.VNCURL)
+
+		// Generate authenticated URLs if the instance is running
+		if instance.WorkerURL != "" && instance.Status == "running" {
+			token, err := getAuthToken(ctx, client, instanceID)
+			if err != nil {
+				// Fall back to raw URLs
+				if instance.VSCodeURL != "" {
+					fmt.Printf("VS Code:  %s\n", instance.VSCodeURL)
+				}
+				if instance.VNCURL != "" {
+					fmt.Printf("VNC:      %s\n", instance.VNCURL)
+				}
+			} else {
+				codeAuthURL, _ := buildAuthURL(instance.WorkerURL, "/code/", token)
+				vncAuthURL, _ := buildAuthURL(instance.WorkerURL, "/vnc/vnc.html?path=vnc/websockify", token)
+				fmt.Printf("VS Code:  %s\n", codeAuthURL)
+				fmt.Printf("VNC:      %s\n", vncAuthURL)
+			}
+		} else {
+			if instance.VSCodeURL != "" {
+				fmt.Printf("VS Code:  %s\n", instance.VSCodeURL)
+			}
+			if instance.VNCURL != "" {
+				fmt.Printf("VNC:      %s\n", instance.VNCURL)
+			}
 		}
 
 		return nil

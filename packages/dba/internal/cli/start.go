@@ -100,11 +100,33 @@ Examples:
 		// Save as last used instance
 		state.SetLastInstance(instance.ID, teamSlug)
 
-		// Output results
+		// Generate auth token for authenticated URLs
+		token, err := getAuthToken(ctx, client, instance.ID)
+		if err != nil {
+			// Fall back to raw URLs if token generation fails
+			fmt.Printf("Warning: could not generate auth token: %v\n", err)
+			fmt.Println("\n✓ VM is ready!")
+			fmt.Printf("  ID:       %s\n", instance.ID)
+			fmt.Printf("  VS Code:  %s\n", instance.VSCodeURL)
+			fmt.Printf("  VNC:      %s\n", instance.VNCURL)
+			return nil
+		}
+
+		// Build authenticated URLs
+		codeAuthURL, err := buildAuthURL(instance.WorkerURL, "/code/", token)
+		if err != nil {
+			return fmt.Errorf("failed to build VS Code URL: %w", err)
+		}
+		vncAuthURL, err := buildAuthURL(instance.WorkerURL, "/vnc/vnc.html?path=vnc/websockify", token)
+		if err != nil {
+			return fmt.Errorf("failed to build VNC URL: %w", err)
+		}
+
+		// Output results with authenticated URLs
 		fmt.Println("\n✓ VM is ready!")
 		fmt.Printf("  ID:       %s\n", instance.ID)
-		fmt.Printf("  VS Code:  %s\n", instance.VSCodeURL)
-		fmt.Printf("  VNC:      %s\n", instance.VNCURL)
+		fmt.Printf("  VS Code:  %s\n", codeAuthURL)
+		fmt.Printf("  VNC:      %s\n", vncAuthURL)
 
 		return nil
 	},

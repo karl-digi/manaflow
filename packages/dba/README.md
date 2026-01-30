@@ -674,6 +674,80 @@ go run ./cmd/dba exec <id> "curl -s -X POST http://localhost:39377/snapshot"
 # Output: {"error":"Unauthorized","message":"Valid Bearer token required"}
 ```
 
+### Testing JWT Authentication
+
+The browser automation commands use Stack Auth JWT authentication. When a new VM is created, the owner's user ID and Stack Auth project ID are injected into the VM, and the worker daemon validates JWTs on each request.
+
+#### Quick Test
+
+```bash
+# 1. Build and login
+cd packages/dba
+make build
+./bin/dba login
+
+# 2. Create a new VM
+./bin/dba start
+# Output: dba_abc123
+
+# 3. Verify auth config was injected
+./bin/dba exec dba_abc123 "cat /var/run/dba/owner-id"
+# Should output your user ID (UUID format)
+
+./bin/dba exec dba_abc123 "cat /var/run/dba/stack-project-id"
+# Should output the Stack Auth project ID
+
+# 4. Check worker daemon is running with auth config
+./bin/dba exec dba_abc123 "systemctl status dba-worker"
+# Should show: "Auth config loaded: owner=..., project=..."
+
+# 5. Test browser commands (uses JWT auth automatically)
+./bin/dba computer snapshot dba_abc123
+# Should return accessibility tree (e.g., "- document")
+
+./bin/dba computer open dba_abc123 "https://example.com"
+# Should output: "Navigated to: https://example.com"
+
+./bin/dba computer snapshot dba_abc123
+# Should show Example Domain content with refs like @e1, @e2
+```
+
+#### How JWT Auth Works
+
+1. **Instance Creation**: When `dba start` creates a VM, the Convex backend injects:
+   - `/var/run/dba/owner-id` - The authenticated user's Stack Auth subject ID
+   - `/var/run/dba/stack-project-id` - The Stack Auth project ID for JWKS validation
+
+2. **Worker Startup**: The `dba-worker` systemd service reads these files and configures JWT validation
+
+3. **Request Flow**:
+   ```
+   CLI → gets JWT from ~/.dba/auth.json
+       → sends request to worker URL with Authorization: Bearer <JWT>
+       → worker validates JWT signature via Stack Auth JWKS
+       → worker checks JWT subject matches owner-id file
+       → if valid, executes browser command via agent-browser
+   ```
+
+4. **Security**: Only the instance owner can control the browser. The worker URL is public but requires a valid JWT from the correct user.
+
+#### Troubleshooting
+
+```bash
+# Check if auth files exist and have content
+./bin/dba exec <id> "ls -la /var/run/dba/"
+./bin/dba exec <id> "wc -c /var/run/dba/owner-id"  # Should be 36-37 bytes
+
+# Check worker logs
+./bin/dba exec <id> "journalctl -u dba-worker -n 50"
+
+# Restart worker after manual changes
+./bin/dba exec <id> "systemctl restart dba-worker"
+
+# Test worker health (no auth required)
+./bin/dba exec <id> "curl -s http://localhost:39377/health"
+```
+
 ### Rebuilding the Snapshot
 
 To include agent-browser and the worker daemon in new VMs:

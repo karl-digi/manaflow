@@ -1,7 +1,7 @@
 DBA Base Snapshot Information
 ========================================
-Created: 2026-01-28T20:48:06.266340
-Snapshot ID: snapshot_s1pdyiz6
+Created: 2026-01-30T14:34:12.022331
+Snapshot ID: snapshot_z84t8vej
 Digest: dba-base-v1
 Image Base: morphvm-minimal
 Resources: 2 vCPU, 4096MB RAM, 32GB disk

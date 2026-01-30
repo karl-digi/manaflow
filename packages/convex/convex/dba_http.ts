@@ -12,7 +12,7 @@ import type { FunctionReference } from "convex/server";
 const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
 
 // Default snapshot ID for dba CLI instances
-const DEFAULT_DBA_SNAPSHOT_ID = "snapshot_u16ybfyb";
+const DEFAULT_DBA_SNAPSHOT_ID = "snapshot_z84t8vej";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -108,6 +108,18 @@ function extractNetworkingUrls(
       vncUrl: httpServices["39380"] ?? httpServices["vnc"],
     };
   }
+}
+
+function buildDbaProxyUrls(workerUrl?: string) {
+  if (!workerUrl) {
+    return { vscodeUrl: undefined, vncUrl: undefined };
+  }
+
+  const base = workerUrl.replace(/\/+$/, "");
+  return {
+    vscodeUrl: `${base}/code/`,
+    vncUrl: `${base}/vnc/vnc.html?path=vnc/websockify`,
+  };
 }
 
 // Type-safe references to devboxInstances functions (used by dba CLI)
@@ -260,15 +272,10 @@ export const createInstance = httpAction(async (ctx, req) => {
       };
     };
 
-    // Expose HTTP services (VS Code, VNC, worker) for the new instance
-    // These need to be exposed explicitly after boot
-    const exposedServices: { vscodeUrl?: string; vncUrl?: string; workerUrl?: string } = {};
+    // Expose HTTP services (worker only) for the new instance
+    const exposedServices: { workerUrl?: string } = {};
 
-    const servicesToExpose = [
-      { name: "vscode", port: 39378 },
-      { name: "vnc", port: 39380 },
-      { name: "worker", port: 39377 },
-    ];
+    const servicesToExpose = [{ name: "worker", port: 39377 }];
 
     for (const service of servicesToExpose) {
       try {
@@ -281,9 +288,7 @@ export const createInstance = httpAction(async (ctx, req) => {
         );
         if (exposeResponse.ok) {
           const exposeData = (await exposeResponse.json()) as { url?: string };
-          if (service.name === "vscode") exposedServices.vscodeUrl = exposeData.url;
-          else if (service.name === "vnc") exposedServices.vncUrl = exposeData.url;
-          else if (service.name === "worker") exposedServices.workerUrl = exposeData.url;
+          if (service.name === "worker") exposedServices.workerUrl = exposeData.url;
         }
       } catch (e) {
         console.error(`[dba.create] Failed to expose ${service.name}:`, e);
@@ -293,16 +298,15 @@ export const createInstance = httpAction(async (ctx, req) => {
     // Fall back to any services that were already in the boot response
     const httpServices = morphData.networking?.http_services ?? [];
     const bootUrls = extractNetworkingUrls(httpServices);
-    const vscodeUrl = exposedServices.vscodeUrl ?? bootUrls.vscodeUrl;
-    const vncUrl = exposedServices.vncUrl ?? bootUrls.vncUrl;
     const workerUrl = exposedServices.workerUrl ?? bootUrls.workerUrl;
+    const proxyUrls = buildDbaProxyUrls(workerUrl);
 
     // Inject auth config for worker daemon (JWT validation)
     // This writes the owner ID and Stack Auth project ID to the VM
     const stackProjectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
     if (stackProjectId) {
       try {
-        // Create directory and write auth config files
+        // Create directory
         await morphFetch(`/instance/${morphData.id}/exec`, {
           method: "POST",
           body: JSON.stringify({
@@ -311,20 +315,34 @@ export const createInstance = httpAction(async (ctx, req) => {
           }),
         });
 
-        // Write owner ID (user's Stack Auth subject)
+        // Write owner ID using echo with shell redirection
+        // Note: Morph API requires command as array of tokens, NOT bash -c
+        // User IDs are UUIDs with only safe characters (a-f, 0-9, -)
+        const ownerId = identity!.subject;
+        console.log("[dba.create] Injecting owner-id:", ownerId);
         await morphFetch(`/instance/${morphData.id}/exec`, {
           method: "POST",
           body: JSON.stringify({
-            command: ["sh", "-c", `echo '${identity!.subject}' > /var/run/dba/owner-id`],
+            command: ["echo", ownerId, ">", "/var/run/dba/owner-id"],
             timeout: 10,
           }),
         });
 
-        // Write Stack Auth project ID
+        // Write Stack Auth project ID - also UUID format
+        console.log("[dba.create] Injecting stack-project-id:", stackProjectId);
         await morphFetch(`/instance/${morphData.id}/exec`, {
           method: "POST",
           body: JSON.stringify({
-            command: ["sh", "-c", `echo '${stackProjectId}' > /var/run/dba/stack-project-id`],
+            command: ["echo", stackProjectId, ">", "/var/run/dba/stack-project-id"],
+            timeout: 10,
+          }),
+        });
+
+        // Restart dba-worker to pick up the new config
+        await morphFetch(`/instance/${morphData.id}/exec`, {
+          method: "POST",
+          body: JSON.stringify({
+            command: ["systemctl", "restart", "dba-worker"],
             timeout: 10,
           }),
         });
@@ -352,9 +370,9 @@ export const createInstance = httpAction(async (ctx, req) => {
       id: result.id,
       status: morphData.status,
       snapshotId,
-      vscodeUrl,
+      vscodeUrl: proxyUrls.vscodeUrl,
       workerUrl,
-      vncUrl,
+      vncUrl: proxyUrls.vncUrl,
       spec: morphData.spec,
     });
   } catch (error) {
@@ -494,15 +512,16 @@ async function handleGetInstance(
 
     // Get URLs directly from Morph (not cached)
     const httpServices = morphData.networking?.http_services ?? [];
-    const { vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(httpServices);
+    const { workerUrl } = extractNetworkingUrls(httpServices);
+    const proxyUrls = buildDbaProxyUrls(workerUrl);
 
     return jsonResponse({
       id,
       status,
       name: instance.name,
-      vscodeUrl,
+      vscodeUrl: proxyUrls.vscodeUrl,
       workerUrl,
-      vncUrl,
+      vncUrl: proxyUrls.vncUrl,
       spec: morphData.spec,
     });
   } catch (error) {

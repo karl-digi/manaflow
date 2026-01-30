@@ -11,14 +11,19 @@
  * - Checks that the user ID in JWT matches the instance owner
  */
 
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const http = require('node:http');
+const https = require('node:https');
+const crypto = require('node:crypto');
+const net = require('node:net');
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const PORT = process.env.PORT || 39377;
+const VSCODE_PORT = Number(process.env.DBA_VSCODE_PORT || 39378);
+const VNC_PORT = Number(process.env.DBA_VNC_PORT || 39380);
+const AUTH_COOKIE_NAME = 'dba_auth';
+const VNC_PREFIX = '/vnc';
 const OWNER_ID_FILE = '/var/run/dba/owner-id';
 const PROJECT_ID_FILE = '/var/run/dba/stack-project-id';
 
@@ -136,26 +141,61 @@ async function verifyJWT(token) {
 }
 
 /**
+ * Parse cookies from request
+ */
+function parseCookies(header) {
+  if (!header) return {};
+  return header.split(';').reduce((acc, part) => {
+    const [rawKey, ...rest] = part.split('=');
+    const key = rawKey.trim();
+    if (!key) return acc;
+    const value = rest.join('=').trim();
+    acc[key] = decodeURIComponent(value);
+    return acc;
+  }, {});
+}
+
+/**
+ * Extract auth token from headers, cookies, or query params
+ */
+function getAuthToken(req, url) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    const [type, token] = authHeader.split(' ');
+    if (type === 'Bearer' && token) {
+      return { token, source: 'header' };
+    }
+  }
+
+  const cookies = parseCookies(req.headers['cookie']);
+  if (cookies[AUTH_COOKIE_NAME]) {
+    return { token: cookies[AUTH_COOKIE_NAME], source: 'cookie' };
+  }
+
+  const queryToken = url.searchParams.get('token');
+  if (queryToken) {
+    return { token: queryToken, source: 'query' };
+  }
+
+  return null;
+}
+
+/**
  * Verify authentication - checks JWT and owner ID
  */
-async function verifyAuth(req) {
+async function verifyAuth(req, url) {
   // If auth config not loaded, deny all requests
   if (!ownerId || !projectId) {
     return { valid: false, error: 'Auth not configured' };
   }
 
-  const authHeader = req.headers['authorization'];
-  if (!authHeader) {
-    return { valid: false, error: 'No authorization header' };
-  }
-
-  const [type, token] = authHeader.split(' ');
-  if (type !== 'Bearer' || !token) {
-    return { valid: false, error: 'Invalid authorization format' };
+  const tokenInfo = getAuthToken(req, url);
+  if (!tokenInfo) {
+    return { valid: false, error: 'No authorization token' };
   }
 
   try {
-    const payload = await verifyJWT(token);
+    const payload = await verifyJWT(tokenInfo.token);
 
     // Check if user ID matches owner
     const userId = payload.sub;
@@ -163,7 +203,10 @@ async function verifyAuth(req) {
       return { valid: false, error: 'User is not the instance owner' };
     }
 
-    return { valid: true, userId };
+    const now = Math.floor(Date.now() / 1000);
+    const expiresIn = payload.exp ? Math.max(0, payload.exp - now) : null;
+
+    return { valid: true, userId, token: tokenInfo.token, source: tokenInfo.source, expiresIn };
   } catch (e) {
     return { valid: false, error: e.message };
   }
@@ -243,6 +286,131 @@ function sendJson(res, data, status = 200) {
   res.end(JSON.stringify(data));
 }
 
+function setAuthCookie(res, token, expiresIn) {
+  const parts = [
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=Strict',
+    'Path=/',
+  ];
+  if (expiresIn !== null) {
+    parts.push(`Max-Age=${expiresIn}`);
+  }
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function stripTokenParam(url) {
+  const cleaned = new URL(url.toString());
+  cleaned.searchParams.delete('token');
+  return cleaned;
+}
+
+function isApiPath(pathname) {
+  return [
+    '/snapshot',
+    '/open',
+    '/click',
+    '/dblclick',
+    '/type',
+    '/fill',
+    '/press',
+    '/hover',
+    '/scroll',
+    '/screenshot',
+    '/back',
+    '/forward',
+    '/reload',
+    '/url',
+    '/title',
+    '/wait',
+    '/eval',
+  ].includes(pathname);
+}
+
+function isVncPath(pathname) {
+  return pathname === VNC_PREFIX || pathname.startsWith(`${VNC_PREFIX}/`) || pathname === '/websockify';
+}
+
+function buildUpstreamPath(url, prefix) {
+  const cleaned = stripTokenParam(url);
+  let path = cleaned.pathname + cleaned.search;
+  if (prefix && path.startsWith(prefix)) {
+    path = path.slice(prefix.length);
+    if (path === '') {
+      path = '/';
+    }
+  }
+  return path;
+}
+
+function proxyHttp(req, res, targetHost, targetPort, upstreamPath) {
+  const headers = { ...req.headers };
+  headers.host = `${targetHost}:${targetPort}`;
+  delete headers.authorization;
+  delete headers.cookie;
+
+  const proxyReq = http.request(
+    {
+      hostname: targetHost,
+      port: targetPort,
+      method: req.method,
+      path: upstreamPath,
+      headers,
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  );
+
+  proxyReq.on('error', (err) => {
+    console.error('Proxy error:', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'text/plain' });
+    }
+    res.end('Bad Gateway');
+  });
+
+  req.pipe(proxyReq);
+}
+
+function proxyWebsocket(req, socket, head, targetHost, targetPort, upstreamPath) {
+  const upstream = net.connect(targetPort, targetHost, () => {
+    const headers = { ...req.headers };
+    headers.host = `${targetHost}:${targetPort}`;
+    delete headers.authorization;
+    delete headers.cookie;
+
+    let requestLines = `${req.method} ${upstreamPath} HTTP/${req.httpVersion}\r\n`;
+    for (const [name, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) {
+        for (const v of value) {
+          requestLines += `${name}: ${v}\r\n`;
+        }
+      } else if (value !== undefined) {
+        requestLines += `${name}: ${value}\r\n`;
+      }
+    }
+    requestLines += '\r\n';
+    upstream.write(requestLines);
+    if (head && head.length > 0) {
+      upstream.write(head);
+    }
+    socket.pipe(upstream).pipe(socket);
+  });
+
+  upstream.on('error', (err) => {
+    console.error('Websocket proxy error:', err.message);
+    socket.destroy();
+  });
+
+  socket.on('error', (err) => {
+    console.error('Websocket client error:', err.message);
+    upstream.destroy();
+  });
+}
+
 /**
  * Handle requests
  */
@@ -250,27 +418,37 @@ async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const reqPath = url.pathname;
 
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
   // Health check doesn't require auth
   if (reqPath === '/health') {
     sendJson(res, { status: 'ok' });
     return;
   }
 
+  const apiPath = isApiPath(reqPath);
+  if (apiPath) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+  }
+
   // All other endpoints require authentication
-  const authResult = await verifyAuth(req);
+  const authResult = await verifyAuth(req, url);
   if (!authResult.valid) {
     sendJson(res, { error: 'Unauthorized', message: authResult.error || 'Authentication required' }, 401);
+    return;
+  }
+
+  if (authResult.source === 'query' && req.method === 'GET' && !apiPath) {
+    setAuthCookie(res, authResult.token, authResult.expiresIn);
+    const redirectUrl = stripTokenParam(url);
+    res.writeHead(302, { Location: redirectUrl.pathname + redirectUrl.search });
+    res.end();
     return;
   }
 
@@ -278,139 +456,152 @@ async function handleRequest(req, res) {
     let result;
     let body = {};
 
-    if (req.method === 'POST') {
-      body = await parseBody(req);
+    if (apiPath) {
+      if (req.method === 'POST') {
+        body = await parseBody(req);
+      }
+
+      switch (reqPath) {
+
+        case '/snapshot':
+          const snapshotArgs = ['snapshot'];
+          if (body.interactive) snapshotArgs.push('-i');
+          if (body.compact) snapshotArgs.push('-c');
+          result = await runAgentBrowser(snapshotArgs);
+          break;
+
+        case '/open':
+          if (!body.url) {
+            sendJson(res, { error: 'url required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['open', body.url]);
+          break;
+
+        case '/click':
+          if (!body.selector) {
+            sendJson(res, { error: 'selector required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['click', body.selector]);
+          break;
+
+        case '/dblclick':
+          if (!body.selector) {
+            sendJson(res, { error: 'selector required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['dblclick', body.selector]);
+          break;
+
+        case '/type':
+          if (!body.text) {
+            sendJson(res, { error: 'text required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['type', body.selector || '', body.text]);
+          break;
+
+        case '/fill':
+          if (!body.selector || body.value === undefined) {
+            sendJson(res, { error: 'selector and value required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['fill', body.selector, body.value]);
+          break;
+
+        case '/press':
+          if (!body.key) {
+            sendJson(res, { error: 'key required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['press', body.key]);
+          break;
+
+        case '/hover':
+          if (!body.selector) {
+            sendJson(res, { error: 'selector required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['hover', body.selector]);
+          break;
+
+        case '/scroll':
+          const dir = body.direction || 'down';
+          const amount = body.amount ? String(body.amount) : undefined;
+          const scrollArgs = ['scroll', dir];
+          if (amount) scrollArgs.push(amount);
+          result = await runAgentBrowser(scrollArgs);
+          break;
+
+        case '/screenshot':
+          // Take screenshot and return base64
+          const ssResult = await runAgentBrowser(['screenshot']);
+          if (ssResult.success && ssResult.data && ssResult.data.path) {
+            const imgData = fs.readFileSync(ssResult.data.path);
+            const base64 = imgData.toString('base64');
+            result = { success: true, data: { base64 } };
+            // Clean up temp file
+            try {
+              fs.unlinkSync(ssResult.data.path);
+            } catch (e) {
+              console.error('Failed to clean up screenshot:', e.message);
+            }
+          } else {
+            result = ssResult;
+          }
+          break;
+
+        case '/back':
+          result = await runAgentBrowser(['back']);
+          break;
+
+        case '/forward':
+          result = await runAgentBrowser(['forward']);
+          break;
+
+        case '/reload':
+          result = await runAgentBrowser(['reload']);
+          break;
+
+        case '/url':
+          result = await runAgentBrowser(['get', 'url']);
+          break;
+
+        case '/title':
+          result = await runAgentBrowser(['get', 'title']);
+          break;
+
+        case '/wait':
+          if (!body.selector) {
+            sendJson(res, { error: 'selector required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['wait', body.selector]);
+          break;
+
+        case '/eval':
+          if (!body.script) {
+            sendJson(res, { error: 'script required' }, 400);
+            return;
+          }
+          result = await runAgentBrowser(['eval', body.script]);
+          break;
+
+        default:
+          sendJson(res, { error: 'Not found' }, 404);
+          return;
+      }
+
+      sendJson(res, result);
+      return;
     }
 
-    switch (reqPath) {
-
-      case '/snapshot':
-        const snapshotArgs = ['snapshot'];
-        if (body.interactive) snapshotArgs.push('-i');
-        if (body.compact) snapshotArgs.push('-c');
-        result = await runAgentBrowser(snapshotArgs);
-        break;
-
-      case '/open':
-        if (!body.url) {
-          sendJson(res, { error: 'url required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['open', body.url]);
-        break;
-
-      case '/click':
-        if (!body.selector) {
-          sendJson(res, { error: 'selector required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['click', body.selector]);
-        break;
-
-      case '/dblclick':
-        if (!body.selector) {
-          sendJson(res, { error: 'selector required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['dblclick', body.selector]);
-        break;
-
-      case '/type':
-        if (!body.text) {
-          sendJson(res, { error: 'text required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['type', body.selector || '', body.text]);
-        break;
-
-      case '/fill':
-        if (!body.selector || body.value === undefined) {
-          sendJson(res, { error: 'selector and value required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['fill', body.selector, body.value]);
-        break;
-
-      case '/press':
-        if (!body.key) {
-          sendJson(res, { error: 'key required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['press', body.key]);
-        break;
-
-      case '/hover':
-        if (!body.selector) {
-          sendJson(res, { error: 'selector required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['hover', body.selector]);
-        break;
-
-      case '/scroll':
-        const dir = body.direction || 'down';
-        const amount = body.amount ? String(body.amount) : undefined;
-        const scrollArgs = ['scroll', dir];
-        if (amount) scrollArgs.push(amount);
-        result = await runAgentBrowser(scrollArgs);
-        break;
-
-      case '/screenshot':
-        // Take screenshot and return base64
-        const ssResult = await runAgentBrowser(['screenshot']);
-        if (ssResult.success && ssResult.data && ssResult.data.path) {
-          const imgData = fs.readFileSync(ssResult.data.path);
-          const base64 = imgData.toString('base64');
-          result = { success: true, data: { base64 } };
-          // Clean up temp file
-          try { fs.unlinkSync(ssResult.data.path); } catch (e) {}
-        } else {
-          result = ssResult;
-        }
-        break;
-
-      case '/back':
-        result = await runAgentBrowser(['back']);
-        break;
-
-      case '/forward':
-        result = await runAgentBrowser(['forward']);
-        break;
-
-      case '/reload':
-        result = await runAgentBrowser(['reload']);
-        break;
-
-      case '/url':
-        result = await runAgentBrowser(['get', 'url']);
-        break;
-
-      case '/title':
-        result = await runAgentBrowser(['get', 'title']);
-        break;
-
-      case '/wait':
-        if (!body.selector) {
-          sendJson(res, { error: 'selector required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['wait', body.selector]);
-        break;
-
-      case '/eval':
-        if (!body.script) {
-          sendJson(res, { error: 'script required' }, 400);
-          return;
-        }
-        result = await runAgentBrowser(['eval', body.script]);
-        break;
-
-      default:
-        sendJson(res, { error: 'Not found' }, 404);
-        return;
-    }
-
-    sendJson(res, result);
+    const targetHost = '127.0.0.1';
+    const isVnc = isVncPath(reqPath);
+    const targetPort = isVnc ? VNC_PORT : VSCODE_PORT;
+    const upstreamPath = buildUpstreamPath(url, isVnc ? VNC_PREFIX : '');
+    proxyHttp(req, res, targetHost, targetPort, upstreamPath);
   } catch (err) {
     console.error('Error:', err.message);
     sendJson(res, { success: false, error: err.message }, 500);
@@ -418,6 +609,24 @@ async function handleRequest(req, res) {
 }
 
 const server = http.createServer(handleRequest);
+
+server.on('upgrade', async (req, socket, head) => {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const authResult = await verifyAuth(req, url);
+  if (!authResult.valid) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const reqPath = url.pathname;
+  const targetHost = '127.0.0.1';
+  const isVnc = isVncPath(reqPath);
+  const targetPort = isVnc ? VNC_PORT : VSCODE_PORT;
+  const upstreamPath = buildUpstreamPath(url, isVnc ? VNC_PREFIX : '');
+
+  proxyWebsocket(req, socket, head, targetHost, targetPort, upstreamPath);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`DBA Worker daemon listening on port ${PORT}`);
