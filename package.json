@@ -64,7 +64,10 @@
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
     "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)",
     "convex:deploy": "(cd packages/convex && bun run deploy)",
-    "convex:setup": "bun run --env-file .env --cwd packages/convex setup"
+    "convex:setup": "bun run --env-file .env --cwd packages/convex setup",
+    "convex:backup": "bun run scripts/convex-clone-db.ts export",
+    "convex:clone": "bun run scripts/convex-clone-db.ts clone",
+    "convex:restore": "bun run scripts/convex-clone-db.ts import"
   },
   "type": "module",
   "workspaces": [
