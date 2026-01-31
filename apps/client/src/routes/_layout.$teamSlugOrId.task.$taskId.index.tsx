@@ -944,17 +944,14 @@ function TaskDetailPage() {
 
   // Determine effective layout mode based on workspace type
   // - Local workspaces: single panel (just VSCode)
-  // - Cloud workspaces: two-horizontal (VSCode left, browser right)
-  // - Regular tasks: use user's configured layout
+  // - Cloud workspaces and regular tasks: use user's configured layout
   const effectiveLayoutMode = useMemo(() => {
     if (isLocalWorkspaceTask) {
       return "single-panel" as const;
     }
-    if (isCloudWorkspaceTask) {
-      return "two-horizontal" as const;
-    }
+    // Cloud workspaces and regular tasks: use user's configured layout
     return panelConfig.layoutMode;
-  }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
+  }, [isLocalWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
     // For local workspaces: just VSCode
@@ -967,19 +964,9 @@ function TaskDetailPage() {
       };
     }
 
-    // For cloud workspaces: VSCode left, browser right
-    if (isCloudWorkspaceTask) {
-      return {
-        topLeft: "workspace" as const,
-        topRight: "browser" as const,
-        bottomLeft: null,
-        bottomRight: null,
-      };
-    }
-
-    // Regular tasks: use configured layout
+    // Cloud workspaces and regular tasks: use user's configured panels
     return getCurrentLayoutPanels(panelConfig);
-  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+  }, [panelConfig, isLocalWorkspaceTask]);
 
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
@@ -989,9 +976,9 @@ function TaskDetailPage() {
       return panels.filter((p) => p !== "gitDiff" && p !== "browser");
     }
 
-    // For cloud workspaces, exclude gitDiff (browser is used)
+    // For cloud workspaces, only support: workspace, browser, terminal
     if (isCloudWorkspaceTask) {
-      return panels.filter((p) => p !== "gitDiff");
+      return panels.filter((p) => p === "workspace" || p === "browser" || p === "terminal");
     }
 
     return panels;
@@ -1112,7 +1099,7 @@ function TaskDetailPage() {
           ) : null}
           <FlexiblePanelLayout
             layoutMode={effectiveLayoutMode}
-            storageKey="taskDetailGrid"
+            storageKey={`taskDetailGrid-${effectiveLayoutMode}`}
             topLeft={
               isPanelPositionActive("topLeft") && currentLayout.topLeft ? (
                 <RenderPanel

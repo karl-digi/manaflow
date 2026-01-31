@@ -54,6 +54,17 @@ export function FlexiblePanelLayout({
     }
   }, [horizontalSplit, verticalSplit, storageKey]);
 
+  // Reload splits from storage when storageKey changes (e.g., layout mode change)
+  useEffect(() => {
+    const storedH = storageKey ? localStorage.getItem(`${storageKey}-horizontal`) : null;
+    const parsedH = storedH ? Number.parseFloat(storedH) : 50;
+    setHorizontalSplit(Number.isNaN(parsedH) ? 50 : Math.min(Math.max(parsedH, 20), 80));
+
+    const storedV = storageKey ? localStorage.getItem(`${storageKey}-vertical`) : null;
+    const parsedV = storedV ? Number.parseFloat(storedV) : 50;
+    setVerticalSplit(Number.isNaN(parsedV) ? 50 : Math.min(Math.max(parsedV, 20), 80));
+  }, [storageKey]);
+
   const onMouseMoveHorizontal = useCallback(
     (e: MouseEvent) => {
       if (rafIdRef.current != null) return;
