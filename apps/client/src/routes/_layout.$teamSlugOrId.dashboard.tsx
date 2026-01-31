@@ -56,6 +56,8 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
   loader: async (opts) => {
     const { teamSlugOrId } = opts.params;
+    // In web mode, exclude local workspaces (must match TaskList query args)
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
     // Prewarm queries used in the dashboard
     convexQueryClient.convexClient.prewarmQuery({
       query: api.github.getReposByOrg,
@@ -65,10 +67,14 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
       query: api.environments.list,
       args: { teamSlugOrId },
     });
-    // Prewarm queries used in TaskList
+    // Prewarm queries used in TaskList (args must match exactly)
     convexQueryClient.convexClient.prewarmQuery({
       query: api.tasks.get,
-      args: { teamSlugOrId },
+      args: { teamSlugOrId, excludeLocalWorkspaces },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getPinned,
+      args: { teamSlugOrId, excludeLocalWorkspaces },
     });
   },
 });
@@ -480,11 +486,11 @@ function DashboardComponent() {
     [persistAgentSelection, setSelectedAgents]
   );
 
-  // Fetch repos from Convex
+  // Fetch repos from Convex - use prewarmed cache from route loader
   const reposByOrgQuery = useQuery({
     ...convexQuery(api.github.getReposByOrg, { teamSlugOrId }),
-    refetchOnMount: "always",
     refetchOnWindowFocus: false,
+    staleTime: 30_000, // Cache for 30s to use prewarmed data
   });
   const reposByOrg = useMemo(
     () => reposByOrgQuery.data || {},
