@@ -21,6 +21,263 @@ enum UITestMockData {
         "6+6",
         "12"
     ]
+    private static let e2bConversationId = "ts76s01mxqf2wayhv2hcxx76cd80447d"
+    private static let e2bTranscript: [String] = [
+        "Verify e2b snapshot links post-fix",
+        """
+        I'll help you verify the e2b snapshot links. Let me first explore the codebase to understand what this refers to and find the relevant files.
+        
+        The search didn't find any e2b snapshot links in the current working directory. Let me check if there might be a specific project or repository you're working with that I should look at. Let me also check if there are any git repositories or project directories that might contain this.
+        
+        I don't see any project files or git repositories in the current directory. It appears this is a fresh environment without a specific project loaded.
+        
+        To verify e2b snapshot links post-fix, I need more context:
+        
+        1. **Is there a specific project or repository** you'd like me to clone or examine?
+        2. **What was the fix** that was applied to the e2b snapshot links?
+        3. **Where should I look** for these links (a specific URL, repository, or file path)?
+        
+        Could you provide:
+        - A repository URL to clone
+        - A file path to check
+        - Or more details about what e2b snapshot links need verification
+        """
+    ]
+    private static let e2bToolCalls: [ConversationMessagesListByConversationReturnMessagesItemToolCallsItem] = [
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_QaZs8aD4Naug5Cmgwi9LVu",
+            name: "Find e2b snapshot links",
+            status: .pending,
+            arguments: "{\"description\":\"Find e2b snapshot links\",\"prompt\":\"Search the codebase for any references to \\\"e2b snapshot\\\" or \\\"e2b\\\" links/URLs. Look for:\\n1. Any files mentioning e2b snapshots\\n2. Configuration files with snapshot URLs\\n3. Documentation about e2b snapshots\\n4. Any recent fixes related to e2b snapshot links\\n\\nReport what you find including file paths and the specific links/content.\",\"subagent_type\":\"Explore\"}",
+            acpSeq: 15
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_DvFj3RRLy7iaeLtQ6WdPuz",
+            name: "grep \"e2b\"",
+            status: .completed,
+            arguments: "{\"output_mode\":\"files_with_matches\",\"pattern\":\"e2b\"}",
+            acpSeq: 17
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_KnY6orkRa8FXnpodXPPkYp",
+            name: "grep \"snapshot\"",
+            status: .completed,
+            arguments: "{\"output_mode\":\"files_with_matches\",\"pattern\":\"snapshot\"}",
+            acpSeq: 18
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_X7fRJztUKK2X9MZ3z6aQZy",
+            name: "grep --include=\"**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml,config}\" \"e2b\" /root",
+            status: .completed,
+            arguments: "{\"glob\":\"**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml,config}\",\"output_mode\":\"content\",\"path\":\"/root\",\"pattern\":\"e2b\"}",
+            acpSeq: 23
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_V3WHCQG2SbqZNW6jR1knog",
+            name: "grep --include=\"**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml}\" \"snapshot.*url|snapshot.*link\" /root",
+            status: .completed,
+            arguments: "{\"glob\":\"**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml}\",\"output_mode\":\"content\",\"path\":\"/root\",\"pattern\":\"snapshot.*url|snapshot.*link\"}",
+            acpSeq: 24
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_BMFkB1F9qehMSet7tvsWKG",
+            name: "Find `/root` `**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml}`",
+            status: .completed,
+            arguments: "{\"path\":\"/root\",\"pattern\":\"**/*.{md,json,ts,tsx,js,jsx,py,yml,yaml}\"}",
+            acpSeq: 29
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_7Hu1pC4q3ZVWZ9nWjYX1kb",
+            name: "`find /root -maxdepth 3 -type f \\( -name \"*.md\" -o -name \"*.json\" -o -name \"*.ts\" -o -name \"*.js\" -o -name \"*.py\" -o -name \"*.yml\" -o -name \"*.yaml\" \\) ! -path \"*/.cache/*\" ! -path \"*/.bun/*\" ! -path \"*/.npm/*\" ! -path \"*/.rustup/*\" ! -path \"*/node_modules/*\" ! -path \"*/.config/*\" ! -path \"*/.codex/*\" ! -path \"*/.claude/*\" ! -path \"*/.agents/*\" 2>/dev/null | head -50`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root -maxdepth 3 -type f \\\\( -name \\\"*.md\\\" -o -name \\\"*.json\\\" -o -name \\\"*.ts\\\" -o -name \\\"*.js\\\" -o -name \\\"*.py\\\" -o -name \\\"*.yml\\\" -o -name \\\"*.yaml\\\" \\\\) ! -path \\\"*/.cache/*\\\" ! -path \\\"*/.bun/*\\\" ! -path \\\"*/.npm/*\\\" ! -path \\\"*/.rustup/*\\\" ! -path \\\"*/node_modules/*\\\" ! -path \\\"*/.config/*\\\" ! -path \\\"*/.codex/*\\\" ! -path \\\"*/.claude/*\\\" ! -path \\\"*/.agents/*\\\" 2>/dev/null | head -50\",\"description\":\"Find source files in root without cache/toolchain directories\"}",
+            acpSeq: 32
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Fq1Kc1MhdavNsoJmvWsT51",
+            name: "`ls -la /root`",
+            status: .completed,
+            arguments: "{\"command\":\"ls -la /root\",\"description\":\"List contents of root directory\"}",
+            acpSeq: 35
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_VsxLaQBmjdtndTD2rx2Uun",
+            name: "Read File",
+            status: .completed,
+            arguments: "{\"file_path\":\"/root/.claude.json\"}",
+            acpSeq: 38
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_QjTmkcYbYFPxaLxa2RK6bB",
+            name: "grep \"e2b|snapshot\" /root/.claude.json",
+            status: .completed,
+            arguments: "{\"output_mode\":\"content\",\"path\":\"/root/.claude.json\",\"pattern\":\"e2b|snapshot\"}",
+            acpSeq: 39
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_CqVabU7sC3y8H5mQ11X94H",
+            name: "`ls -la /root/workspace 2>/dev/null || echo \"No workspace directory\"`",
+            status: .completed,
+            arguments: "{\"command\":\"ls -la /root/workspace 2>/dev/null || echo \\\"No workspace directory\\\"\",\"description\":\"Check if workspace directory exists\"}",
+            acpSeq: 44
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Py861frzaiXMFeCs135NqT",
+            name: "`find /root -type f -name \"*.md\" -o -name \"*.json\" -o -name \"*.config\" 2>/dev/null | grep -v -E \"/(\\.cache|\\.bun|\\.npm|\\.rustup|\\.config|\\.codex|\\.claude|\\.agents|node_modules)/\" | head -20`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root -type f -name \\\"*.md\\\" -o -name \\\"*.json\\\" -o -name \\\"*.config\\\" 2>/dev/null | grep -v -E \\\"/(\\\\.cache|\\\\.bun|\\\\.npm|\\\\.rustup|\\\\.config|\\\\.codex|\\\\.claude|\\\\.agents|node_modules)/\\\" | head -20\",\"description\":\"Find non-cache files in root\"}",
+            acpSeq: 45
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_HCW4yC5zecLwD7pgQWNxrr",
+            name: "`grep -r \"e2b\" /root --include=\"*.md\" --include=\"*.json\" --include=\"*.ts\" --include=\"*.js\" --include=\"*.py\" --include=\"*.yaml\" --include=\"*.yml\" --include=\"*.config\" 2>/dev/null | grep -v -E \"/(\\.cache|\\.bun|\\.npm|\\.rustup|node_modules)/\" | head -50`",
+            status: .completed,
+            arguments: "{\"command\":\"grep -r \\\"e2b\\\" /root --include=\\\"*.md\\\" --include=\\\"*.json\\\" --include=\\\"*.ts\\\" --include=\\\"*.js\\\" --include=\\\"*.py\\\" --include=\\\"*.yaml\\\" --include=\\\"*.yml\\\" --include=\\\"*.config\\\" 2>/dev/null | grep -v -E \\\"/(\\\\.cache|\\\\.bun|\\\\.npm|\\\\.rustup|node_modules)/\\\" | head -50\",\"description\":\"Search for e2b references excluding build caches\"}",
+            acpSeq: 50
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Dgsi2MSVWJyhxKiah91RLS",
+            name: "`grep -r \"snapshot\" /root --include=\"*.md\" --include=\"*.json\" --include=\"*.ts\" --include=\"*.js\" --include=\"*.py\" --include=\"*.yaml\" --include=\"*.yml\" 2>/dev/null | grep -v -E \"/(\\.cache|\\.bun|\\.npm|\\.rustup|node_modules)/\" | head -50`",
+            status: .completed,
+            arguments: "{\"command\":\"grep -r \\\"snapshot\\\" /root --include=\\\"*.md\\\" --include=\\\"*.json\\\" --include=\\\"*.ts\\\" --include=\\\"*.js\\\" --include=\\\"*.py\\\" --include=\\\"*.yaml\\\" --include=\\\"*.yml\\\" 2>/dev/null | grep -v -E \\\"/(\\\\.cache|\\\\.bun|\\\\.npm|\\\\.rustup|node_modules)/\\\" | head -50\",\"description\":\"Search for snapshot references excluding build caches\"}",
+            acpSeq: 53
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_RnerdgUTsikd2P6HFDQpo1",
+            name: "`grep -r \"e2b.io\\|e2b\\.io\\|e2b snapshot\\|e2b_snapshot\" /root 2>/dev/null | grep -v -E \"/(\\.cache|\\.bun|\\.npm|\\.rustup|node_modules)/\"`",
+            status: .completed,
+            arguments: "{\"command\":\"grep -r \\\"e2b.io\\\\|e2b\\\\.io\\\\|e2b snapshot\\\\|e2b_snapshot\\\" /root 2>/dev/null | grep -v -E \\\"/(\\\\.cache|\\\\.bun|\\\\.npm|\\\\.rustup|node_modules)/\\\"\",\"description\":\"Search for e2b URLs or e2b snapshot references\"}",
+            acpSeq: 56
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Tkw5gRmLLdGfV3ZP83i1FV",
+            name: "Read File",
+            status: .completed,
+            arguments: "{\"file_path\":\"/root/.claude/skills/agent-browser/SKILL.md\"}",
+            acpSeq: 59
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Dijaj7koRv99cYChbQpy6r",
+            name: "Read File",
+            status: .completed,
+            arguments: "{\"file_path\":\"/root/.config/opencode/skills/agent-browser/SKILL.md\"}",
+            acpSeq: 60
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_9kMBLbqGZAaEdgcmZom6ha",
+            name: "`find /root -type f -name \"*.md\" -o -name \"*.json\" -o -name \"*.ts\" -o -name \"*.js\" 2>/dev/null | xargs grep -l \"e2b\" 2>/dev/null | grep -v -E \"/(\\.cache|\\.bun|\\.npm|\\.rustup|node_modules)/\"`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root -type f -name \\\"*.md\\\" -o -name \\\"*.json\\\" -o -name \\\"*.ts\\\" -o -name \\\"*.js\\\" 2>/dev/null | xargs grep -l \\\"e2b\\\" 2>/dev/null | grep -v -E \\\"/(\\\\.cache|\\\\.bun|\\\\.npm|\\\\.rustup|node_modules)/\\\"\",\"description\":\"Find all files containing e2b reference, excluding common cache directories\"}",
+            acpSeq: 65
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_4poHDEQ51CzKnGfAHgjSF6",
+            name: "`find /root -type f \\( -name \".gitignore\" -o -name \"*.config.*\" -o -name \"*.env*\" -o -name \"README*\" -o -name \"CHANGELOG*\" \\) 2>/dev/null | head -20`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root -type f \\\\( -name \\\".gitignore\\\" -o -name \\\"*.config.*\\\" -o -name \\\"*.env*\\\" -o -name \\\"README*\\\" -o -name \\\"CHANGELOG*\\\" \\\\) 2>/dev/null | head -20\",\"description\":\"Find configuration and documentation files\"}",
+            acpSeq: 68
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_Rp7QFui9iWGiDsUk9imSwt",
+            name: "`grep -r \"e2b\\|snapshot.*url\" /root/\\.agents /root/\\.claude /root/\\.codex /root/\\.config 2>/dev/null | head -100`",
+            status: .completed,
+            arguments: "{\"command\":\"grep -r \\\"e2b\\\\|snapshot.*url\\\" /root/\\\\.agents /root/\\\\.claude /root/\\\\.codex /root/\\\\.config 2>/dev/null | head -100\",\"description\":\"Search in configuration and agent directories\"}",
+            acpSeq: 69
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_9ntewTA5yAjNLKtKHyYL3A",
+            name: "`grep -r \"e2b\" /root 2>/dev/null | head -100`",
+            status: .completed,
+            arguments: "{\"command\":\"grep -r \\\"e2b\\\" /root 2>/dev/null | head -100\",\"description\":\"Comprehensive search for any e2b references in entire root\"}",
+            acpSeq: 74
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_CczNnzVNvmbNavAMKnJ3VX",
+            name: "`find /root -type f -path \"*/node_modules\" -prune -o -path \"*/.cache\" -prune -o -path \"*/.bun\" -prune -o -path \"*/.npm\" -prune -o -path \"*/.rustup\" -prune -o -type f \\( -name \"*.md\" -o -name \"*.json\" -o -name \"*.ts\" -o -name \"*.js\" \\) -exec grep -l \"e2b\" {} \\; 2>/dev/null`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root -type f -path \\\"*/node_modules\\\" -prune -o -path \\\"*/.cache\\\" -prune -o -path \\\"*/.bun\\\" -prune -o -path \\\"*/.npm\\\" -prune -o -path \\\"*/.rustup\\\" -prune -o -type f \\\\( -name \\\"*.md\\\" -o -name \\\"*.json\\\" -o -name \\\"*.ts\\\" -o -name \\\"*.js\\\" \\\\) -exec grep -l \\\"e2b\\\" {} \\\\; 2>/dev/null\",\"description\":\"Find files with e2b, excluding standard cache directories\"}",
+            acpSeq: 77
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_7nLzUMoTpopXbFkC1V7DGQ",
+            name: "`ls -la /root/.agents/skills/agent-browser/ 2>/dev/null`",
+            status: .completed,
+            arguments: "{\"command\":\"ls -la /root/.agents/skills/agent-browser/ 2>/dev/null\",\"description\":\"List agent-browser skill directory\"}",
+            acpSeq: 80
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_91goxdEEP32BsPJdykXD6w",
+            name: "`find /root/.agents -type f | head -20`",
+            status: .completed,
+            arguments: "{\"command\":\"find /root/.agents -type f | head -20\",\"description\":\"Find files in .agents directory\"}",
+            acpSeq: 81
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_VDubCftu66y2bHZcLdLRw8",
+            name: "`for dir in /root/.config /root/.claude /root/.codex /root/.agents; do\n  echo \"=== Searching in $dir ===\"\n  find \"$dir\" -type f \\( -name \"*.md\" -o -name \"*.json\" -o -name \"*.ts\" -o -name \"*.js\" -o -name \"*.txt\" \\) 2>/dev/null | while read file; do\n    if grep -q \"e2b\\|e2b_\\|e2b snapshot\" \"$file\" 2>/dev/null; then\n      echo \"Found in: $file\"\n      grep -n \"e2b\" \"$file\" 2>/dev/null | head -5\n    fi\n  done\ndone`",
+            status: .completed,
+            arguments: "{\"command\":\"for dir in /root/.config /root/.claude /root/.codex /root/.agents; do\\n  echo \\\"=== Searching in $dir ===\\\"\\n  find \\\"$dir\\\" -type f \\\\( -name \\\"*.md\\\" -o -name \\\"*.json\\\" -o -name \\\"*.ts\\\" -o -name \\\"*.js\\\" -o -name \\\"*.txt\\\" \\\\) 2>/dev/null | while read file; do\\n    if grep -q \\\"e2b\\\\|e2b_\\\\|e2b snapshot\\\" \\\"$file\\\" 2>/dev/null; then\\n      echo \\\"Found in: $file\\\"\\n      grep -n \\\"e2b\\\" \\\"$file\\\" 2>/dev/null | head -5\\n    fi\\n  done\\ndone\",\"description\":\"Search in configuration directories for e2b references\"}",
+            acpSeq: 86
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_YZ4fJoCTgW2suSG7cHZGvf",
+            name: "Read File",
+            status: .completed,
+            arguments: "{\"file_path\":\"/root/.vscode-server-oss/data/User/settings.json\"}",
+            acpSeq: 89
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_3LCXMNUcjAETQEez5Tq5BK",
+            name: "`ls -la /root/.local 2>/dev/null | head -20`",
+            status: .completed,
+            arguments: "{\"command\":\"ls -la /root/.local 2>/dev/null | head -20\",\"description\":\"Check .local directory\"}",
+            acpSeq: 90
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_MSLpmUbD7vZmi2na1bk3JH",
+            name: "`ls -la /root/`",
+            status: .pending,
+            arguments: "{\"command\":\"ls -la /root/\",\"description\":\"List files in root directory\"}",
+            acpSeq: 127
+        ),
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: "tooluse_F1aTtB1imBh72PWwupYiqi",
+            name: "`find /root -maxdepth 3 -type d -name \".git\" 2>/dev/null | head -20`",
+            status: .pending,
+            arguments: "{\"command\":\"find /root -maxdepth 3 -type d -name \\\".git\\\" 2>/dev/null | head -20\",\"description\":\"Find git repositories in root\"}",
+            acpSeq: 129
+        ),
+    ]
+
     private static let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
     private static let morphTranscript: [String] = [
         "Verify morph snapshot links post-https-fix",
@@ -132,6 +389,16 @@ enum UITestMockData {
             updatedAt: now
         )
 
+        let e2bSnapshot = makeConversation(
+            id: e2bConversationId,
+            title: "Verify e2b snapshot links post-fix",
+            providerId: "claude",
+            previewText: e2bTranscript.first ?? "UI test conversation",
+            teamId: teamId,
+            createdAt: earlier - 12_000,
+            updatedAt: now
+        )
+
         let claude = makeConversation(
             id: "uitest_conversation_claude",
             title: "Claude",
@@ -152,7 +419,7 @@ enum UITestMockData {
             updatedAt: earlier
         )
 
-        return [succession, morphSnapshot, tinyConversation, claude, alex]
+        return [succession, morphSnapshot, tinyConversation, e2bSnapshot, claude, alex]
     }
 
     static func messages(for conversationId: String) -> [ConvexMessage] {
@@ -235,6 +502,34 @@ enum UITestMockData {
                     role: role,
                     text: text,
                     createdAt: start + Double(index) * 1200
+                )
+            }
+        }
+        if conversationId == e2bConversationId {
+            let transcript = e2bTranscript
+            let start = now - Double(transcript.count) * 1200
+            let lastUserIndex = transcript.indices.last { $0 % 2 == 0 }
+            let lastAssistantIndex = transcript.indices.last { $0 % 2 == 1 }
+            return transcript.enumerated().map { index, text in
+                let isAssistant = index % 2 == 1
+                let role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum =
+                    isAssistant ? .assistant : .user
+                let id: String
+                if let lastUserIndex, index == lastUserIndex {
+                    id = "\(conversationId)_user"
+                } else if let lastAssistantIndex, index == lastAssistantIndex {
+                    id = "\(conversationId)_assistant"
+                } else {
+                    id = "\(conversationId)_transcript_\(index + 1)"
+                }
+                let toolCalls = isAssistant ? e2bToolCalls : nil
+                return makeMessage(
+                    id: id,
+                    conversationId: conversationId,
+                    role: role,
+                    text: text,
+                    createdAt: start + Double(index) * 1200,
+                    toolCalls: toolCalls
                 )
             }
         }
@@ -377,7 +672,8 @@ enum UITestMockData {
         conversationId: String,
         role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum,
         text: String,
-        createdAt: Double
+        createdAt: Double,
+        toolCalls: [ConversationMessagesListByConversationReturnMessagesItemToolCallsItem]? = nil
     ) -> ConvexMessage {
         let content = ConversationMessagesListByConversationReturnMessagesItemContentItem(
             name: nil,
@@ -400,7 +696,7 @@ enum UITestMockData {
             deliveryStatus: .sent,
             deliveryError: nil,
             deliverySwapAttempted: nil,
-            toolCalls: nil,
+            toolCalls: toolCalls,
             reasoning: nil,
             acpSeq: nil,
             createdAt: createdAt,

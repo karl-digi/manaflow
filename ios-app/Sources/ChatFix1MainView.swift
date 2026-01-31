@@ -1736,6 +1736,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         return naturalContentHeight()
     }
 
+    private func effectiveContentHeight() -> CGFloat {
+        let naturalHeight = naturalContentHeight()
+        let contentSizeHeight = scrollView.contentSize.height
+        if contentSizeHeight > 1 {
+            return max(naturalHeight, contentSizeHeight)
+        }
+        return naturalHeight
+    }
+
     private func updateBottomInsetsForKeyboard(
         animated: Bool = false,
         animateHeightChanges _: Bool = false,
@@ -2354,7 +2363,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private func contentOffsetBounds(keyboardOverlap: CGFloat? = nil) -> (minY: CGFloat, maxY: CGFloat) {
         let topInset = scrollView.adjustedContentInset.top
         let bottomInset = scrollView.contentInset.bottom
-        let contentHeight = naturalContentHeight()
+        let contentHeight = effectiveContentHeight()
         let contentHeightForOffset = scrollableContentHeight()
         let boundsHeight = scrollView.bounds.height
         var minY = -topInset
@@ -3292,7 +3301,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func shouldPinShortThreadToTop() -> Bool {
-        let contentHeight = naturalContentHeight()
+        let contentHeight = effectiveContentHeight()
         let messageCount = messageArrangedViews().count
         if uiTestDisableShortThreadPin {
             return false

@@ -12,6 +12,7 @@ final class MessagePositionUITests: XCTestCase {
     private let jankConversationId = "ts79xr7rr98pbr98rb6vssta75800802"
     private let tinyConversationId = "ts78emy26kmwvaj753cqxeb7ah807rd0"
     private let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
+    private let e2bConversationId = "ts76s01mxqf2wayhv2hcxx76cd80447d"
 
     override func setUp() {
         super.setUp()
@@ -667,6 +668,50 @@ final class MessagePositionUITests: XCTestCase {
             closedGap,
             40,
             "Expected auto-scroll to bottom for the morph snapshot conversation: gap=\(closedGap)"
+        )
+    }
+
+    func testE2bConversationAutoScrollsToBottom() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = e2bConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let lastMessage = messageElement(
+            app: app,
+            fullId: "chat.message.\(e2bConversationId)_assistant"
+        )
+        XCTAssertTrue(lastMessage.waitForExistence(timeout: 6))
+        let pill = waitForInputPill(app: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        let closedPillTop = waitForStableMinY(
+            element: pill,
+            timeout: 0.6,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        let closedLastMaxY = waitForStableBottomY(
+            element: lastMessage,
+            timeout: 0.6,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        let closedGap = closedPillTop - closedLastMaxY
+        XCTAssertGreaterThanOrEqual(
+            closedGap,
+            0,
+            "Expected last message above the input at launch: gap=\(closedGap)"
+        )
+        XCTAssertLessThanOrEqual(
+            closedGap,
+            40,
+            "Expected auto-scroll to bottom for the e2b snapshot conversation: gap=\(closedGap)"
         )
     }
 
