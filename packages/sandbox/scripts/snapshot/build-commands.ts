@@ -367,29 +367,23 @@ CLAUDEEOF`,
       args: [
         `cat > /root/.claude.json << 'CLAUDEJSONEOF'
 {
-  "projects": {
-    "/root": {
-      "allowedTools": [],
-      "history": [],
-      "mcpContextUris": [],
-      "mcpServers": {},
-      "enabledMcpjsonServers": [],
-      "disabledMcpjsonServers": [],
-      "hasTrustDialogAccepted": true,
-      "projectOnboardingSeenCount": 0,
-      "hasClaudeMdExternalIncludesApproved": false,
-      "hasClaudeMdExternalIncludesWarningShown": false
-    },
-    "/root/workspace": {
-      "allowedTools": [],
-      "history": [],
-      "mcpContextUris": [],
-      "mcpServers": {},
-      "enabledMcpjsonServers": [],
-      "disabledMcpjsonServers": [],
-      "hasTrustDialogAccepted": true,
-      "projectOnboardingSeenCount": 0,
-      "hasClaudeMdExternalIncludesApproved": false,
+      "projects": {
+        "/root": {
+          "allowedTools": [],
+          "history": [],
+          "mcpContextUris": [],
+          "hasTrustDialogAccepted": true,
+          "projectOnboardingSeenCount": 0,
+          "hasClaudeMdExternalIncludesApproved": false,
+          "hasClaudeMdExternalIncludesWarningShown": false
+        },
+        "/root/workspace": {
+          "allowedTools": [],
+          "history": [],
+          "mcpContextUris": [],
+          "hasTrustDialogAccepted": true,
+          "projectOnboardingSeenCount": 0,
+          "hasClaudeMdExternalIncludesApproved": false,
       "hasClaudeMdExternalIncludesWarningShown": false
     }
   },
