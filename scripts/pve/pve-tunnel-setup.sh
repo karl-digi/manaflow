@@ -434,6 +434,16 @@ configure_caddy() {
 #   port-5173-pvelxc-abc123.${CF_DOMAIN}  -> pvelxc-abc123.${domain_suffix}:5173  (preview)
 
 :${CADDY_PORT} {
+    # Handle CORS preflight requests
+    @options method OPTIONS
+    handle @options {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+        header Access-Control-Allow-Headers "*"
+        header Access-Control-Max-Age "86400"
+        respond 204
+    }
+
     # InstanceId-based routing
     @service header_regexp service Host ^port-(\d+)-([a-z0-9-]+)\.
     handle @service {
@@ -442,7 +452,19 @@ configure_caddy() {
             transport http {
                 dial_timeout 10s
             }
+            # Strip headers that block iframe embedding (e.g., noVNC sends Cross-Origin-Resource-Policy: same-origin)
+            header_down -X-Frame-Options
+            header_down -Content-Security-Policy
+            header_down -Content-Security-Policy-Report-Only
+            header_down -Cross-Origin-Embedder-Policy
+            header_down -Cross-Origin-Opener-Policy
+            header_down -Cross-Origin-Resource-Policy
         }
+        # Add permissive CORS headers for iframe embedding
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+        header Access-Control-Allow-Headers "*"
+        header Access-Control-Expose-Headers "*"
     }
 
     # Default: return helpful error
