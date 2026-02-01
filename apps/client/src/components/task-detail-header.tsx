@@ -165,7 +165,20 @@ function AdditionsAndDeletions({
     setIsRefreshing(true);
     const toastId = toast.loading("Refreshing git diff...");
     try {
-      // Invalidate all git-diff queries to force a fresh fetch from the server
+      // Fetch fresh data with forceRefresh to bypass SWR cache window
+      await Promise.all(
+        repoConfigs.map((config) =>
+          queryClient.fetchQuery(
+            gitDiffQueryOptions({
+              repoFullName: config.repoFullName,
+              baseRef: config.baseRef,
+              headRef: config.headRef ?? "",
+              forceRefresh: true,
+            })
+          )
+        )
+      );
+      // Also invalidate other git-diff queries to ensure consistency
       await queryClient.invalidateQueries({ queryKey: ["git-diff"] });
       toast.success("Git diff refreshed", { id: toastId });
     } catch (error) {
@@ -174,7 +187,7 @@ function AdditionsAndDeletions({
     } finally {
       setIsRefreshing(false);
     }
-  }, [queryClient]);
+  }, [queryClient, repoConfigs]);
 
   if (!isLoading && firstError?.error) {
     return (

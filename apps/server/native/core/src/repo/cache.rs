@@ -339,7 +339,7 @@ pub fn swr_fetch_origin_all_path_bool(path: &std::path::Path, window_ms: u128) -
             let cwd_bg = cwd.clone();
             let root_bg = root.clone();
             std::thread::spawn(move || {
-                let _ = run_git(&cwd_bg, &["fetch", "--all", "--tags", "--prune"]);
+                let _ = run_git(&cwd_bg, &["fetch", "--all", "--prune"]);
                 let _ = update_cache_index_with(&root_bg, &PathBuf::from(&cwd_bg), Some(now_ms()));
                 set_map_last_fetch(&PathBuf::from(&cwd_bg), now_ms());
             });
@@ -347,7 +347,7 @@ pub fn swr_fetch_origin_all_path_bool(path: &std::path::Path, window_ms: u128) -
         }
     }
 
-    let _ = run_git(&cwd, &["fetch", "--all", "--tags", "--prune"]);
+    let _ = run_git(&cwd, &["fetch", "--all", "--prune"]);
     let now2 = now_ms();
     let _ = update_cache_index_with(&root, &PathBuf::from(&cwd), Some(now2));
     set_map_last_fetch(&PathBuf::from(&cwd), now2);
@@ -361,7 +361,7 @@ pub fn swr_fetch_origin_all_path(path: &std::path::Path, window_ms: u128) -> Res
 #[allow(dead_code)]
 pub fn fetch_origin_all_path(path: &std::path::Path) -> Result<()> {
     let cwd = path.to_string_lossy().to_string();
-    let _ = run_git(&cwd, &["fetch", "--all", "--tags", "--prune"]);
+    let _ = run_git(&cwd, &["fetch", "--all", "--prune"]);
     Ok(())
 }
 
@@ -411,7 +411,7 @@ pub fn swr_fetch_origin_all_path_with_auth(
                 let cwd_bg = cwd.clone();
                 let root_bg = root.clone();
                 std::thread::spawn(move || {
-                    let _ = run_git(&cwd_bg, &["fetch", "--all", "--tags", "--prune"]);
+                    let _ = run_git(&cwd_bg, &["fetch", "--all", "--prune"]);
                     let _ =
                         update_cache_index_with(&root_bg, &PathBuf::from(&cwd_bg), Some(now_ms()));
                     set_map_last_fetch(&PathBuf::from(&cwd_bg), now_ms());
@@ -424,11 +424,46 @@ pub fn swr_fetch_origin_all_path_with_auth(
     }
 
     // Outside window - fetch synchronously with auth
-    let _ = fetch_with_auth(&cwd, &["fetch", "--all", "--tags", "--prune"], auth_token);
+    let _ = fetch_with_auth(&cwd, &["fetch", "--all", "--prune"], auth_token);
     let now2 = now_ms();
     let _ = update_cache_index_with(&root, &PathBuf::from(&cwd), Some(now2));
     set_map_last_fetch(&PathBuf::from(&cwd), now2);
     Ok(true)
+}
+
+/// SWR fetch with optional force refresh bypass.
+/// When force_refresh is true, bypasses the SWR window and always performs a synchronous fetch.
+pub fn swr_fetch_origin_all_path_with_auth_force(
+    path: &std::path::Path,
+    window_ms: u128,
+    auth_token: Option<&str>,
+    force_refresh: bool,
+) -> Result<bool> {
+    #[cfg(debug_assertions)]
+    println!(
+        "[native.cache] swr_fetch_force called force_refresh={} path={:?}",
+        force_refresh, path
+    );
+    if force_refresh {
+        #[cfg(debug_assertions)]
+        println!("[native.cache] force_refresh=true, performing synchronous fetch");
+        let cwd = path.to_string_lossy().to_string();
+        let root = default_cache_root();
+        let fetch_result = fetch_with_auth(&cwd, &["fetch", "--all", "--prune"], auth_token);
+        #[cfg(debug_assertions)]
+        match &fetch_result {
+            Ok(output) => println!(
+                "[native.cache] fetch succeeded: {}",
+                output.lines().take(3).collect::<Vec<_>>().join(" | ")
+            ),
+            Err(e) => println!("[native.cache] fetch failed: {:?}", e),
+        }
+        let now = now_ms();
+        let _ = update_cache_index_with(&root, &PathBuf::from(&cwd), Some(now));
+        set_map_last_fetch(&PathBuf::from(&cwd), now);
+        return Ok(true);
+    }
+    swr_fetch_origin_all_path_with_auth(path, window_ms, auth_token)
 }
 
 /// Fetch a specific ref with auth token support.
@@ -459,7 +494,7 @@ pub fn fetch_specific_ref_with_auth(
     }
 
     // If specific branch fetch failed, try fetching all with auth
-    let result_all = fetch_with_auth(&cwd, &["fetch", "--all", "--tags", "--prune"], auth_token);
+    let result_all = fetch_with_auth(&cwd, &["fetch", "--all", "--prune"], auth_token);
     if result_all.is_ok() {
         let root = default_cache_root();
         let now = now_ms();

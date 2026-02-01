@@ -252,6 +252,7 @@ const GitSocketDiffRequestSchema = z.object({
   maxBytes: z.number().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
+  forceRefresh: z.boolean().optional(),
 });
 
 const IframePreflightRequestSchema = z.object({
@@ -555,6 +556,7 @@ export function setupSocketHandlers(
               lastKnownBaseSha: parsed.lastKnownBaseSha,
               lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
               authToken,
+              forceRefresh: parsed.forceRefresh,
             });
           }
         );

@@ -226,6 +226,7 @@ fn compute_diff_for_pr(pr: &PullRequestRecord) -> CachedDiff {
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
         authToken: None,
+        forceRefresh: None,
     })
     .unwrap_or_else(|err| panic!("diff_refs failed for {}#{}: {err}", pr.repo, pr.number));
 
@@ -612,6 +613,7 @@ fn refs_diff_basic_on_local_repo() {
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
         authToken: None,
+        forceRefresh: None,
     })
     .unwrap();
 
@@ -669,6 +671,7 @@ fn refs_merge_base_after_merge_is_branch_tip() {
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
         authToken: None,
+        forceRefresh: None,
     })
     .unwrap();
     assert_eq!(
@@ -728,6 +731,7 @@ fn refs_diff_numstat_matches_known_pairs() {
             lastKnownBaseSha: None,
             lastKnownMergeCommitSha: None,
             authToken: None,
+            forceRefresh: None,
         })
         .expect("diff refs");
         let adds: i32 = out.iter().map(|e| e.additions).sum();
@@ -823,6 +827,7 @@ fn refs_diff_handles_binary_files() {
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
         authToken: None,
+        forceRefresh: None,
     })
     .expect("diff refs binary");
 
