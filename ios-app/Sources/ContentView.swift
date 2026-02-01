@@ -93,6 +93,8 @@ private final class InputBarUITestHarnessViewController: UIViewController {
 
 struct SettingsView: View {
     @StateObject private var authManager = AuthManager.shared
+    @StateObject private var notifications = NotificationManager.shared
+    @State private var testNotificationAlert: TestNotificationAlert?
     #if DEBUG
     @AppStorage(DebugSettingsKeys.showChatOverlays) private var showChatOverlays = false
     @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showChatInputTuning = false
@@ -109,9 +111,9 @@ struct SettingsView: View {
                                 .foregroundStyle(.gray)
 
                             VStack(alignment: .leading) {
-                                Text(user.display_name ?? "User")
+                                Text(user.displayName ?? "User")
                                     .font(.headline)
-                                if let email = user.primary_email {
+                                if let email = user.primaryEmail {
                                     Text(email)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
@@ -120,6 +122,49 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                }
+
+                Section("Notifications") {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(notifications.statusLabel)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if notifications.authorizationStatus == .notDetermined {
+                        Button("Enable Notifications") {
+                            Task {
+                                await notifications.requestAuthorizationIfNeeded(trigger: .settings)
+                            }
+                        }
+                    } else {
+                        Button("Open System Settings") {
+                            notifications.openSystemSettings()
+                        }
+                    }
+
+                    #if DEBUG
+                    Button("Send Test Notification") {
+                        Task {
+                            do {
+                                try await notifications.sendTestNotification()
+                                testNotificationAlert = TestNotificationAlert(
+                                    title: "Test Notification Sent",
+                                    message: "Check your device for a push notification."
+                                )
+                            } catch {
+                                print("🔔 Failed to send test notification: \(error)")
+                                SentrySDK.capture(error: error)
+                                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                                testNotificationAlert = TestNotificationAlert(
+                                    title: "Test Notification Failed",
+                                    message: message
+                                )
+                            }
+                        }
+                    }
+                    #endif
                 }
 
                 #if DEBUG
@@ -168,8 +213,24 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .alert(item: $testNotificationAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+            .task {
+                await notifications.refreshAuthorizationStatus()
+            }
         }
     }
+}
+
+struct TestNotificationAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 #Preview {

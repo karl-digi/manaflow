@@ -1,4 +1,5 @@
 import Foundation
+import StackAuth
 import SwiftUI
 
 @MainActor
@@ -6,207 +7,188 @@ class AuthManager: ObservableObject {
     static let shared = AuthManager()
 
     @Published var isAuthenticated = false
-    @Published var currentUser: StackAuthClient.User?
+    @Published var currentUser: StackAuthUser?
     @Published var isLoading = false
     @Published var isRestoringSession = false
 
-    private let client = StackAuthClient.shared
-    private let keychain = KeychainHelper.shared
+    private let stack = StackAuthApp.shared
 
     private init() {
-        // Check for existing session on launch
         primeSessionState()
         Task {
             await checkExistingSession()
         }
     }
 
+    private var clearAuthRequested: Bool {
+        ProcessInfo.processInfo.environment["CMUX_UITEST_CLEAR_AUTH"] == "1"
+    }
+
+    private var autoLoginCredentials: AuthAutoLoginCredentials? {
+        AuthLaunchConfig.autoLoginCredentials(
+            from: ProcessInfo.processInfo.environment,
+            clearAuth: clearAuthRequested,
+            mockDataEnabled: UITestConfig.mockDataEnabled
+        )
+    }
+
     // MARK: - Session Management
 
     private func primeSessionState() {
-        if ProcessInfo.processInfo.environment["CMUX_UITEST_CLEAR_AUTH"] == "1" {
-            keychain.delete("access_token")
-            keychain.delete("refresh_token")
-            AuthUserCache.shared.clear()
-            print("🔐 Cleared auth for UI test launch")
-            self.currentUser = nil
-            self.isAuthenticated = false
-            self.isRestoringSession = false
+        if clearAuthRequested {
+            clearAuthState()
+            Task {
+                await clearTokensForUITest()
+            }
+            isRestoringSession = false
             return
         }
+
         #if DEBUG
         if UITestConfig.mockDataEnabled {
-            self.currentUser = StackAuthClient.User(
+            currentUser = StackAuthUser(
                 id: "uitest_user",
-                primary_email: "uitest@cmux.local",
-                display_name: "UI Test"
+                primaryEmail: "uitest@cmux.local",
+                displayName: "UI Test"
             )
-            self.isAuthenticated = true
-            self.isRestoringSession = false
+            isAuthenticated = true
+            isRestoringSession = false
+            return
+        }
+
+        if autoLoginCredentials != nil {
+            if let cachedUser = AuthUserCache.shared.load() {
+                currentUser = cachedUser
+            }
+            isAuthenticated = true
+            isRestoringSession = false
             return
         }
         #endif
 
-        let hasRefresh = keychain.get("refresh_token")
-        let hasAccess = keychain.get("access_token")
-        let hasAnyToken = hasRefresh != nil || hasAccess != nil
-
         if let cachedUser = AuthUserCache.shared.load() {
-            self.currentUser = cachedUser
+            currentUser = cachedUser
         }
 
-        if hasAnyToken {
-            self.isAuthenticated = true
-        } else {
-            self.currentUser = nil
-            self.isAuthenticated = false
-        }
-        self.isRestoringSession = false
+        let hasTokens = AuthSessionCache.shared.hasTokens
+        isAuthenticated = hasTokens || currentUser != nil
+        isRestoringSession = false
     }
 
     private func checkExistingSession() async {
+        if clearAuthRequested {
+            return
+        }
+
+        #if DEBUG
         if UITestConfig.mockDataEnabled {
             return
         }
-        let hasRefresh = keychain.get("refresh_token")
-        let hasAccess = keychain.get("access_token")
-        print("🔐 Checking session - refresh: \(hasRefresh != nil), access: \(hasAccess != nil)")
 
-        if hasRefresh == nil && hasAccess == nil {
-            print("🔐 No cached tokens, showing sign-in immediately")
-            self.currentUser = nil
-            self.isAuthenticated = false
+        if let credentials = autoLoginCredentials, !AuthSessionCache.shared.hasTokens {
+            await performAutoLogin(credentials)
             return
         }
+        #endif
 
-        if let accessToken = hasAccess, let remaining = accessTokenTimeRemaining(accessToken), remaining > 30 {
-            if let cachedUser = AuthUserCache.shared.load() {
-                self.currentUser = cachedUser
-                print("🔐 Loaded cached user for optimistic restore")
+        let cachedUser = AuthUserCache.shared.load()
+        let hasCachedSession = AuthSessionCache.shared.hasTokens || cachedUser != nil
+        let hasRefreshToken = await stack.getRefreshToken() != nil
+
+        if hasCachedSession || hasRefreshToken {
+            AuthSessionCache.shared.setHasTokens(true)
+            if currentUser == nil, let cachedUser {
+                currentUser = cachedUser
             }
-            self.isAuthenticated = true
-            print("🔐 Optimistically restored session from access token")
-            Task {
-                if self.currentUser == nil || remaining < 300 {
-                    await validateCachedSession(accessToken: accessToken, refreshToken: hasRefresh)
-                } else {
-                    await ConvexClientManager.shared.syncAuth()
-                }
-            }
+            await validateCachedSession(hasRefreshToken: hasRefreshToken)
             return
         }
 
-        guard let refreshToken = hasRefresh else {
-            print("🔐 No refresh token found in keychain, clearing auth state")
-            // Clear expired access token and auth state since we can't refresh
-            keychain.delete("access_token")
-            AuthUserCache.shared.clear()
-            self.currentUser = nil
-            self.isAuthenticated = false
+        if await stack.getAccessToken() != nil {
+            AuthSessionCache.shared.setHasTokens(true)
+            await validateCachedSession(hasRefreshToken: false)
             return
         }
 
-        if let cachedUser = AuthUserCache.shared.load() {
-            self.currentUser = cachedUser
-            print("🔐 Loaded cached user for optimistic restore (refresh-only)")
-        }
-        self.isAuthenticated = true
-        Task {
-            await validateCachedSession(accessToken: hasAccess, refreshToken: refreshToken)
-        }
+        clearAuthState()
     }
 
-    private func validateCachedSession(accessToken: String?, refreshToken: String?) async {
-        if let accessToken {
-            do {
-                let user = try await client.getCurrentUser(accessToken: accessToken)
-                self.currentUser = user
-                self.isAuthenticated = true
-                AuthUserCache.shared.save(user)
-                print("🔐 Session validated for \(user.primary_email ?? "unknown")")
-                await ConvexClientManager.shared.syncAuth()
-                return
-            } catch {
-                print("🔐 Access token validation failed: \(error)")
-            }
-        }
-
-        guard let refreshToken else {
-            print("🔐 No refresh token available after access token failure")
-            AuthUserCache.shared.clear()
-            self.currentUser = nil
-            self.isAuthenticated = false
-            return
-        }
-
+    private func performAutoLogin(_ credentials: AuthAutoLoginCredentials) async {
         do {
-            let newAccessToken = try await client.refreshAccessToken(refreshToken: refreshToken)
-            keychain.set(newAccessToken, forKey: "access_token")
-
-            let user = try await client.getCurrentUser(accessToken: newAccessToken)
-            self.currentUser = user
-            self.isAuthenticated = true
-            AuthUserCache.shared.save(user)
-            print("🔐 Session refreshed for \(user.primary_email ?? "unknown")")
-            await ConvexClientManager.shared.syncAuth()
+            try await signInWithPassword(email: credentials.email, password: credentials.password, setLoading: false)
         } catch {
-            print("🔐 Session refresh failed: \(error)")
-            if let authError = error as? AuthError, case .unauthorized = authError {
-                keychain.delete("refresh_token")
-                keychain.delete("access_token")
-                AuthUserCache.shared.clear()
-                self.currentUser = nil
-                self.isAuthenticated = false
+            print("🔐 Auto-login failed: \(error)")
+            clearAuthState()
+        }
+    }
+
+    private func validateCachedSession(hasRefreshToken: Bool) async {
+        do {
+            if let user = try await stack.getUser(or: .returnNull) {
+                await applySignedInUser(user)
+                return
             }
+        } catch {
+            print("🔐 Session validation failed: \(error)")
         }
-    }
 
-    private func accessTokenTimeRemaining(_ token: String) -> TimeInterval? {
-        guard let payload = decodeJWTPayload(from: token), let exp = payload.exp else {
-            return nil
+        if hasRefreshToken || AuthSessionCache.shared.hasTokens || currentUser != nil {
+            AuthSessionCache.shared.setHasTokens(true)
+            isAuthenticated = true
+            return
         }
-        let expirationDate = Date(timeIntervalSince1970: TimeInterval(exp))
-        return expirationDate.timeIntervalSinceNow
+
+        clearAuthState()
+        await ConvexClientManager.shared.clearAuth()
     }
 
-    private struct JWTPayload: Decodable {
-        let exp: Int?
-        let sub: String?
-        let email: String?
+    private func applySignedInUser(_ user: CurrentUser) async {
+        let mappedUser = await StackAuthUser(currentUser: user)
+        currentUser = mappedUser
+        isAuthenticated = true
+        AuthUserCache.shared.save(mappedUser)
+        AuthSessionCache.shared.setHasTokens(true)
+        await ConvexClientManager.shared.syncAuth()
+        await NotificationManager.shared.syncTokenIfPossible()
     }
 
-    private func decodeJWTPayload(from token: String) -> JWTPayload? {
-        let parts = token.split(separator: ".")
-        guard parts.count >= 2 else { return nil }
-        let payloadPart = String(parts[1])
-        let padded = padBase64Url(payloadPart)
-        guard let data = Data(base64Encoded: padded) else { return nil }
-        return try? JSONDecoder().decode(JWTPayload.self, from: data)
+    private func clearAuthState() {
+        AuthUserCache.shared.clear()
+        AuthSessionCache.shared.clear()
+        currentUser = nil
+        isAuthenticated = false
     }
 
-    private func padBase64Url(_ value: String) -> String {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = base64.count % 4
-        if remainder > 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
+    private func clearTokensForUITest() async {
+        do {
+            try await stack.signOut()
+        } catch {
+            print("🔐 Failed to clear Stack Auth tokens: \(error)")
         }
-        return base64
+        await ConvexClientManager.shared.clearAuth()
     }
 
     // MARK: - Sign In Flow
 
     private var pendingNonce: String?
-    private var pendingEmail: String?
 
     func sendCode(to email: String) async throws {
         isLoading = true
         defer { isLoading = false }
 
-        let nonce = try await client.sendSignInCode(email: email)
+        #if DEBUG
+        if email == "42" {
+            try await signInWithPassword(email: "l@l.com", password: "abc123", setLoading: false)
+            return
+        }
+        #endif
+
+        let callbackUrl = Environment.current == .development
+            ? "http://localhost:3000/auth/callback"
+            : "https://cmux.dev/auth/callback"
+
+        let nonce = try await stack.sendMagicLinkEmail(email: email, callbackUrl: callbackUrl)
         pendingNonce = nonce
-        pendingEmail = email
     }
 
     func verifyCode(_ code: String) async throws {
@@ -217,99 +199,128 @@ class AuthManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let response = try await client.signIn(code: code, nonce: nonce)
+        let fullCode = AuthMagicLinkCode.compose(code: code, nonce: nonce)
+        try await stack.signInWithMagicLink(code: fullCode)
+        try await completeSignIn()
 
-        // Store tokens
-        keychain.set(response.access_token, forKey: "access_token")
-        keychain.set(response.refresh_token, forKey: "refresh_token")
-        print("🔐 Tokens saved to keychain")
-
-        // Get user info
-        let user = try await client.getCurrentUser(accessToken: response.access_token)
-
-        // Update state
-        self.currentUser = user
-        self.isAuthenticated = true
-        AuthUserCache.shared.save(user)
-
-        // Sync with Convex
-        await ConvexClientManager.shared.syncAuth()
-
-        // Clear pending state
         pendingNonce = nil
-        pendingEmail = nil
     }
 
     // MARK: - Password Sign In (Debug)
 
-    func signInWithPassword(email: String, password: String) async throws {
+    func signInWithPassword(email: String, password: String, setLoading: Bool = true) async throws {
+        if setLoading {
+            isLoading = true
+        }
+        defer {
+            if setLoading {
+                isLoading = false
+            }
+        }
+
+        try await stack.signInWithCredential(email: email, password: password)
+        try await completeSignIn()
+    }
+
+    // MARK: - Apple Sign In
+
+    func signInWithApple() async throws {
         isLoading = true
         defer { isLoading = false }
 
-        let response = try await client.signInWithPassword(email: email, password: password)
+        try await stack.signInWithOAuth(
+            provider: "apple",
+            presentationContextProvider: AuthPresentationContextProvider.shared
+        )
+        try await completeSignIn()
+    }
 
-        // Store tokens
-        keychain.set(response.access_token, forKey: "access_token")
-        keychain.set(response.refresh_token, forKey: "refresh_token")
-        print("🔐 Password login: Tokens saved")
-
-        // Get user info
-        let user = try await client.getCurrentUser(accessToken: response.access_token)
-        print("🔐 Password login: Got user \(user.primary_email ?? "unknown")")
-
-        // Update state
-        self.currentUser = user
-        self.isAuthenticated = true
-        AuthUserCache.shared.save(user)
-
-        // Sync with Convex
-        print("🔐 Password login: Syncing with Convex...")
-        await ConvexClientManager.shared.syncAuth()
-        print("🔐 Password login: Convex sync complete")
+    private func completeSignIn() async throws {
+        guard let user = try await stack.getUser(or: .throw) else {
+            throw AuthError.unauthorized
+        }
+        await applySignedInUser(user)
     }
 
     func signOut() async {
-        let refreshToken = keychain.get("refresh_token")
-        self.isAuthenticated = false
-
-        keychain.delete("access_token")
-        keychain.delete("refresh_token")
-        AuthUserCache.shared.clear()
-
-        // Clear Convex auth
-        await ConvexClientManager.shared.clearAuth()
-
-        if let refreshToken {
-            try? await client.signOut(refreshToken: refreshToken)
+        do {
+            try await stack.signOut()
+        } catch {
+            print("🔐 Sign-out failed: \(error)")
         }
 
-        self.currentUser = nil
+        clearAuthState()
+        await NotificationManager.shared.unregisterFromServer()
+        await ConvexClientManager.shared.clearAuth()
     }
 
     // MARK: - Access Token
 
     func getAccessToken() async throws -> String {
-        if let accessToken = keychain.get("access_token") {
-            return accessToken
-        }
-
-        guard let refreshToken = keychain.get("refresh_token") else {
+        guard let accessToken = await stack.getAccessToken() else {
             throw AuthError.unauthorized
         }
-
-        let newToken = try await client.refreshAccessToken(refreshToken: refreshToken)
-        keychain.set(newToken, forKey: "access_token")
-        return newToken
+        return accessToken
     }
 }
 
-class AuthUserCache {
+struct AuthAutoLoginCredentials: Equatable {
+    let email: String
+    let password: String
+}
+
+enum AuthLaunchConfig {
+    static func autoLoginCredentials(
+        from environment: [String: String],
+        clearAuth: Bool,
+        mockDataEnabled: Bool
+    ) -> AuthAutoLoginCredentials? {
+        if clearAuth || mockDataEnabled {
+            return nil
+        }
+        guard let email = environment["CMUX_UITEST_STACK_EMAIL"], !email.isEmpty else {
+            return nil
+        }
+        guard let password = environment["CMUX_UITEST_STACK_PASSWORD"], !password.isEmpty else {
+            return nil
+        }
+        return AuthAutoLoginCredentials(email: email, password: password)
+    }
+}
+
+enum AuthMagicLinkCode {
+    static func compose(code: String, nonce: String) -> String {
+        code + nonce
+    }
+}
+
+final class AuthSessionCache {
+    static let shared = AuthSessionCache()
+
+    private let key = "auth_has_tokens"
+
+    private init() {}
+
+    var hasTokens: Bool {
+        UserDefaults.standard.bool(forKey: key)
+    }
+
+    func setHasTokens(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: key)
+    }
+
+    func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+final class AuthUserCache {
     static let shared = AuthUserCache()
     private let userKey = "auth_cached_user"
 
     private init() {}
 
-    func save(_ user: StackAuthClient.User) {
+    func save(_ user: StackAuthUser) {
         do {
             let data = try JSONEncoder().encode(user)
             UserDefaults.standard.set(data, forKey: userKey)
@@ -318,12 +329,12 @@ class AuthUserCache {
         }
     }
 
-    func load() -> StackAuthClient.User? {
+    func load() -> StackAuthUser? {
         guard let data = UserDefaults.standard.data(forKey: userKey) else {
             return nil
         }
         do {
-            return try JSONDecoder().decode(StackAuthClient.User.self, from: data)
+            return try JSONDecoder().decode(StackAuthUser.self, from: data)
         } catch {
             print("🔐 Failed to load cached user: \(error)")
             return nil
@@ -332,84 +343,5 @@ class AuthUserCache {
 
     func clear() {
         UserDefaults.standard.removeObject(forKey: userKey)
-    }
-}
-
-// Token storage - uses UserDefaults in DEBUG (simulator-friendly), Keychain in production
-class KeychainHelper {
-    static let shared = KeychainHelper()
-    private let service = "dev.cmux.app"
-
-    private init() {}
-
-    func set(_ value: String, forKey key: String) {
-        #if DEBUG
-        // UserDefaults persists across simulator reinstalls
-        UserDefaults.standard.set(value, forKey: "auth_\(key)")
-        print("🔐 Stored \(key) in UserDefaults (DEBUG)")
-        #else
-        let data = value.data(using: .utf8)!
-
-        let updateQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-
-        let attributes: [String: Any] = [
-            kSecValueData as String: data
-        ]
-
-        let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attributes as CFDictionary)
-
-        if updateStatus == errSecItemNotFound {
-            let addQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: key,
-                kSecValueData as String: data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
-            ]
-            SecItemAdd(addQuery as CFDictionary, nil)
-        }
-        #endif
-    }
-
-    func get(_ key: String) -> String? {
-        #if DEBUG
-        let value = UserDefaults.standard.string(forKey: "auth_\(key)")
-        print("🔐 Reading \(key) from UserDefaults: \(value != nil)")
-        return value
-        #else
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-
-        return String(data: data, encoding: .utf8)
-        #endif
-    }
-
-    func delete(_ key: String) {
-        #if DEBUG
-        UserDefaults.standard.removeObject(forKey: "auth_\(key)")
-        #else
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-        SecItemDelete(query as CFDictionary)
-        #endif
     }
 }

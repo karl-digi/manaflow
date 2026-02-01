@@ -1,9 +1,12 @@
 import SwiftUI
 import Sentry
 import UIKit
+import UserNotifications
 
 @main
 struct CMuxApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         #if DEBUG
         if UITestConfig.mockDataEnabled {
@@ -58,4 +61,31 @@ struct CMuxApp: App {
         defaults.set(false, forKey: "debug.input.isMultiline")
     }
     #endif
+}
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = NotificationManager.shared
+        Task {
+            await NotificationManager.shared.refreshAuthorizationStatus()
+        }
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        NotificationManager.shared.handleDeviceToken(deviceToken)
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        NotificationManager.shared.handleRegistrationFailure(error)
+    }
 }

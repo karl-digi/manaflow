@@ -3169,6 +3169,18 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         return (overlap: height, isVisible: isVisible)
     }
 
+    private func resolvedKeyboardVisibility() -> Bool {
+        #if DEBUG
+        if let visibilityOverride = uiTestKeyboardVisibilityOverride {
+            return visibilityOverride
+        }
+        if let uiTestKeyboardOverlap {
+            return uiTestKeyboardOverlap > 1
+        }
+        #endif
+        return keyboardOverlapFromLayoutGuide().isVisible
+    }
+
     private func isDismissingKeyboardGesture() -> Bool {
         guard scrollView != nil else { return false }
         #if DEBUG
@@ -3751,7 +3763,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         toolCallSheetReleaseWorkItem = nil
         toolCallSheetIsPresented = true
         let overlap = max(currentKeyboardOverlap(), lastKeyboardOverlap ?? 0)
-        let keyboardWasVisible = overlap > 1 || isKeyboardVisible
+        let keyboardWasVisible = resolvedKeyboardVisibility() || isKeyboardVisible
         let inputBarIsRaised = inputBarBottomConstraint.constant < -1
         let shouldHold = inputBarIsRaised && !keyboardWasVisible
         if keyboardWasVisible {

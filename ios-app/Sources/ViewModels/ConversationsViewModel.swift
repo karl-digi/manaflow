@@ -44,6 +44,10 @@ class ConversationsViewModel: ObservableObject {
     /// Create a new conversation with sandbox
     /// Returns the conversation ID on success
     func createConversation(initialMessage: String) async throws -> String {
+        if !UITestConfig.mockDataEnabled {
+            await NotificationManager.shared.requestAuthorizationIfNeeded(trigger: .createConversation)
+        }
+
         var teamId = self.teamId
         if teamId == nil {
             teamId = await getFirstTeamId()

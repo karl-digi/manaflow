@@ -110,12 +110,7 @@ final class InputStrategyLabUITests: XCTestCase {
     private func ensureSignedIn(app: XCUIApplication) {
         let emailField = app.textFields["Email"]
         if emailField.waitForExistence(timeout: 2) {
-            emailField.tap()
-            emailField.typeText("42")
-            let continueButton = app.buttons["Continue"]
-            if continueButton.exists {
-                continueButton.tap()
-            }
+            XCTFail("Sign-in screen visible. Ensure CMUX_UITEST_MOCK_DATA or auto-auth is configured.")
         }
     }
 

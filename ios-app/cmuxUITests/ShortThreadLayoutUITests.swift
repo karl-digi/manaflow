@@ -71,12 +71,8 @@ final class ShortThreadLayoutUITests: XCTestCase {
 
     private func ensureSignedIn(app: XCUIApplication) {
         let emailField = app.textFields["Email"]
-        guard emailField.waitForExistence(timeout: 2) else { return }
-        emailField.tap()
-        emailField.typeText("42")
-        let continueButton = app.buttons["Continue"]
-        if continueButton.exists {
-            continueButton.tap()
+        if emailField.waitForExistence(timeout: 2) {
+            XCTFail("Sign-in screen visible. Ensure CMUX_UITEST_MOCK_DATA or auto-auth is configured.")
         }
     }
 

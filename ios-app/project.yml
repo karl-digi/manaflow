@@ -24,6 +24,8 @@ packages:
   ConvexMobile:
     url: https://github.com/get-convex/convex-swift
     from: "0.1.0"
+  StackAuth:
+    path: vendor/stack-auth-swift-sdk-prerelease
   Sentry:
     url: https://github.com/getsentry/sentry-cocoa
     from: "8.0.0"
@@ -37,6 +39,7 @@ targets:
       - Assets.xcassets
     dependencies:
       - package: ConvexMobile
+      - package: StackAuth
       - package: Sentry
     settings:
       base:
@@ -52,17 +55,20 @@ targets:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
           CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_ENTITLEMENTS: cmux.dev.entitlements
         Beta:
           PRODUCT_BUNDLE_IDENTIFIER: dev.cmux.app.beta
           PRODUCT_NAME: cmux Beta
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Beta
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: BETA
           CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_ENTITLEMENTS: cmux.prod.entitlements
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: dev.cmux.app
           PRODUCT_NAME: cmux
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: RELEASE
+          CODE_SIGN_ENTITLEMENTS: cmux.prod.entitlements
     info:
       path: Info.plist
       properties:

@@ -12,7 +12,6 @@
 		20A59B687D0399C43C985B31 /* DebugInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B87CA70AD58D024077E85845 /* DebugInputBar.swift */; };
 		2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
-		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
 		2EAEA1238FB4E804F35A28F6 /* MultilineInputUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */; };
 		35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
@@ -20,11 +19,14 @@
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
 		3D80A48D3964369CC4BAB7DB /* LocalConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 1946CEF6B86E10F327352AE4 /* LocalConfig.plist */; };
 		3DE7F3A79D502AEDDC40CB8C /* ToolCallFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B426546C011580A0014F89F /* ToolCallFormattingTests.swift */; };
+		40FDF9AA8CA2215311B9E5D2 /* AuthError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 263881D640CF9D1EEC1D093E /* AuthError.swift */; };
 		546B55F43E170A912E2EC394 /* UITestMockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */; };
 		5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */; };
 		5ADD69A102CC3AE5FF533DCC /* ChatFix1MainMockUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6035599D28E289AD2154C1C /* ChatFix1MainMockUITests.swift */; };
+		5FE9793039F5691D04C24116 /* StackAuthUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6EA26D914C01843EF8738A6 /* StackAuthUser.swift */; };
 		65E76B2DE8870BF62C89A260 /* MarkdownDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B26AF47B779BEDAA689F7CAA /* MarkdownDebugView.swift */; };
 		6A5960808C1C40C3C1DEEA2E /* ChatFix5_ReducePadding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */; };
+		6DAA11BC61CC059E80AE3598 /* AuthPresentationContextProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194FA6A3C28159BD0744F6F5 /* AuthPresentationContextProvider.swift */; };
 		6ED3832765AAB169F7254054 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */; };
 		7B08C95E79299E6478B7EA27 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4AC3E9289C53B42C020633 /* ChatViewModel.swift */; };
 		7BCA02347A773584F73D8374 /* CodexOAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298CBAF0C277F506858D625E /* CodexOAuthView.swift */; };
@@ -34,10 +36,12 @@
 		8424B24C0FAE9429670DADCD /* ConvexGeneratedTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59F90F1B493E1462D1AD361 /* ConvexGeneratedTypes.swift */; };
 		846AE6439CD0C2B3C6D6F0B7 /* AssistantMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B41842AC501554C1AED8DF /* AssistantMarkdownView.swift */; };
 		88192500271447E51CF6B653 /* LocalConfig.example.plist in Resources */ = {isa = PBXBuildFile; fileRef = D01F9176DE666BAE97AA807B /* LocalConfig.example.plist */; };
-		8B6A74AEAD4EC07300279462 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB0CD82D816F53E55B1E103 /* Sentry */; };
+		8B6A74AEAD4EC07300279462 /* StackAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 70B7D8E8C4D0F73976222600 /* StackAuth */; };
 		8C11E78F09BA811A5EBC33CC /* ChatFix1MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */; };
+		8D3227A416DC344EFBA9B571 /* StackAuthApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55B47F6C8EE5C8DE853A4EB /* StackAuthApp.swift */; };
 		8DF015A1566E9F288F30C460 /* DebugSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAECD9944A3CB4779597B8A3 /* DebugSettings.swift */; };
 		8FB1CB1D89D93D703FFE61BA /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */; };
+		93FED7D20FA11DDB6B9201CA /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86C27D01D6AF427F7C40487 /* NotificationManager.swift */; };
 		9A0A85BFEEC1B1AE2E063847 /* ConversationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B2D4A0933DB97461CCAB77 /* ConversationsViewModel.swift */; };
 		A2B59D2AD87AE0BA84CFFC76 /* DebugLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E69A89B3FB515C851F131B /* DebugLogsView.swift */; };
 		A48BAECA5F3A97AD824F37DB /* MarkdownLinkSafetyPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68BEA95345A362BB4709F31F /* MarkdownLinkSafetyPolicyTests.swift */; };
@@ -46,6 +50,8 @@
 		B33E95CE38F4CD0028692606 /* AssistantMarkdownParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */; };
 		B6A62131AD984521B5A6B183 /* InputStrategyLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA3E777383A04F6153583A5E /* InputStrategyLabView.swift */; };
 		C335C06261DCD7CA24B1D003 /* UITestConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */; };
+		C385AE05DF9F082BADE737A3 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB0CD82D816F53E55B1E103 /* Sentry */; };
+		C3A0857225193CFE6C5647A3 /* NotificationTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94431CD1B2F69881E045321C /* NotificationTokenStore.swift */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
 		CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */; };
 		D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */; };
@@ -60,6 +66,7 @@
 		EA2D0A26446CB2B9E8AF3E56 /* MessagePositionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605A8CE9A196BFC7BD787310 /* MessagePositionUITests.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
+		F3849C68122B1FDC0AF85654 /* StackAuthSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 245DF39EF320A4BE4F9693E1 /* StackAuthSessionTests.swift */; };
 		F51147F292563E8B2503D43E /* ChatFix1_ContentInsetNever.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */; };
 		F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */; };
 		FA5C9FC319F208F785750A51 /* ConvexApiTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F94540C907EB9AC1DCCD6DD /* ConvexApiTypes.swift */; };
@@ -86,12 +93,14 @@
 /* Begin PBXFileReference section */
 		0BE5CB8A89417C399DB8D166 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		1946CEF6B86E10F327352AE4 /* LocalConfig.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = LocalConfig.plist; sourceTree = "<group>"; };
+		194FA6A3C28159BD0744F6F5 /* AuthPresentationContextProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthPresentationContextProvider.swift; sourceTree = "<group>"; };
 		1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix5_ReducePadding.swift; sourceTree = "<group>"; };
 		2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix4_ScrollViewDelegate.swift; sourceTree = "<group>"; };
+		245DF39EF320A4BE4F9693E1 /* StackAuthSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthSessionTests.swift; sourceTree = "<group>"; };
+		263881D640CF9D1EEC1D093E /* AuthError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthError.swift; sourceTree = "<group>"; };
 		298CBAF0C277F506858D625E /* CodexOAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOAuthView.swift; sourceTree = "<group>"; };
 		2B426546C011580A0014F89F /* ToolCallFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallFormattingTests.swift; sourceTree = "<group>"; };
-		2DEEADB25149C285A0422125 /* StackAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthClient.swift; sourceTree = "<group>"; };
 		2F94540C907EB9AC1DCCD6DD /* ConvexApiTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexApiTypes.swift; sourceTree = "<group>"; };
 		38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
 		4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1MainView.swift; sourceTree = "<group>"; };
@@ -107,16 +116,20 @@
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDebugMenu.swift; sourceTree = "<group>"; };
+		815D6021ACFFAF2851F86D23 /* stack-auth-swift-sdk-prerelease */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "stack-auth-swift-sdk-prerelease"; path = "vendor/stack-auth-swift-sdk-prerelease"; sourceTree = SOURCE_ROOT; };
 		836C6B232CBB4E70EA93010E /* AssistantMessageItemBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMessageItemBuilderTests.swift; sourceTree = "<group>"; };
 		886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownParserTests.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
 		8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
+		94431CD1B2F69881E045321C /* NotificationTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationTokenStore.swift; sourceTree = "<group>"; };
 		9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI.swift; sourceTree = "<group>"; };
 		9E4AC3E9289C53B42C020633 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortThreadLayoutUITests.swift; sourceTree = "<group>"; };
+		A55B47F6C8EE5C8DE853A4EB /* StackAuthApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthApp.swift; sourceTree = "<group>"; };
 		A5B2D4A0933DB97461CCAB77 /* ConversationsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationsViewModel.swift; sourceTree = "<group>"; };
 		A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultilineInputUITests.swift; sourceTree = "<group>"; };
+		A86C27D01D6AF427F7C40487 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardContainer.swift; sourceTree = "<group>"; };
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B26AF47B779BEDAA689F7CAA /* MarkdownDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDebugView.swift; sourceTree = "<group>"; };
@@ -136,6 +149,7 @@
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		DEF1E409D552C017B2175D56 /* CrashReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashReporter.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
+		E6EA26D914C01843EF8738A6 /* StackAuthUser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthUser.swift; sourceTree = "<group>"; };
 		EA3E777383A04F6153583A5E /* InputStrategyLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputStrategyLabView.swift; sourceTree = "<group>"; };
 		EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
@@ -150,7 +164,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */,
-				8B6A74AEAD4EC07300279462 /* Sentry in Frameworks */,
+				8B6A74AEAD4EC07300279462 /* StackAuth in Frameworks */,
+				C385AE05DF9F082BADE737A3 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -173,6 +188,7 @@
 				886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */,
 				836C6B232CBB4E70EA93010E /* AssistantMessageItemBuilderTests.swift */,
 				68BEA95345A362BB4709F31F /* MarkdownLinkSafetyPolicyTests.swift */,
+				245DF39EF320A4BE4F9693E1 /* StackAuthSessionTests.swift */,
 				2B426546C011580A0014F89F /* ToolCallFormattingTests.swift */,
 			);
 			path = cmuxTests;
@@ -194,13 +210,24 @@
 			path = cmuxUITests;
 			sourceTree = "<group>";
 		};
+		44D0E5411DE06869F635612A /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				815D6021ACFFAF2851F86D23 /* stack-auth-swift-sdk-prerelease */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
 		4C3A73493721EACC742CE8ED /* Auth */ = {
 			isa = PBXGroup;
 			children = (
+				263881D640CF9D1EEC1D093E /* AuthError.swift */,
 				79D367AC3D322118AE559DBF /* AuthManager.swift */,
+				194FA6A3C28159BD0744F6F5 /* AuthPresentationContextProvider.swift */,
 				88ED9D7168B6FC097B490637 /* SignInView.swift */,
-				2DEEADB25149C285A0422125 /* StackAuthClient.swift */,
+				A55B47F6C8EE5C8DE853A4EB /* StackAuthApp.swift */,
 				BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */,
+				E6EA26D914C01843EF8738A6 /* StackAuthUser.swift */,
 			);
 			path = Auth;
 			sourceTree = "<group>";
@@ -219,6 +246,7 @@
 				B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */,
 				2CD5B23C9608DC476B35534A /* cmuxTests */,
 				3EC041CE7CBA01395A239037 /* cmuxUITests */,
+				44D0E5411DE06869F635612A /* Packages */,
 				F80B6A470B95146C17D0BE5A /* Sources */,
 				0F1AEEAEEF55364C5E4029D3 /* Products */,
 			);
@@ -233,6 +261,15 @@
 				4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */,
 			);
 			path = Config;
+			sourceTree = "<group>";
+		};
+		ABA710BCFF8BE52B6A1575C3 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				A86C27D01D6AF427F7C40487 /* NotificationManager.swift */,
+				94431CD1B2F69881E045321C /* NotificationTokenStore.swift */,
+			);
+			path = Notifications;
 			sourceTree = "<group>";
 		};
 		BBE2BE334F53D4E47636EF15 /* Debug */ = {
@@ -296,6 +333,7 @@
 				F58C4F0A497799570589D124 /* Convex */,
 				BBE2BE334F53D4E47636EF15 /* Debug */,
 				601CC1311CE726A1EC6F0BAB /* Generated */,
+				ABA710BCFF8BE52B6A1575C3 /* Notifications */,
 				C87B2E36E5CBDE9207470555 /* ViewModels */,
 			);
 			path = Sources;
@@ -337,6 +375,7 @@
 			name = cmux;
 			packageProductDependencies = (
 				4C0C333BDE07456C757877E2 /* ConvexMobile */,
+				70B7D8E8C4D0F73976222600 /* StackAuth */,
 				2AB0CD82D816F53E55B1E103 /* Sentry */,
 			);
 			productName = cmux;
@@ -395,6 +434,7 @@
 			packageReferences = (
 				7C6D10429B3DC21D021B1E06 /* XCRemoteSwiftPackageReference "convex-swift" */,
 				6483AD9AFDD51874D0F6EECF /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				1315781DE5C6031B8DBA1EAE /* XCLocalSwiftPackageReference "vendor/stack-auth-swift-sdk-prerelease" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -426,7 +466,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				846AE6439CD0C2B3C6D6F0B7 /* AssistantMarkdownView.swift in Sources */,
+				40FDF9AA8CA2215311B9E5D2 /* AuthError.swift in Sources */,
 				D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */,
+				6DAA11BC61CC059E80AE3598 /* AuthPresentationContextProvider.swift in Sources */,
 				83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */,
 				8030869706BE8FD94533D58A /* ChatApproachI.swift in Sources */,
 				2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */,
@@ -458,9 +500,12 @@
 				B6A62131AD984521B5A6B183 /* InputStrategyLabView.swift in Sources */,
 				65E76B2DE8870BF62C89A260 /* MarkdownDebugView.swift in Sources */,
 				361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */,
+				93FED7D20FA11DDB6B9201CA /* NotificationManager.swift in Sources */,
+				C3A0857225193CFE6C5647A3 /* NotificationTokenStore.swift in Sources */,
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
-				2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */,
+				8D3227A416DC344EFBA9B571 /* StackAuthApp.swift in Sources */,
 				3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */,
+				5FE9793039F5691D04C24116 /* StackAuthUser.swift in Sources */,
 				3A4695603F64ECCDFE601043 /* ToolCallModels.swift in Sources */,
 				C335C06261DCD7CA24B1D003 /* UITestConfig.swift in Sources */,
 				546B55F43E170A912E2EC394 /* UITestMockData.swift in Sources */,
@@ -490,6 +535,7 @@
 				B33E95CE38F4CD0028692606 /* AssistantMarkdownParserTests.swift in Sources */,
 				AFF36DFB0FF0DD03BE8B5FBA /* AssistantMessageItemBuilderTests.swift in Sources */,
 				A48BAECA5F3A97AD824F37DB /* MarkdownLinkSafetyPolicyTests.swift in Sources */,
+				F3849C68122B1FDC0AF85654 /* StackAuthSessionTests.swift in Sources */,
 				3DE7F3A79D502AEDDC40CB8C /* ToolCallFormattingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -613,6 +659,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Beta";
+				CODE_SIGN_ENTITLEMENTS = cmux.prod.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
@@ -729,6 +776,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Dev";
+				CODE_SIGN_ENTITLEMENTS = cmux.dev.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
@@ -753,6 +801,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = cmux.prod.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7WLXT3NR37;
@@ -909,6 +958,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		1315781DE5C6031B8DBA1EAE /* XCLocalSwiftPackageReference "vendor/stack-auth-swift-sdk-prerelease" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "vendor/stack-auth-swift-sdk-prerelease";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		6483AD9AFDD51874D0F6EECF /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -938,6 +994,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7C6D10429B3DC21D021B1E06 /* XCRemoteSwiftPackageReference "convex-swift" */;
 			productName = ConvexMobile;
+		};
+		70B7D8E8C4D0F73976222600 /* StackAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StackAuth;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

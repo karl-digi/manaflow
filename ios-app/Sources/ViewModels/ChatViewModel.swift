@@ -52,6 +52,10 @@ class ChatViewModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        if !UITestConfig.mockDataEnabled {
+            await NotificationManager.shared.requestAuthorizationIfNeeded(trigger: .sendMessage)
+        }
+
         isSending = true
         defer { isSending = false }
 

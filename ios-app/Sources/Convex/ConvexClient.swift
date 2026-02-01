@@ -30,7 +30,7 @@ class ConvexClientManager: ObservableObject {
                 switch state {
                 case .authenticated(let authResult):
                     self?.isAuthenticated = true
-                    print("📦 Convex: ✅ Authenticated (user: \(authResult.user.primary_email ?? "?"))")
+                    print("📦 Convex: ✅ Authenticated (user: \(authResult.user.primaryEmail ?? "?"))")
                 case .unauthenticated:
                     self?.isAuthenticated = false
                     print("📦 Convex: ❌ Unauthenticated")
@@ -50,12 +50,12 @@ class ConvexClientManager: ObservableObject {
         let result = await client.loginFromCache()
         switch result {
         case .success(let authResult):
-            print("📦 Convex: Auth sync SUCCESS for \(authResult.user.primary_email ?? "unknown")")
+            print("📦 Convex: Auth sync SUCCESS for \(authResult.user.primaryEmail ?? "unknown")")
             print("📦 Convex: Token was passed to ffiClient.setAuth()")
             // Give Convex a moment to process the token
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             print("📦 Convex: isAuthenticated = \(isAuthenticated)")
-            return "SUCCESS: \(authResult.user.primary_email ?? "unknown"), isAuth=\(isAuthenticated)"
+            return "SUCCESS: \(authResult.user.primaryEmail ?? "unknown"), isAuth=\(isAuthenticated)"
         case .failure(let error):
             print("📦 Convex: Auth sync FAILED - \(error)")
             return "FAILED: \(error)"

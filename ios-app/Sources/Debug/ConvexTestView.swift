@@ -28,7 +28,7 @@ struct ConvexTestView: View {
                 }
                 if let user = auth.currentUser {
                     LabeledContent("User Email") {
-                        Text(user.primary_email ?? "N/A")
+                        Text(user.primaryEmail ?? "N/A")
                             .font(.caption)
                     }
                     LabeledContent("User ID") {
@@ -136,16 +136,15 @@ struct ConvexTestView: View {
                         let syncResult = await convex.syncAuth()
                         addLog("Sync result: \(syncResult)")
                         addLog("After sync: Convex auth = \(convex.isAuthenticated)")
-                        // Check token from keychain
-                        if let token = KeychainHelper.shared.get("access_token") {
-                            addLog("Keychain token len: \(token.count)")
-                            // Show JWT claims
+                        do {
+                            let token = try await auth.getAccessToken()
+                            addLog("Access token len: \(token.count)")
                             let parts = token.split(separator: ".")
                             if parts.count == 3, let payload = decodeJWTPayload(String(parts[1])) {
                                 addLog("JWT: \(payload)")
                             }
-                        } else {
-                            addLog("⚠️ No access_token in keychain!")
+                        } catch {
+                            addLog("⚠️ Failed to read access token: \(error)")
                         }
                     }
                 }

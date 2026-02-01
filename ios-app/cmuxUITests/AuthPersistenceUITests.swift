@@ -8,6 +8,7 @@ final class AuthPersistenceUITests: XCTestCase {
 
     func testAuthPersistsAcrossRelaunch() {
         let app = XCUIApplication()
+        configureAutoAuth(app)
         app.launch()
 
         ensureSignedIn(app: app)
@@ -17,6 +18,7 @@ final class AuthPersistenceUITests: XCTestCase {
         app.terminate()
 
         let relaunch = XCUIApplication()
+        configureAutoAuth(relaunch)
         relaunch.launch()
 
         assertNoSignInFlash(app: relaunch)
@@ -39,13 +41,14 @@ final class AuthPersistenceUITests: XCTestCase {
 
     private func ensureSignedIn(app: XCUIApplication) {
         let emailField = app.textFields["Email"]
-        guard emailField.waitForExistence(timeout: 2) else { return }
-        emailField.tap()
-        emailField.typeText("42")
-        let continueButton = app.buttons["Continue"]
-        if continueButton.exists {
-            continueButton.tap()
+        if emailField.waitForExistence(timeout: 2) {
+            XCTFail("Sign-in screen visible. Ensure CMUX_UITEST_STACK_EMAIL/PASSWORD are set.")
         }
+    }
+
+    private func configureAutoAuth(_ app: XCUIApplication) {
+        app.launchEnvironment["CMUX_UITEST_STACK_EMAIL"] = "l@l.com"
+        app.launchEnvironment["CMUX_UITEST_STACK_PASSWORD"] = "abc123"
     }
 
     private func waitForConversationList(app: XCUIApplication) {

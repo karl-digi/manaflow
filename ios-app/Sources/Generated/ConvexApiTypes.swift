@@ -3,7 +3,7 @@ import Foundation
 
 // Generated from /Users/lawrencechen/fun/cmux/packages/convex/convex/_generated/api.d.ts
 
-// Functions: acp.prewarmSandbox, acp.startConversation, acp.sendMessageOptimistic, acp.sendMessage, acp.retryMessage, acp.sendRpc, acp.cancelConversation, acp.getStreamInfo, acp.getConversation, acp.listMessages, acp.subscribeNewMessages, acp.getMessages, acpRawEvents.listByConversationPaginated, acpSandboxes.listForTeam, acpSandboxes.get, apiKeys.getAll, apiKeys.getByEnvVar, apiKeys.upsert, apiKeys.remove, apiKeys.getAllForAgents, codeReview.reserveJob, codeReview.markJobRunning, codeReview.failJob, codeReview.upsertFileOutputFromCallback, codeReview.completeJobFromCallback, codeReview.failJobFromCallback, codeReview.listFileOutputsForPr, codeReview.listFileOutputsForComparison, codexTokens.get, codexTokens.save, codexTokens.remove, comments.createComment, comments.listComments, comments.resolveComment, comments.archiveComment, comments.addReply, comments.getReplies, containerSettings.get, containerSettings.update, containerSettings.getEffective, conversationMessages.listByConversation, conversationMessages.listByConversationPaginated, conversationReads.markRead, conversationReads.markUnread, conversations.create, conversations.getById, conversations.getDetail, conversations.getBySessionId, conversations.listPagedWithLatest, conversations.listByNamespace, conversations.listBySandbox, conversations.updatePermissionMode, conversations.rename, conversations.pin, conversations.unpin, conversations.archive, conversations.unarchive, conversations.remove, crown.evaluateAndCrownWinner, crown.setCrownWinner, crown.getCrownedRun, crown.getCrownEvaluation, crown.getTasksWithCrowns, crown.actions.evaluate, crown.actions.summarize, environmentSnapshots.list, environmentSnapshots.create, environmentSnapshots.activate, environmentSnapshots.remove, environmentSnapshots.findBySnapshotId, environments.list, environments.get, environments.create, environments.update, environments.updateExposedPorts, environments.remove, environments.getByDataVaultKey, github.getReposByOrg, github.getBranches, github.getRepoByFullName, github.getAllRepos, github.getReposByInstallation, github.getBranchesByRepo, github.hasReposForTeam, github.listProviderConnections, github.listUnassignedProviderConnections, github.assignProviderConnectionToTeam, github.removeProviderConnection, github.upsertRepo, github.bulkInsertRepos, github.bulkInsertBranches, github.bulkUpsertBranchesWithActivity, github.replaceAllRepos, github_app.mintInstallState, github_check_runs.getCheckRunsForPr, github_commit_statuses.getCommitStatusesForPr, github_deployments.getDeploymentsForPr, github_http.addManualRepo, github_prs.listPullRequests, github_prs.getPullRequest, github_prs.upsertFromServer, github_workflows.getWorkflowRuns, github_workflows.getWorkflowRunById, github_workflows.getWorkflowRunsForPr, hostScreenshotCollector.getLatestReleaseUrl, hostScreenshotCollector.listReleases, hostScreenshotCollectorActions.syncRelease, localWorkspaces.nextSequence, localWorkspaces.reserve, morphInstances.getActivity, morphInstances.recordResume, previewConfigs.listByTeam, previewConfigs.get, previewConfigs.getByRepo, previewConfigs.remove, previewConfigs.upsert, previewRuns.listByConfig, previewRuns.listByTeam, previewRuns.listByTeamPaginated, previewRuns.createManual, previewScreenshots.uploadAndComment, previewTestJobs.createTestRun, previewTestJobs.dispatchTestJob, previewTestJobs.listTestRuns, previewTestJobs.getTestRunDetails, previewTestJobs.checkRepoAccess, previewTestJobs.retryTestJob, previewTestJobs.deleteTestRun, stack.upsertUserPublic, stack.deleteUserPublic, stack.upsertTeamPublic, stack.deleteTeamPublic, stack.ensureMembershipPublic, stack.deleteMembershipPublic, stack.ensurePermissionPublic, stack.deletePermissionPublic, storage.generateUploadUrl, storage.getUrl, storage.getUrls, taskComments.listByTask, taskComments.createForTask, taskComments.createSystemForTask, taskComments.latestSystemByTask, taskNotifications.list, taskNotifications.hasUnreadForTask, taskNotifications.getUnreadCount, taskNotifications.getTasksWithUnread, taskNotifications.markTaskRunAsRead, taskNotifications.markTaskRunAsUnread, taskNotifications.markTaskAsRead, taskNotifications.markTaskAsUnread, taskNotifications.markAllAsRead, taskRunLogChunks.appendChunk, taskRunLogChunks.appendChunkPublic, taskRunLogChunks.getChunks, taskRuns.create, taskRuns.getByTask, taskRuns.getRunDiffContext, taskRuns.updateSummary, taskRuns.get, taskRuns.subscribe, taskRuns.updateWorktreePath, taskRuns.updateBranch, taskRuns.updateBranchBatch, taskRuns.getJwt, taskRuns.updateStatusPublic, taskRuns.updateVSCodeInstance, taskRuns.updateVSCodeStatus, taskRuns.updateVSCodePorts, taskRuns.updateVSCodeStatusMessage, taskRuns.getByContainerName, taskRuns.complete, taskRuns.fail, taskRuns.addCustomPreview, taskRuns.removeCustomPreview, taskRuns.updateCustomPreviewUrl, taskRuns.getActiveVSCodeInstances, taskRuns.updateLastAccessed, taskRuns.toggleKeepAlive, taskRuns.updatePullRequestUrl, taskRuns.updatePullRequestState, taskRuns.updateNetworking, taskRuns.updateEnvironmentError, taskRuns.archive, taskRuns.getContainersToStop, taskRuns.getRunningContainersByCleanupPriority, tasks.get, tasks.getArchivedPaginated, tasks.getWithNotificationOrder, tasks.getPreviewTasks, tasks.getPinned, tasks.getTasksWithTaskRuns, tasks.create, tasks.remove, tasks.toggle, tasks.setCompleted, tasks.update, tasks.updateWorktreePath, tasks.getById, tasks.getVersions, tasks.archive, tasks.unarchive, tasks.pin, tasks.unpin, tasks.updateCrownError, tasks.tryBeginCrownEvaluation, tasks.setPullRequestDescription, tasks.setPullRequestTitle, tasks.createVersion, tasks.getTasksWithPendingCrownEvaluation, tasks.updateMergeStatus, tasks.checkAndEvaluateCrown, teams.get, teams.listTeamMemberships, teams.setSlug, teams.setName, userEditorSettings.get, userEditorSettings.upsert, userEditorSettings.clear, users.getCurrentBasic, workspaceConfigs.get, workspaceConfigs.upsert, workspaceSettings.get, workspaceSettings.update
+// Functions: acp.prewarmSandbox, acp.startConversation, acp.sendMessageOptimistic, acp.sendMessage, acp.retryMessage, acp.sendRpc, acp.cancelConversation, acp.spawnRivetSandbox, acp.getStreamInfo, acp.getConversation, acp.listMessages, acp.subscribeNewMessages, acp.getMessages, acpRawEvents.listByConversationPaginated, acpRawEvents.listByConversationFirstPage, acpSandboxes.listForTeam, acpSandboxes.get, apiKeys.getAll, apiKeys.getByEnvVar, apiKeys.upsert, apiKeys.remove, apiKeys.getAllForAgents, codeReview.reserveJob, codeReview.markJobRunning, codeReview.failJob, codeReview.upsertFileOutputFromCallback, codeReview.completeJobFromCallback, codeReview.failJobFromCallback, codeReview.listFileOutputsForPr, codeReview.listFileOutputsForComparison, codexTokens.get, codexTokens.save, codexTokens.remove, comments.createComment, comments.listComments, comments.resolveComment, comments.archiveComment, comments.addReply, comments.getReplies, containerSettings.get, containerSettings.update, containerSettings.getEffective, conversationMessages.listByConversation, conversationMessages.listByConversationPaginated, conversationMessages.listByConversationFirstPage, conversationReads.markRead, conversationReads.markUnread, conversations.create, conversations.getById, conversations.getDetail, conversations.getBySessionId, conversations.listPagedWithLatest, conversations.listByNamespace, conversations.listBySandbox, conversations.updatePermissionMode, conversations.rename, conversations.pin, conversations.unpin, conversations.archive, conversations.unarchive, conversations.remove, conversations.getFullConversation, crown.evaluateAndCrownWinner, crown.setCrownWinner, crown.getCrownedRun, crown.getCrownEvaluation, crown.getTasksWithCrowns, crown.actions.evaluate, crown.actions.summarize, environmentSnapshots.list, environmentSnapshots.create, environmentSnapshots.activate, environmentSnapshots.remove, environmentSnapshots.findBySnapshotId, environments.list, environments.get, environments.create, environments.update, environments.updateExposedPorts, environments.remove, environments.getByDataVaultKey, github.getReposByOrg, github.getBranches, github.getRepoByFullName, github.getAllRepos, github.getReposByInstallation, github.getBranchesByRepo, github.hasReposForTeam, github.listProviderConnections, github.listUnassignedProviderConnections, github.assignProviderConnectionToTeam, github.removeProviderConnection, github.upsertRepo, github.bulkInsertRepos, github.bulkInsertBranches, github.bulkUpsertBranchesWithActivity, github.replaceAllRepos, github_app.mintInstallState, github_check_runs.getCheckRunsForPr, github_commit_statuses.getCommitStatusesForPr, github_deployments.getDeploymentsForPr, github_http.addManualRepo, github_prs.listPullRequests, github_prs.getPullRequest, github_prs.upsertFromServer, github_workflows.getWorkflowRuns, github_workflows.getWorkflowRunById, github_workflows.getWorkflowRunsForPr, hostScreenshotCollector.getLatestReleaseUrl, hostScreenshotCollector.listReleases, hostScreenshotCollectorActions.syncRelease, localWorkspaces.nextSequence, localWorkspaces.reserve, morphInstances.getActivity, morphInstances.recordResume, previewConfigs.listByTeam, previewConfigs.get, previewConfigs.getByRepo, previewConfigs.remove, previewConfigs.upsert, previewRuns.listByConfig, previewRuns.listByTeam, previewRuns.listByTeamPaginated, previewRuns.createManual, previewScreenshots.uploadAndComment, previewTestJobs.createTestRun, previewTestJobs.dispatchTestJob, previewTestJobs.listTestRuns, previewTestJobs.getTestRunDetails, previewTestJobs.checkRepoAccess, previewTestJobs.retryTestJob, previewTestJobs.deleteTestRun, pushTokens.upsert, pushTokens.remove, pushTokens.sendTest, stack.upsertUserPublic, stack.deleteUserPublic, stack.upsertTeamPublic, stack.deleteTeamPublic, stack.ensureMembershipPublic, stack.deleteMembershipPublic, stack.ensurePermissionPublic, stack.deletePermissionPublic, storage.generateUploadUrl, storage.getUrl, storage.getUrls, taskComments.listByTask, taskComments.createForTask, taskComments.createSystemForTask, taskComments.latestSystemByTask, taskNotifications.list, taskNotifications.hasUnreadForTask, taskNotifications.getUnreadCount, taskNotifications.getTasksWithUnread, taskNotifications.markTaskRunAsRead, taskNotifications.markTaskRunAsUnread, taskNotifications.markTaskAsRead, taskNotifications.markTaskAsUnread, taskNotifications.markAllAsRead, taskRunLogChunks.appendChunk, taskRunLogChunks.appendChunkPublic, taskRunLogChunks.getChunks, taskRuns.create, taskRuns.getByTask, taskRuns.getRunDiffContext, taskRuns.updateSummary, taskRuns.get, taskRuns.subscribe, taskRuns.updateWorktreePath, taskRuns.updateBranch, taskRuns.updateBranchBatch, taskRuns.getJwt, taskRuns.updateStatusPublic, taskRuns.updateVSCodeInstance, taskRuns.updateVSCodeStatus, taskRuns.updateVSCodePorts, taskRuns.updateVSCodeStatusMessage, taskRuns.getByContainerName, taskRuns.complete, taskRuns.fail, taskRuns.addCustomPreview, taskRuns.removeCustomPreview, taskRuns.updateCustomPreviewUrl, taskRuns.getActiveVSCodeInstances, taskRuns.updateLastAccessed, taskRuns.toggleKeepAlive, taskRuns.updatePullRequestUrl, taskRuns.updatePullRequestState, taskRuns.updateNetworking, taskRuns.updateEnvironmentError, taskRuns.archive, taskRuns.getContainersToStop, taskRuns.getRunningContainersByCleanupPriority, tasks.get, tasks.getArchivedPaginated, tasks.getWithNotificationOrder, tasks.getPreviewTasks, tasks.getPinned, tasks.getTasksWithTaskRuns, tasks.create, tasks.remove, tasks.toggle, tasks.setCompleted, tasks.update, tasks.updateWorktreePath, tasks.getById, tasks.getVersions, tasks.archive, tasks.unarchive, tasks.pin, tasks.unpin, tasks.updateCrownError, tasks.tryBeginCrownEvaluation, tasks.setPullRequestDescription, tasks.setPullRequestTitle, tasks.createVersion, tasks.getTasksWithPendingCrownEvaluation, tasks.updateMergeStatus, tasks.checkAndEvaluateCrown, teams.get, teams.listTeamMemberships, teams.setSlug, teams.setName, userEditorSettings.get, userEditorSettings.upsert, userEditorSettings.clear, users.getCurrentBasic, workspaceConfigs.get, workspaceConfigs.upsert, workspaceSettings.get, workspaceSettings.update
 
 struct ConvexId<Table>: Decodable, Hashable, Sendable, ConvexEncodable {
 
@@ -310,6 +310,16 @@ enum AcpRawEventsListByConversationPaginatedReturnPageStatusEnum: String, Decoda
   case splitRequired = "SplitRequired"
 }
 
+enum AcpRawEventsListByConversationFirstPageReturnPageItemDirectionEnum: String, Decodable {
+  case inbound = "inbound"
+  case outbound = "outbound"
+}
+
+enum AcpRawEventsListByConversationFirstPageReturnPageStatusEnum: String, Decodable {
+  case splitRecommended = "SplitRecommended"
+  case splitRequired = "SplitRequired"
+}
+
 enum AcpSandboxesListForTeamItemPoolStateEnum: String, Decodable {
   case available = "available"
   case reserved = "reserved"
@@ -328,6 +338,8 @@ enum AcpSandboxesListForTeamItemProviderEnum: String, Decodable {
   case morph = "morph"
   case daytona = "daytona"
   case freestyle = "freestyle"
+  case e2b = "e2b"
+  case blaxel = "blaxel"
 }
 
 enum AcpSandboxesGetReturnPoolStateEnum: String, Decodable {
@@ -348,6 +360,8 @@ enum AcpSandboxesGetReturnProviderEnum: String, Decodable {
   case morph = "morph"
   case daytona = "daytona"
   case freestyle = "freestyle"
+  case e2b = "e2b"
+  case blaxel = "blaxel"
 }
 
 enum CodeReviewReserveJobReturnJobJobTypeEnum: String, Decodable {
@@ -472,6 +486,43 @@ enum ConversationMessagesListByConversationPaginatedReturnPageItemContentItemTyp
 }
 
 enum ConversationMessagesListByConversationPaginatedReturnPageStatusEnum: String, Decodable {
+  case splitRecommended = "SplitRecommended"
+  case splitRequired = "SplitRequired"
+}
+
+enum ConversationMessagesListByConversationFirstPageReturnPageItemDeliveryStatusEnum: String,
+  Decodable
+{
+  case error = "error"
+  case queued = "queued"
+  case sent = "sent"
+}
+
+enum ConversationMessagesListByConversationFirstPageReturnPageItemToolCallsItemStatusEnum: String,
+  Decodable
+{
+  case pending = "pending"
+  case running = "running"
+  case completed = "completed"
+  case failed = "failed"
+}
+
+enum ConversationMessagesListByConversationFirstPageReturnPageItemRoleEnum: String, Decodable {
+  case user = "user"
+  case assistant = "assistant"
+}
+
+enum ConversationMessagesListByConversationFirstPageReturnPageItemContentItemTypeEnum: String,
+  Decodable
+{
+  case text = "text"
+  case image = "image"
+  case audio = "audio"
+  case resourceLink = "resource_link"
+  case resource = "resource"
+}
+
+enum ConversationMessagesListByConversationFirstPageReturnPageStatusEnum: String, Decodable {
   case splitRecommended = "SplitRecommended"
   case splitRequired = "SplitRequired"
 }
@@ -682,6 +733,72 @@ enum ConversationsUpdatePermissionModeArgsPermissionModeEnum: String, Encodable,
   case manual = "manual"
   case autoAllowOnce = "auto_allow_once"
   case autoAllowAlways = "auto_allow_always"
+}
+
+enum ConversationsGetFullConversationReturnConversationPermissionModeEnum: String, Decodable {
+  case manual = "manual"
+  case autoAllowOnce = "auto_allow_once"
+  case autoAllowAlways = "auto_allow_always"
+}
+
+enum ConversationsGetFullConversationReturnConversationStopReasonEnum: String, Decodable {
+  case cancelled = "cancelled"
+  case endTurn = "end_turn"
+  case maxTokens = "max_tokens"
+  case maxTurnRequests = "max_turn_requests"
+  case refusal = "refusal"
+}
+
+enum ConversationsGetFullConversationReturnConversationIsolationModeEnum: String, Decodable {
+  case none = "none"
+  case sharedNamespace = "shared_namespace"
+  case dedicatedNamespace = "dedicated_namespace"
+}
+
+enum ConversationsGetFullConversationReturnConversationStatusEnum: String, Decodable {
+  case error = "error"
+  case completed = "completed"
+  case active = "active"
+  case cancelled = "cancelled"
+}
+
+enum ConversationsGetFullConversationReturnSandboxStatusEnum: String, Decodable {
+  case error = "error"
+  case running = "running"
+  case starting = "starting"
+  case stopped = "stopped"
+  case paused = "paused"
+}
+
+enum ConversationsGetFullConversationReturnMessagesItemDeliveryStatusEnum: String, Decodable {
+  case error = "error"
+  case queued = "queued"
+  case sent = "sent"
+}
+
+enum ConversationsGetFullConversationReturnMessagesItemToolCallsItemStatusEnum: String, Decodable {
+  case pending = "pending"
+  case running = "running"
+  case completed = "completed"
+  case failed = "failed"
+}
+
+enum ConversationsGetFullConversationReturnMessagesItemRoleEnum: String, Decodable {
+  case user = "user"
+  case assistant = "assistant"
+}
+
+enum ConversationsGetFullConversationReturnMessagesItemContentItemTypeEnum: String, Decodable {
+  case text = "text"
+  case image = "image"
+  case audio = "audio"
+  case resourceLink = "resource_link"
+  case resource = "resource"
+}
+
+enum ConversationsGetFullConversationReturnRawEventsItemDirectionEnum: String, Decodable {
+  case inbound = "inbound"
+  case outbound = "outbound"
 }
 
 enum CrownGetCrownedRunReturnPullRequestStateEnum: String, Decodable {
@@ -985,6 +1102,11 @@ enum PreviewTestJobsCheckRepoAccessReturnErrorCodeEnum: String, Decodable {
   case noConfig = "no_config"
   case noInstallation = "no_installation"
   case installationInactive = "installation_inactive"
+}
+
+enum PushTokensUpsertArgsEnvironmentEnum: String, Encodable, ConvexEncodable {
+  case development = "development"
+  case production = "production"
 }
 
 enum TaskNotificationsListItemTaskCrownEvaluationStatusEnum: String, Decodable {
@@ -1927,10 +2049,38 @@ enum WorkspaceSettingsGetReturnConversationTitleStyleEnum: String, Decodable {
   case title = "title"
 }
 
+enum WorkspaceSettingsGetReturnAcpSandboxProviderEnum: String, Decodable {
+  case morph = "morph"
+  case daytona = "daytona"
+  case freestyle = "freestyle"
+  case e2b = "e2b"
+  case blaxel = "blaxel"
+}
+
+enum WorkspaceSettingsGetReturnMcpServersItemTransportEnum: String, Decodable {
+  case http = "http"
+  case stdio = "stdio"
+  case sse = "sse"
+}
+
 enum WorkspaceSettingsUpdateArgsConversationTitleStyleEnum: String, Encodable, ConvexEncodable {
   case sentence = "sentence"
   case lowercase = "lowercase"
   case title = "title"
+}
+
+enum WorkspaceSettingsUpdateArgsAcpSandboxProviderEnum: String, Encodable, ConvexEncodable {
+  case morph = "morph"
+  case daytona = "daytona"
+  case freestyle = "freestyle"
+  case e2b = "e2b"
+  case blaxel = "blaxel"
+}
+
+enum WorkspaceSettingsUpdateArgsMcpServersItemTransportEnum: String, Encodable, ConvexEncodable {
+  case http = "http"
+  case stdio = "stdio"
+  case sse = "sse"
 }
 
 struct AcpPrewarmSandboxReturn: Decodable {
@@ -2010,6 +2160,11 @@ struct AcpCancelConversationReturn: Decodable {
   let success: Bool
 }
 
+struct AcpSpawnRivetSandboxReturn: Decodable {
+  let sandboxId: String
+  let sandboxUrl: String
+}
+
 struct AcpGetStreamInfoReturn: Decodable {
   let sandboxUrl: String?
   let token: String?
@@ -2063,12 +2218,12 @@ struct AcpGetConversationReturn: Decodable {
 }
 
 struct AcpListMessagesReturnMessagesItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
   let result: String?
   let id: String
   let name: String
   let status: AcpListMessagesReturnMessagesItemToolCallsItemStatusEnum
   let arguments: String
-  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpListMessagesReturnMessagesItemContentItemResource: Decodable {
@@ -2106,9 +2261,10 @@ struct AcpListMessagesReturnMessagesItem: Decodable {
   let deliveryStatus: AcpListMessagesReturnMessagesItemDeliveryStatusEnum?
   let deliveryError: String?
   let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
   let toolCalls: [AcpListMessagesReturnMessagesItemToolCallsItem]?
   let reasoning: String?
-  @OptionalConvexFloat var acpSeq: Double?
+  let isFinal: Bool?
   @ConvexFloat var createdAt: Double
   let role: AcpListMessagesReturnMessagesItemRoleEnum
   let content: [AcpListMessagesReturnMessagesItemContentItem]
@@ -2122,12 +2278,12 @@ struct AcpListMessagesReturn: Decodable {
 }
 
 struct AcpSubscribeNewMessagesItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
   let result: String?
   let id: String
   let name: String
   let status: AcpSubscribeNewMessagesItemToolCallsItemStatusEnum
   let arguments: String
-  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpSubscribeNewMessagesItemContentItemResource: Decodable {
@@ -2165,9 +2321,10 @@ struct AcpSubscribeNewMessagesItem: Decodable {
   let deliveryStatus: AcpSubscribeNewMessagesItemDeliveryStatusEnum?
   let deliveryError: String?
   let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
   let toolCalls: [AcpSubscribeNewMessagesItemToolCallsItem]?
   let reasoning: String?
-  @OptionalConvexFloat var acpSeq: Double?
+  let isFinal: Bool?
   @ConvexFloat var createdAt: Double
   let role: AcpSubscribeNewMessagesItemRoleEnum
   let content: [AcpSubscribeNewMessagesItemContentItem]
@@ -2175,12 +2332,12 @@ struct AcpSubscribeNewMessagesItem: Decodable {
 }
 
 struct AcpGetMessagesItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
   let result: String?
   let id: String
   let name: String
   let status: AcpGetMessagesItemToolCallsItemStatusEnum
   let arguments: String
-  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpGetMessagesItemContentItemResource: Decodable {
@@ -2218,9 +2375,10 @@ struct AcpGetMessagesItem: Decodable {
   let deliveryStatus: AcpGetMessagesItemDeliveryStatusEnum?
   let deliveryError: String?
   let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
   let toolCalls: [AcpGetMessagesItemToolCallsItem]?
   let reasoning: String?
-  @OptionalConvexFloat var acpSeq: Double?
+  let isFinal: Bool?
   @ConvexFloat var createdAt: Double
   let role: AcpGetMessagesItemRoleEnum
   let content: [AcpGetMessagesItemContentItem]
@@ -2266,6 +2424,27 @@ struct AcpRawEventsListByConversationPaginatedReturn: Decodable {
   let continueCursor: String
   let splitCursor: String?
   let pageStatus: AcpRawEventsListByConversationPaginatedReturnPageStatusEnum?
+}
+
+struct AcpRawEventsListByConversationFirstPageReturnPageItem: Decodable {
+  let _id: ConvexId<ConvexTableAcpRawEvents>
+  @ConvexFloat var _creationTime: Double
+  let direction: AcpRawEventsListByConversationFirstPageReturnPageItemDirectionEnum?
+  let eventType: String?
+  let teamId: String
+  @ConvexFloat var createdAt: Double
+  let conversationId: ConvexId<ConvexTableConversations>
+  let sandboxId: ConvexId<ConvexTableAcpSandboxes>
+  @ConvexFloat var seq: Double
+  let raw: String
+}
+
+struct AcpRawEventsListByConversationFirstPageReturn: Decodable {
+  let page: [AcpRawEventsListByConversationFirstPageReturnPageItem]
+  let isDone: Bool
+  let continueCursor: String
+  let splitCursor: String?
+  let pageStatus: AcpRawEventsListByConversationFirstPageReturnPageStatusEnum?
 }
 
 struct AcpSandboxesListForTeamItem: Decodable {
@@ -2643,12 +2822,12 @@ struct ContainerSettingsGetEffectiveReturn: Decodable {
 }
 
 struct ConversationMessagesListByConversationReturnMessagesItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
   let result: String?
   let id: String
   let name: String
   let status: ConversationMessagesListByConversationReturnMessagesItemToolCallsItemStatusEnum
   let arguments: String
-  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct ConversationMessagesListByConversationReturnMessagesItemContentItemResource: Decodable {
@@ -2686,9 +2865,10 @@ struct ConversationMessagesListByConversationReturnMessagesItem: Decodable {
   let deliveryStatus: ConversationMessagesListByConversationReturnMessagesItemDeliveryStatusEnum?
   let deliveryError: String?
   let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
   let toolCalls: [ConversationMessagesListByConversationReturnMessagesItemToolCallsItem]?
   let reasoning: String?
-  @OptionalConvexFloat var acpSeq: Double?
+  let isFinal: Bool?
   @ConvexFloat var createdAt: Double
   let role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum
   let content: [ConversationMessagesListByConversationReturnMessagesItemContentItem]
@@ -2732,12 +2912,12 @@ struct ConversationMessagesListByConversationPaginatedArgsPaginationOpts: Convex
 }
 
 struct ConversationMessagesListByConversationPaginatedReturnPageItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
   let result: String?
   let id: String
   let name: String
   let status: ConversationMessagesListByConversationPaginatedReturnPageItemToolCallsItemStatusEnum
   let arguments: String
-  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct ConversationMessagesListByConversationPaginatedReturnPageItemContentItemResource: Decodable {
@@ -2779,9 +2959,10 @@ struct ConversationMessagesListByConversationPaginatedReturnPageItem: Decodable 
     ConversationMessagesListByConversationPaginatedReturnPageItemDeliveryStatusEnum?
   let deliveryError: String?
   let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
   let toolCalls: [ConversationMessagesListByConversationPaginatedReturnPageItemToolCallsItem]?
   let reasoning: String?
-  @OptionalConvexFloat var acpSeq: Double?
+  let isFinal: Bool?
   @ConvexFloat var createdAt: Double
   let role: ConversationMessagesListByConversationPaginatedReturnPageItemRoleEnum
   let content: [ConversationMessagesListByConversationPaginatedReturnPageItemContentItem]
@@ -2794,6 +2975,82 @@ struct ConversationMessagesListByConversationPaginatedReturn: Decodable {
   let continueCursor: String
   let splitCursor: String?
   let pageStatus: ConversationMessagesListByConversationPaginatedReturnPageStatusEnum?
+}
+
+struct ConversationMessagesListByConversationFirstPageArgsConversationId: ConvexEncodable {
+  let length: Double
+
+  func convexEncode() throws -> String {
+    var result: [String: ConvexEncodable?] = [:]
+    result["length"] = length
+    return try result.convexEncode()
+  }
+}
+
+struct ConversationMessagesListByConversationFirstPageReturnPageItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
+  let result: String?
+  let id: String
+  let name: String
+  let status: ConversationMessagesListByConversationFirstPageReturnPageItemToolCallsItemStatusEnum
+  let arguments: String
+}
+
+struct ConversationMessagesListByConversationFirstPageReturnPageItemContentItemResource: Decodable {
+  let text: String?
+  let mimeType: String?
+  let blob: String?
+  let uri: String
+}
+
+struct ConversationMessagesListByConversationFirstPageReturnPageItemContentItemAnnotations:
+  Decodable
+{
+  let audience: [String]?
+  let lastModified: String?
+  @OptionalConvexFloat var priority: Double?
+}
+
+struct ConversationMessagesListByConversationFirstPageReturnPageItemContentItem: Decodable {
+  let name: String?
+  let text: String?
+  let description: String?
+  let mimeType: String?
+  let title: String?
+  let resource: ConversationMessagesListByConversationFirstPageReturnPageItemContentItemResource?
+  let data: String?
+  let uri: String?
+  @OptionalConvexFloat var size: Double?
+  let annotations:
+    ConversationMessagesListByConversationFirstPageReturnPageItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
+  let type: ConversationMessagesListByConversationFirstPageReturnPageItemContentItemTypeEnum
+}
+
+struct ConversationMessagesListByConversationFirstPageReturnPageItem: Decodable {
+  let _id: ConvexId<ConvexTableConversationMessages>
+  @ConvexFloat var _creationTime: Double
+  let clientMessageId: String?
+  let deliveryStatus:
+    ConversationMessagesListByConversationFirstPageReturnPageItemDeliveryStatusEnum?
+  let deliveryError: String?
+  let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
+  let toolCalls: [ConversationMessagesListByConversationFirstPageReturnPageItemToolCallsItem]?
+  let reasoning: String?
+  let isFinal: Bool?
+  @ConvexFloat var createdAt: Double
+  let role: ConversationMessagesListByConversationFirstPageReturnPageItemRoleEnum
+  let content: [ConversationMessagesListByConversationFirstPageReturnPageItemContentItem]
+  let conversationId: ConvexId<ConvexTableConversations>
+}
+
+struct ConversationMessagesListByConversationFirstPageReturn: Decodable {
+  let page: [ConversationMessagesListByConversationFirstPageReturnPageItem]
+  let isDone: Bool
+  let continueCursor: String
+  let splitCursor: String?
+  let pageStatus: ConversationMessagesListByConversationFirstPageReturnPageStatusEnum?
 }
 
 struct ConversationReadsMarkReadReturn: Decodable {
@@ -3168,6 +3425,141 @@ struct ConversationsUnarchiveReturn: Decodable {
 
 struct ConversationsRemoveReturn: Decodable {
   let success: Bool
+}
+
+struct ConversationsGetFullConversationReturnConversationModesAvailableModesItem: Decodable {
+  let description: String?
+  let id: String
+  let name: String
+}
+
+struct ConversationsGetFullConversationReturnConversationModes: Decodable {
+  let currentModeId: String
+  let availableModes: [ConversationsGetFullConversationReturnConversationModesAvailableModesItem]
+}
+
+struct ConversationsGetFullConversationReturnConversationAgentInfo: Decodable {
+  let title: String?
+  let name: String
+  let version: String
+}
+
+struct ConversationsGetFullConversationReturnConversation: Decodable {
+  let _id: ConvexId<ConvexTableConversations>
+  @ConvexFloat var _creationTime: Double
+  let userId: String?
+  let isArchived: Bool?
+  let pinned: Bool?
+  let sandboxInstanceId: String?
+  let title: String?
+  let clientConversationId: String?
+  let modelId: String?
+  let permissionMode: ConversationsGetFullConversationReturnConversationPermissionModeEnum?
+  let stopReason: ConversationsGetFullConversationReturnConversationStopReasonEnum?
+  let namespaceId: String?
+  let isolationMode: ConversationsGetFullConversationReturnConversationIsolationModeEnum?
+  let modes: ConversationsGetFullConversationReturnConversationModes?
+  let agentInfo: ConversationsGetFullConversationReturnConversationAgentInfo?
+  let acpSandboxId: ConvexId<ConvexTableAcpSandboxes>?
+  let initializedOnSandbox: Bool?
+  @OptionalConvexFloat var lastMessageAt: Double?
+  @OptionalConvexFloat var lastAssistantVisibleAt: Double?
+  let teamId: String
+  @ConvexFloat var createdAt: Double
+  @ConvexFloat var updatedAt: Double
+  let status: ConversationsGetFullConversationReturnConversationStatusEnum
+  let sessionId: String
+  let providerId: String
+  let cwd: String
+}
+
+struct ConversationsGetFullConversationReturnSandbox: Decodable {
+  let status: ConversationsGetFullConversationReturnSandboxStatusEnum
+  let sandboxUrl: String?
+  @ConvexFloat var lastActivityAt: Double
+  let errorMessage: String?
+}
+
+struct ConversationsGetFullConversationReturnMessagesItemToolCallsItem: Decodable {
+  @OptionalConvexFloat var acpSeq: Double?
+  let result: String?
+  let id: String
+  let name: String
+  let status: ConversationsGetFullConversationReturnMessagesItemToolCallsItemStatusEnum
+  let arguments: String
+}
+
+struct ConversationsGetFullConversationReturnMessagesItemContentItemResource: Decodable {
+  let text: String?
+  let mimeType: String?
+  let blob: String?
+  let uri: String
+}
+
+struct ConversationsGetFullConversationReturnMessagesItemContentItemAnnotations: Decodable {
+  let audience: [String]?
+  let lastModified: String?
+  @OptionalConvexFloat var priority: Double?
+}
+
+struct ConversationsGetFullConversationReturnMessagesItemContentItem: Decodable {
+  let name: String?
+  let text: String?
+  let description: String?
+  let mimeType: String?
+  let title: String?
+  let resource: ConversationsGetFullConversationReturnMessagesItemContentItemResource?
+  let data: String?
+  let uri: String?
+  @OptionalConvexFloat var size: Double?
+  let annotations: ConversationsGetFullConversationReturnMessagesItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
+  let type: ConversationsGetFullConversationReturnMessagesItemContentItemTypeEnum
+}
+
+struct ConversationsGetFullConversationReturnMessagesItem: Decodable {
+  let _id: ConvexId<ConvexTableConversationMessages>
+  @ConvexFloat var _creationTime: Double
+  let clientMessageId: String?
+  let deliveryStatus: ConversationsGetFullConversationReturnMessagesItemDeliveryStatusEnum?
+  let deliveryError: String?
+  let deliverySwapAttempted: Bool?
+  @OptionalConvexFloat var acpSeq: Double?
+  let toolCalls: [ConversationsGetFullConversationReturnMessagesItemToolCallsItem]?
+  let reasoning: String?
+  let isFinal: Bool?
+  @ConvexFloat var createdAt: Double
+  let role: ConversationsGetFullConversationReturnMessagesItemRoleEnum
+  let content: [ConversationsGetFullConversationReturnMessagesItemContentItem]
+  let conversationId: ConvexId<ConvexTableConversations>
+}
+
+struct ConversationsGetFullConversationReturnRawEventsItem: Decodable {
+  let _id: ConvexId<ConvexTableAcpRawEvents>
+  @ConvexFloat var _creationTime: Double
+  let direction: ConversationsGetFullConversationReturnRawEventsItemDirectionEnum?
+  let eventType: String?
+  let teamId: String
+  @ConvexFloat var createdAt: Double
+  let conversationId: ConvexId<ConvexTableConversations>
+  let sandboxId: ConvexId<ConvexTableAcpSandboxes>
+  @ConvexFloat var seq: Double
+  let raw: String
+}
+
+struct ConversationsGetFullConversationReturnStreamInfo: Decodable {
+  let sandboxUrl: String?
+  let token: String?
+  let status: String
+}
+
+struct ConversationsGetFullConversationReturn: Decodable {
+  let conversation: ConversationsGetFullConversationReturnConversation
+  let sandbox: ConversationsGetFullConversationReturnSandbox?
+  @OptionalConvexFloat var lastReadAt: Double?
+  let messages: [ConversationsGetFullConversationReturnMessagesItem]
+  let rawEvents: [ConversationsGetFullConversationReturnRawEventsItem]
+  let streamInfo: ConversationsGetFullConversationReturnStreamInfo
 }
 
 struct CrownEvaluateAndCrownWinnerReturn: Decodable {
@@ -6501,6 +6893,28 @@ struct WorkspaceSettingsGetReturnHeatmapColors: Decodable {
   let token: WorkspaceSettingsGetReturnHeatmapColorsToken
 }
 
+struct WorkspaceSettingsGetReturnMcpServersItemEnvItem: Decodable {
+  let name: String
+  let value: String
+}
+
+struct WorkspaceSettingsGetReturnMcpServersItemHeadersItem: Decodable {
+  let name: String
+  let value: String
+}
+
+struct WorkspaceSettingsGetReturnMcpServersItem: Decodable {
+  let url: String?
+  let command: String?
+  let args: [String]?
+  let env: [WorkspaceSettingsGetReturnMcpServersItemEnvItem]?
+  let headers: [WorkspaceSettingsGetReturnMcpServersItemHeadersItem]?
+  let id: String
+  let name: String
+  let enabled: Bool
+  let transport: WorkspaceSettingsGetReturnMcpServersItemTransportEnum
+}
+
 struct WorkspaceSettingsGetReturn: Decodable {
   let _id: ConvexId<ConvexTableWorkspaceSettings>
   @ConvexFloat var _creationTime: Double
@@ -6513,6 +6927,8 @@ struct WorkspaceSettingsGetReturn: Decodable {
   let heatmapColors: WorkspaceSettingsGetReturnHeatmapColors?
   let conversationTitleStyle: WorkspaceSettingsGetReturnConversationTitleStyleEnum?
   let conversationTitleCustomPrompt: String?
+  let acpSandboxProvider: WorkspaceSettingsGetReturnAcpSandboxProviderEnum?
+  let mcpServers: [WorkspaceSettingsGetReturnMcpServersItem]?
   let teamId: String
   @ConvexFloat var createdAt: Double
   @ConvexFloat var updatedAt: Double
@@ -6551,6 +6967,56 @@ struct WorkspaceSettingsUpdateArgsHeatmapColors: ConvexEncodable {
     var result: [String: ConvexEncodable?] = [:]
     result["line"] = line
     result["token"] = token
+    return try result.convexEncode()
+  }
+}
+
+struct WorkspaceSettingsUpdateArgsMcpServersItemEnvItem: ConvexEncodable {
+  let name: String
+  let value: String
+
+  func convexEncode() throws -> String {
+    var result: [String: ConvexEncodable?] = [:]
+    result["name"] = name
+    result["value"] = value
+    return try result.convexEncode()
+  }
+}
+
+struct WorkspaceSettingsUpdateArgsMcpServersItemHeadersItem: ConvexEncodable {
+  let name: String
+  let value: String
+
+  func convexEncode() throws -> String {
+    var result: [String: ConvexEncodable?] = [:]
+    result["name"] = name
+    result["value"] = value
+    return try result.convexEncode()
+  }
+}
+
+struct WorkspaceSettingsUpdateArgsMcpServersItem: ConvexEncodable {
+  let url: String?
+  let command: String?
+  let args: [String]?
+  let env: [WorkspaceSettingsUpdateArgsMcpServersItemEnvItem]?
+  let headers: [WorkspaceSettingsUpdateArgsMcpServersItemHeadersItem]?
+  let id: String
+  let name: String
+  let enabled: Bool
+  let transport: WorkspaceSettingsUpdateArgsMcpServersItemTransportEnum
+
+  func convexEncode() throws -> String {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = url { result["url"] = value }
+    if let value = command { result["command"] = value }
+    if let value = args { result["args"] = convexEncodeArray(value) }
+    if let value = env { result["env"] = convexEncodeArray(value) }
+    if let value = headers { result["headers"] = convexEncodeArray(value) }
+    result["id"] = id
+    result["name"] = name
+    result["enabled"] = enabled
+    result["transport"] = transport
     return try result.convexEncode()
   }
 }
@@ -6653,6 +7119,16 @@ struct AcpCancelConversationArgs {
   }
 }
 
+struct AcpSpawnRivetSandboxArgs {
+  let teamId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    result["teamId"] = teamId
+    return result
+  }
+}
+
 struct AcpGetStreamInfoArgs {
   let conversationId: ConvexId<ConvexTableConversations>
   let teamSlugOrId: String
@@ -6721,6 +7197,20 @@ struct AcpRawEventsListByConversationPaginatedArgs {
     result["conversationId"] = conversationId
     result["teamSlugOrId"] = teamSlugOrId
     result["paginationOpts"] = paginationOpts
+    return result
+  }
+}
+
+struct AcpRawEventsListByConversationFirstPageArgs {
+  let numItems: Double?
+  let conversationId: ConvexId<ConvexTableConversations>
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = numItems { result["numItems"] = value }
+    result["conversationId"] = conversationId
+    result["teamSlugOrId"] = teamSlugOrId
     return result
   }
 }
@@ -7175,6 +7665,20 @@ struct ConversationMessagesListByConversationPaginatedArgs {
   }
 }
 
+struct ConversationMessagesListByConversationFirstPageArgs {
+  let numItems: Double?
+  let conversationId: ConversationMessagesListByConversationFirstPageArgsConversationId
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = numItems { result["numItems"] = value }
+    result["conversationId"] = conversationId
+    result["teamSlugOrId"] = teamSlugOrId
+    return result
+  }
+}
+
 struct ConversationReadsMarkReadArgs {
   let lastReadAt: Double?
   let conversationId: ConvexId<ConvexTableConversations>
@@ -7379,6 +7883,22 @@ struct ConversationsRemoveArgs {
 
   func asDictionary() -> [String: ConvexEncodable?] {
     var result: [String: ConvexEncodable?] = [:]
+    result["conversationId"] = conversationId
+    result["teamSlugOrId"] = teamSlugOrId
+    return result
+  }
+}
+
+struct ConversationsGetFullConversationArgs {
+  let messagesLimit: Double?
+  let rawEventsLimit: Double?
+  let conversationId: ConvexId<ConvexTableConversations>
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = messagesLimit { result["messagesLimit"] = value }
+    if let value = rawEventsLimit { result["rawEventsLimit"] = value }
     result["conversationId"] = conversationId
     result["teamSlugOrId"] = teamSlugOrId
     return result
@@ -8329,6 +8849,46 @@ struct PreviewTestJobsDeleteTestRunArgs {
     var result: [String: ConvexEncodable?] = [:]
     result["teamSlugOrId"] = teamSlugOrId
     result["previewRunId"] = previewRunId
+    return result
+  }
+}
+
+struct PushTokensUpsertArgs {
+  let deviceId: String?
+  let token: String
+  let environment: PushTokensUpsertArgsEnvironmentEnum
+  let platform: String
+  let bundleId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = deviceId { result["deviceId"] = value }
+    result["token"] = token
+    result["environment"] = environment
+    result["platform"] = platform
+    result["bundleId"] = bundleId
+    return result
+  }
+}
+
+struct PushTokensRemoveArgs {
+  let token: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    result["token"] = token
+    return result
+  }
+}
+
+struct PushTokensSendTestArgs {
+  let title: String?
+  let body: String?
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = title { result["title"] = value }
+    if let value = body { result["body"] = value }
     return result
   }
 }
@@ -9636,6 +10196,8 @@ struct WorkspaceSettingsUpdateArgs {
   let heatmapColors: WorkspaceSettingsUpdateArgsHeatmapColors?
   let conversationTitleStyle: WorkspaceSettingsUpdateArgsConversationTitleStyleEnum?
   let conversationTitleCustomPrompt: String?
+  let acpSandboxProvider: WorkspaceSettingsUpdateArgsAcpSandboxProviderEnum?
+  let mcpServers: [WorkspaceSettingsUpdateArgsMcpServersItem]?
   let teamSlugOrId: String
 
   func asDictionary() -> [String: ConvexEncodable?] {
@@ -9648,6 +10210,8 @@ struct WorkspaceSettingsUpdateArgs {
     if let value = heatmapColors { result["heatmapColors"] = value }
     if let value = conversationTitleStyle { result["conversationTitleStyle"] = value }
     if let value = conversationTitleCustomPrompt { result["conversationTitleCustomPrompt"] = value }
+    if let value = acpSandboxProvider { result["acpSandboxProvider"] = value }
+    if let value = mcpServers { result["mcpServers"] = convexEncodeArray(value) }
     result["teamSlugOrId"] = teamSlugOrId
     return result
   }
@@ -9749,6 +10313,12 @@ typealias PreviewRunsListByConfigReturn = [PreviewRunsListByConfigItem]
 typealias PreviewRunsListByTeamReturn = [PreviewRunsListByTeamItem]
 
 typealias PreviewTestJobsListTestRunsReturn = [PreviewTestJobsListTestRunsItem]
+
+typealias PushTokensUpsertReturn = String
+
+typealias PushTokensRemoveReturn = String
+
+typealias PushTokensSendTestReturn = String
 
 typealias StackUpsertUserPublicReturn = String
 
