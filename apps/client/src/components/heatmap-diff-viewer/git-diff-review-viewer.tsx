@@ -905,27 +905,26 @@ const FileDiffCard = memo(function FileDiffCardComponent({
   }, [focusedChangeKey, scrollContainer]);
 
   return (
-    <div id={entry.anchorId} ref={cardRef}>
-      <HeatmapDiffViewer
-        diffText={entry.diffText}
-        parsedDiff={entry.diff}
-        filename={entry.entry.filePath}
-        status={status}
-        additions={entry.entry.additions ?? 0}
-        deletions={entry.entry.deletions ?? 0}
-        reviewHeatmap={reviewHeatmap}
-        heatmapThreshold={heatmapThreshold}
-        diffHeatmap={diffHeatmap}
-        heatmapColors={heatmapColors}
-        focusedLine={focusedLine}
-        autoTooltipLine={autoTooltipLine}
-        isLoading={isLoading}
-        errorMessage={entry.error ?? null}
-        defaultCollapsed={isCollapsed}
-        onCollapseChange={handleCollapseChange}
-        className=""
-      />
-    </div>
+    <HeatmapDiffViewer
+      id={entry.anchorId}
+      ref={cardRef}
+      diffText={entry.diffText}
+      parsedDiff={entry.diff}
+      filename={entry.entry.filePath}
+      status={status}
+      additions={entry.entry.additions ?? 0}
+      deletions={entry.entry.deletions ?? 0}
+      reviewHeatmap={reviewHeatmap}
+      heatmapThreshold={heatmapThreshold}
+      diffHeatmap={diffHeatmap}
+      heatmapColors={heatmapColors}
+      focusedLine={focusedLine}
+      autoTooltipLine={autoTooltipLine}
+      isLoading={isLoading}
+      errorMessage={entry.error ?? null}
+      defaultCollapsed={isCollapsed}
+      onCollapseChange={handleCollapseChange}
+    />
   );
 }, areFileDiffCardPropsEqual);
 
@@ -1903,11 +1902,18 @@ export function GitDiffHeatmapReviewViewer({
 
   if (totalFileCount === 0) {
     return (
-      <div className="grow bg-white dark:bg-neutral-900 px-3 py-6">
-        <div className="text-center">
-          <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+      <div ref={rootRef} className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+        {/* Header row - matching Description/Previews spacing */}
+        <div className="px-2 py-1.5 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 text-[13px] font-medium text-neutral-600 dark:text-neutral-400">
+            <PanelLeft className="w-3.5 h-3.5" />
+            <span>Files</span>
+          </div>
+        </div>
+        <div className="px-3 pb-3">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
             No diff detected
-          </span>
+          </p>
           <div className="grid place-content-center">
             <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
               {kitty}

@@ -2,7 +2,7 @@
 // Adapted from apps/www/components/pr/pull-request-diff-viewer.tsx
 
 import {
-  Fragment,
+  forwardRef,
   memo,
   useMemo,
   useState,
@@ -12,7 +12,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Decoration,
   Diff,
   Hunk,
   computeNewLineNumber,
@@ -67,6 +66,8 @@ import {
 // ============================================================================
 
 export type HeatmapDiffViewerProps = {
+  /** ID for the container element */
+  id?: string;
   /** The raw git diff string */
   diffText: string;
   /** Pre-parsed diff data (optional, avoids parsing on each render) */
@@ -511,25 +512,30 @@ function HeatmapGutterTooltip({
 // Main Component
 // ============================================================================
 
-export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
-  diffText,
-  parsedDiff: providedParsedDiff,
-  filename,
-  status,
-  additions = 0,
-  deletions = 0,
-  reviewHeatmap = [],
-  heatmapThreshold = 0,
-  diffHeatmap: providedDiffHeatmap,
-  heatmapColors = DEFAULT_HEATMAP_COLORS,
-  focusedLine = null,
-  autoTooltipLine = null,
-  isLoading = false,
-  errorMessage = null,
-  defaultCollapsed = false,
-  onCollapseChange,
-  className,
-}: HeatmapDiffViewerProps) {
+export const HeatmapDiffViewer = memo(
+  forwardRef<HTMLDivElement, HeatmapDiffViewerProps>(function HeatmapDiffViewerComponent(
+    {
+      id,
+      diffText,
+      parsedDiff: providedParsedDiff,
+      filename,
+      status,
+      additions = 0,
+      deletions = 0,
+      reviewHeatmap = [],
+      heatmapThreshold = 0,
+      diffHeatmap: providedDiffHeatmap,
+      heatmapColors = DEFAULT_HEATMAP_COLORS,
+      focusedLine = null,
+      autoTooltipLine = null,
+      isLoading = false,
+      errorMessage = null,
+      defaultCollapsed = false,
+      onCollapseChange,
+      className,
+    },
+    ref
+  ) {
   const { resolvedTheme } = useTheme();
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
@@ -835,29 +841,27 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
   const isDarkMode = resolvedTheme === "dark";
 
   return (
-    <TooltipProvider
-      delayDuration={0}
-      skipDelayDuration={0}
-      disableHoverableContent
-    >
-      <article
+    <>
+      <div
+        id={id}
+        ref={ref}
         className={cn(
-          "bg-white dark:bg-neutral-900 transition",
+          "bg-white dark:bg-neutral-900",
           className
         )}
       >
-        <div className="flex flex-col">
-          {/* Header - matches FileDiffHeader styling */}
+        {/* Header - matches FileDiffHeaderWithViewed styling */}
+        <div
+          className="w-full px-3 py-2 flex items-center text-left bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200/80 dark:border-neutral-800/70"
+        >
           <button
             type="button"
             onClick={handleToggleCollapse}
-            className={cn(
-              "w-full px-3 py-2 flex items-center hover:bg-neutral-100/70 dark:hover:bg-neutral-800/60 transition-colors text-left group bg-neutral-50/80 dark:bg-neutral-900/70 border-b border-neutral-200/80 dark:border-neutral-800/70 sticky top-[var(--cmux-diff-header-offset,0px)] z-[var(--z-sticky-low)]"
-            )}
+            className="flex items-center flex-1 min-w-0"
             aria-expanded={!isCollapsed}
           >
             <div className="flex items-center" style={{ width: "20px" }}>
-              <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
+              <div className="text-neutral-400 dark:text-neutral-500">
                 {isCollapsed ? (
                   <ChevronRight className="w-3.5 h-3.5" />
                 ) : (
@@ -905,128 +909,128 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
               </div>
             </div>
           </button>
-
-          {/* Diff Content */}
-          {!isCollapsed && (
-            <div className="overflow-hidden">
-            {parsedDiff ? (
-              <Diff
-                diffType={parsedDiff.type}
-                hunks={parsedDiff.hunks}
-                viewType="split"
-                optimizeSelection
-                className={cn(
-                  "diff-syntax system-mono overflow-auto text-xs leading-5",
-                  "bg-white dark:bg-neutral-950",
-                  "text-neutral-800 dark:text-neutral-200"
-                )}
-                gutterClassName={cn(
-                  "system-mono text-xs",
-                  "bg-white dark:bg-neutral-950",
-                  "text-neutral-500 dark:text-neutral-400"
-                )}
-                codeClassName={cn(
-                  "system-mono text-xs",
-                  "text-neutral-800 dark:text-neutral-200"
-                )}
-                tokens={tokens ?? undefined}
-                renderToken={renderHeatmapToken}
-                renderGutter={renderHeatmapGutter}
-                generateLineClassName={({ changes, defaultGenerate }) => {
-                  const defaultClassName = defaultGenerate();
-                  const classNames: string[] = ["system-mono text-xs py-1"];
-                  const normalizedChanges = changes.filter(
-                    (change): change is ChangeData => Boolean(change)
-                  );
-                  const hasFocus =
-                    focusedLine !== null &&
-                    normalizedChanges.some((change) =>
-                      doesChangeMatchLine(change, focusedLine)
-                    );
-                  if (hasFocus) {
-                    classNames.push("cmux-heatmap-focus");
-                  }
-
-                  // Apply heatmap line classes
-                  if (
-                    diffHeatmap &&
-                    (diffHeatmap.lineClasses.size > 0 ||
-                      diffHeatmap.oldLineClasses.size > 0)
-                  ) {
-                    let bestHeatmapClass: string | null = null;
-
-                    const considerClass = (candidate: string | undefined) => {
-                      if (!candidate) {
-                        return;
-                      }
-                      if (!bestHeatmapClass) {
-                        bestHeatmapClass = candidate;
-                        return;
-                      }
-                      const currentStep =
-                        extractHeatmapGradientStep(bestHeatmapClass);
-                      const nextStep = extractHeatmapGradientStep(candidate);
-                      if (nextStep > currentStep) {
-                        bestHeatmapClass = candidate;
-                      }
-                    };
-
-                    for (const change of normalizedChanges) {
-                      const newLineNumber = computeNewLineNumber(change);
-                      if (newLineNumber > 0) {
-                        considerClass(
-                          diffHeatmap.lineClasses.get(newLineNumber)
-                        );
-                      }
-                      const oldLineNumber = computeOldLineNumber(change);
-                      if (oldLineNumber > 0) {
-                        considerClass(
-                          diffHeatmap.oldLineClasses.get(oldLineNumber)
-                        );
-                      }
-                    }
-
-                    if (bestHeatmapClass) {
-                      classNames.push(bestHeatmapClass);
-                    }
-                  }
-
-                  classNames.push(
-                    isDarkMode
-                      ? "text-neutral-200"
-                      : "text-neutral-800"
-                  );
-
-                  return cn(defaultClassName, classNames);
-                }}
-              >
-                {(hunks) =>
-                  hunks.map((hunk) => (
-                    <Fragment key={hunk.content}>
-                      <Decoration>
-                        <div className="bg-sky-50 dark:bg-sky-950/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
-                          {hunk.content}
-                        </div>
-                      </Decoration>
-                      <Hunk hunk={hunk} />
-                    </Fragment>
-                  ))
-                }
-              </Diff>
-            ) : (
-              <div className="bg-neutral-50 dark:bg-neutral-900 px-4 py-6 text-sm text-neutral-600 dark:text-neutral-400">
-                {errorMessage ??
-                  "Diff content is unavailable for this file. It might be binary or too large to display."}
-              </div>
-            )}
-            </div>
-          )}
         </div>
-      </article>
+
+        {/* Diff Content */}
+        {!isCollapsed && (
+          <TooltipProvider delayDuration={0} skipDelayDuration={0} disableHoverableContent>
+            <div>
+              {parsedDiff ? (
+                parsedDiff.hunks.map((hunk) => (
+                  <div key={hunk.content}>
+                    {/* Hunk header - rendered as a block element outside the table */}
+                    <div className="bg-sky-50 dark:bg-sky-950/50 px-4 py-1.5 text-xs font-mono text-sky-700 dark:text-sky-300 border-b border-sky-100 dark:border-sky-900/50">
+                      {hunk.content}
+                    </div>
+                    {/* Diff table for this hunk */}
+                    <Diff
+                      diffType={parsedDiff.type}
+                      hunks={[hunk]}
+                      viewType="split"
+                      optimizeSelection
+                      className={cn(
+                        "diff-syntax system-mono overflow-auto text-xs leading-5",
+                        "bg-white dark:bg-neutral-950",
+                        "text-neutral-800 dark:text-neutral-200"
+                      )}
+                      gutterClassName={cn(
+                        "system-mono text-xs",
+                        "bg-white dark:bg-neutral-950",
+                        "text-neutral-500 dark:text-neutral-400"
+                      )}
+                      codeClassName={cn(
+                        "system-mono text-xs",
+                        "text-neutral-800 dark:text-neutral-200"
+                      )}
+                      tokens={tokens ?? undefined}
+                      renderToken={renderHeatmapToken}
+                      renderGutter={renderHeatmapGutter}
+                      generateLineClassName={({ changes, defaultGenerate }) => {
+                        const defaultClassName = defaultGenerate();
+                        const classNames: string[] = ["system-mono text-xs py-1"];
+                        const normalizedChanges = changes.filter(
+                          (change): change is ChangeData => Boolean(change)
+                        );
+                        const hasFocus =
+                          focusedLine !== null &&
+                          normalizedChanges.some((change) =>
+                            doesChangeMatchLine(change, focusedLine)
+                          );
+                        if (hasFocus) {
+                          classNames.push("cmux-heatmap-focus");
+                        }
+
+                        // Apply heatmap line classes
+                        if (
+                          diffHeatmap &&
+                          (diffHeatmap.lineClasses.size > 0 ||
+                            diffHeatmap.oldLineClasses.size > 0)
+                        ) {
+                          let bestHeatmapClass: string | null = null;
+
+                          const considerClass = (candidate: string | undefined) => {
+                            if (!candidate) {
+                              return;
+                            }
+                            if (!bestHeatmapClass) {
+                              bestHeatmapClass = candidate;
+                              return;
+                            }
+                            const currentStep =
+                              extractHeatmapGradientStep(bestHeatmapClass);
+                            const nextStep = extractHeatmapGradientStep(candidate);
+                            if (nextStep > currentStep) {
+                              bestHeatmapClass = candidate;
+                            }
+                          };
+
+                          for (const change of normalizedChanges) {
+                            const newLineNumber = computeNewLineNumber(change);
+                            if (newLineNumber > 0) {
+                              considerClass(
+                                diffHeatmap.lineClasses.get(newLineNumber)
+                              );
+                            }
+                            const oldLineNumber = computeOldLineNumber(change);
+                            if (oldLineNumber > 0) {
+                              considerClass(
+                                diffHeatmap.oldLineClasses.get(oldLineNumber)
+                              );
+                            }
+                          }
+
+                          if (bestHeatmapClass) {
+                            classNames.push(bestHeatmapClass);
+                          }
+                        }
+
+                        classNames.push(
+                          isDarkMode
+                            ? "text-neutral-200"
+                            : "text-neutral-800"
+                        );
+
+                        return cn(defaultClassName, classNames);
+                      }}
+                    >
+                      {(hunks) => hunks.map((h) => <Hunk key={h.content} hunk={h} />)}
+                    </Diff>
+                  </div>
+                ))
+              ) : (
+                <div className="bg-neutral-50 dark:bg-neutral-900 px-4 py-6 text-sm text-neutral-600 dark:text-neutral-400">
+                  {errorMessage ??
+                    "Diff content is unavailable for this file. It might be binary or too large to display."}
+                </div>
+              )}
+            </div>
+          </TooltipProvider>
+        )}
+      </div>
       <style
         data-heatmap-gradient
         dangerouslySetInnerHTML={{ __html: heatmapGradientCss }}
       />
-    </TooltipProvider>
+    </>
   );
-});
+}));

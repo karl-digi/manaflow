@@ -70,17 +70,18 @@ export function FileDiffHeaderWithViewed({
   return (
     <div
       className={cn(
-        "w-full px-3 py-2 flex items-center transition-colors text-left group bg-neutral-50/80 dark:bg-neutral-900/70 border-b border-neutral-200/80 dark:border-neutral-800/70 sticky top-[var(--cmux-diff-header-offset,0px)] z-[var(--z-sticky-low)]",
+        "w-full px-3 py-2 flex items-center text-left bg-neutral-50/80 dark:bg-neutral-900/70 border-b border-neutral-200/80 dark:border-neutral-800/70 sticky top-[var(--cmux-diff-header-offset,0px)] z-[var(--z-sticky-low)]",
         className
       )}
     >
       {/* Expand/collapse toggle */}
       <button
+        type="button"
         onClick={onToggle}
-        className="flex items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors flex-1 min-w-0"
+        className="flex items-center flex-1 min-w-0"
       >
         <div className="flex items-center" style={{ width: "20px" }}>
-          <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
+          <div className="text-neutral-400 dark:text-neutral-500">
             {isExpanded ? (
               <ChevronDown className="w-3.5 h-3.5" />
             ) : (
@@ -118,15 +119,15 @@ export function FileDiffHeaderWithViewed({
       {/* Viewed checkbox */}
       <div className="flex items-center gap-1.5 ml-2">
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onToggleViewed();
           }}
           className={cn(
-            "flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] font-medium transition-colors",
-            "text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70"
+            "flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] font-medium",
+            "text-neutral-500 dark:text-neutral-400"
           )}
-          title={isViewed ? "Mark as not viewed" : "Mark as viewed"}
         >
           <div
             className={cn(

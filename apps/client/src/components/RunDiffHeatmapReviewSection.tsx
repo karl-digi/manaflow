@@ -8,7 +8,6 @@ import {
 } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
-import { kitties } from "./kitties";
 
 export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
@@ -132,28 +131,6 @@ export function RunDiffHeatmapReviewSection(
   }
 
   const combinedDiffs = combinedDiffsRef.current;
-
-  const kitty = useMemo(
-    () => kitties[Math.floor(Math.random() * kitties.length)],
-    []
-  );
-
-  if (combinedDiffs.length === 0) {
-    return (
-      <div className="grow bg-white dark:bg-neutral-900 px-3 py-6">
-        <div className="text-center">
-          <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
-            No diff detected
-          </span>
-          <div className="grid place-content-center">
-            <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-              {kitty}
-            </pre>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <GitDiffHeatmapReviewViewer
