@@ -1,6 +1,6 @@
 {
   "name": "cmux",
-  "version": "0.1.0",
+  "version": "0.3.6",
   "description": "Cloud VMs for development - spawn isolated dev environments instantly",
   "keywords": [
     "cli",
@@ -33,11 +33,11 @@
     "postinstall": "node lib/postinstall.js"
   },
   "optionalDependencies": {
-    "@cmux/darwin-arm64": "0.1.0",
-    "@cmux/darwin-x64": "0.1.0",
-    "@cmux/linux-arm64": "0.1.0",
-    "@cmux/linux-x64": "0.1.0",
-    "@cmux/win32-x64": "0.1.0"
+    "cmux-darwin-arm64": "0.3.6",
+    "cmux-darwin-x64": "0.3.6",
+    "cmux-linux-arm64": "0.3.6",
+    "cmux-linux-x64": "0.3.6",
+    "cmux-win32-x64": "0.3.6"
   },
   "engines": {
     "node": ">=16"

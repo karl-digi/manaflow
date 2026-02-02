@@ -1,6 +1,6 @@
 {
-  "name": "@cmux/darwin-arm64",
-  "version": "0.1.0",
+  "name": "cmux-darwin-arm64",
+  "version": "0.3.6",
   "description": "cmux CLI binary for macOS ARM64 (Apple Silicon)",
   "os": ["darwin"],
   "cpu": ["arm64"],

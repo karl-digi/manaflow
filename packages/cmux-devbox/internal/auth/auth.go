@@ -474,7 +474,8 @@ func Login() error {
 
 	// Check if already logged in
 	if IsLoggedIn() {
-		return fmt.Errorf("already logged in. Run 'cmux auth logout' first to re-authenticate")
+		fmt.Println("Already logged in. Run 'cmux auth logout' first to re-authenticate.")
+		return nil
 	}
 
 	fmt.Println("Starting authentication...")

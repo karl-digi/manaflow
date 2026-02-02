@@ -15,17 +15,20 @@ import (
 )
 
 var startCmd = &cobra.Command{
-	Use:   "start [path]",
-	Short: "Create a new VM",
+	Use:     "start [path]",
+	Aliases: []string{"new"},
+	Short:   "Create a new VM",
 	Long: `Create a new VM and optionally sync a local directory into it.
 
 Each call creates a NEW VM. Use 'cmux resume <id>' to resume a paused VM.
 
 Examples:
   cmux start                    # Create VM (no sync)
+  cmux new                      # Same as 'cmux start'
   cmux start .                  # Create VM, sync current directory
   cmux start ./my-project       # Create VM, sync specific directory
-  cmux start --snapshot=snap_x  # Create from specific snapshot`,
+  cmux start --snapshot=snap_x  # Create from specific snapshot
+  cmux start -i                 # Create VM and open VS Code`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -128,11 +131,21 @@ Examples:
 		fmt.Printf("  VS Code:  %s\n", codeAuthURL)
 		fmt.Printf("  VNC:      %s\n", vncAuthURL)
 
+		// Open VS Code in browser if interactive mode
+		interactive, _ := cmd.Flags().GetBool("interactive")
+		if interactive {
+			fmt.Println("\nOpening VS Code in browser...")
+			if err := openBrowser(codeAuthURL); err != nil {
+				fmt.Printf("Warning: could not open browser: %v\n", err)
+			}
+		}
+
 		return nil
 	},
 }
 
 func init() {
 	startCmd.Flags().String("snapshot", "", "Snapshot ID to create from")
+	startCmd.Flags().BoolP("interactive", "i", false, "Open VS Code in browser after creation")
 	rootCmd.AddCommand(startCmd)
 }

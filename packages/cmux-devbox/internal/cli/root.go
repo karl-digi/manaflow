@@ -26,6 +26,7 @@ var rootCmd = &cobra.Command{
 Quick start:
   cmux login                      # Authenticate (or: cmux auth login)
   cmux start ./my-project         # Create VM, sync directory → returns ID
+  cmux new                        # Same as 'cmux start'
   cmux code <id>                  # Open VS Code
   cmux ssh <id>                   # SSH into VM
   cmux sync <id> ./my-project     # Sync files to VM

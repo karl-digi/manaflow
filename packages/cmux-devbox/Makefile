@@ -83,11 +83,11 @@ npm-version:
 		if [ -f "npm/$$pkg/package.json" ]; then \
 			sed -i '' 's/"version": "[^"]*"/"version": "$(VERSION)"/' npm/$$pkg/package.json; \
 			if [ "$$pkg" = "cmux" ]; then \
-				sed -i '' 's/"@cmux\/darwin-arm64": "[^"]*"/"@cmux\/darwin-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"@cmux\/darwin-x64": "[^"]*"/"@cmux\/darwin-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"@cmux\/linux-arm64": "[^"]*"/"@cmux\/linux-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"@cmux\/linux-x64": "[^"]*"/"@cmux\/linux-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"@cmux\/win32-x64": "[^"]*"/"@cmux\/win32-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"cmux-darwin-arm64": "[^"]*"/"cmux-darwin-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"cmux-darwin-x64": "[^"]*"/"cmux-darwin-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"cmux-linux-arm64": "[^"]*"/"cmux-linux-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"cmux-linux-x64": "[^"]*"/"cmux-linux-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"cmux-win32-x64": "[^"]*"/"cmux-win32-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
 			fi; \
 		fi; \
 	done
