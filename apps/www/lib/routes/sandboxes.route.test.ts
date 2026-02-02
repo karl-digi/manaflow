@@ -4,6 +4,8 @@ import { testApiClient } from "@/lib/test-utils/openapi-client";
 import { postApiSandboxesStart } from "@cmux/www-openapi-client";
 import { describe, expect, it } from "vitest";
 
+const TEST_TEAM = process.env.CMUX_TEST_TEAM_SLUG || "example-team";
+
 const ENVIRONMENT_ID =
   process.env.DEBUG_ENVIRONMENT_ID ?? "mn7bxgkya730p3hqzj2dzatzhh7s8c52";
 
@@ -19,7 +21,7 @@ describe.skip("sandboxesRouter integration", () => {
         client: testApiClient,
         headers: { "x-stack-auth": JSON.stringify(tokens) },
         body: {
-        teamSlugOrId: "manaflow",
+        teamSlugOrId: TEST_TEAM,
         snapshotId: "snapshot_does_not_exist_for_team_test",
         ttlSeconds: 60,
       },
@@ -40,7 +42,7 @@ describe.skip("sandboxesRouter integration", () => {
         client: testApiClient,
         headers: { "x-stack-auth": JSON.stringify(tokens) },
         body: {
-          teamSlugOrId: "manaflow",
+          teamSlugOrId: TEST_TEAM,
           environmentId: ENVIRONMENT_ID,
           ttlSeconds: 60,
         },

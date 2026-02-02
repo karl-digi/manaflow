@@ -48,8 +48,9 @@ jobs:
           NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
           NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          # Test user
+          # Test user and team
           STACK_TEST_USER_ID: ${{ secrets.STACK_TEST_USER_ID }}
+          CMUX_TEST_TEAM_SLUG: ${{ secrets.CMUX_TEST_TEAM_SLUG }}
         run: |
           set -euo pipefail
           bun run check & pid1=$!
