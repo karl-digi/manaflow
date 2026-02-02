@@ -177,6 +177,7 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_archived", ["teamId", "userId", "isArchived"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
