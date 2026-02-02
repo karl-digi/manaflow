@@ -1188,7 +1188,7 @@ const convexSchema = defineSchema({
 
   // User-owned devbox instances (standalone sandboxes not tied to task runs)
   devboxInstances: defineTable({
-    devboxId: v.string(), // Friendly ID (dba_xxxxxxxx) for CLI users
+    devboxId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
     userId: v.string(), // Owner user ID
     teamId: v.string(), // Team scope
     name: v.optional(v.string()), // User-friendly name
@@ -1214,7 +1214,7 @@ const convexSchema = defineSchema({
 
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
-    devboxId: v.string(), // Our friendly ID (dba_xxxxxxxx)
+    devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
     provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance

@@ -40,16 +40,16 @@ import {
   instanceGetRouter as devboxInstanceGetRouter,
 } from "./devbox_http";
 import {
-  createInstance as dbaCreateInstance,
-  listInstances as dbaListInstances,
-  listSnapshots as dbaListSnapshots,
-  getSnapshot as dbaGetSnapshot,
-  getConfig as dbaGetConfig,
-  getMe as dbaGetMe,
-  instanceActionRouter as dbaInstanceActionRouter,
-  instanceGetRouter as dbaInstanceGetRouter,
-  instanceDeleteRouter as dbaInstanceDeleteRouter,
-} from "./dba_http";
+  createInstance as cmuxCreateInstance,
+  listInstances as cmuxListInstances,
+  listSnapshots as cmuxListSnapshots,
+  getSnapshot as cmuxGetSnapshot,
+  getConfig as cmuxGetConfig,
+  getMe as cmuxGetMe,
+  instanceActionRouter as cmuxInstanceActionRouter,
+  instanceGetRouter as cmuxInstanceGetRouter,
+  instanceDeleteRouter as cmuxInstanceDeleteRouter,
+} from "./cmux_http";
 
 const http = httpRouter();
 
@@ -242,56 +242,56 @@ http.route({
 http.route({
   path: "/api/v1/cmux/instances",
   method: "POST",
-  handler: dbaCreateInstance,
+  handler: cmuxCreateInstance,
 });
 
 http.route({
   path: "/api/v1/cmux/instances",
   method: "GET",
-  handler: dbaListInstances,
+  handler: cmuxListInstances,
 });
 
 http.route({
   path: "/api/v1/cmux/snapshots",
   method: "GET",
-  handler: dbaListSnapshots,
+  handler: cmuxListSnapshots,
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/snapshots/",
   method: "GET",
-  handler: dbaGetSnapshot,
+  handler: cmuxGetSnapshot,
 });
 
 http.route({
   path: "/api/v1/cmux/config",
   method: "GET",
-  handler: dbaGetConfig,
+  handler: cmuxGetConfig,
 });
 
 http.route({
   path: "/api/v1/cmux/me",
   method: "GET",
-  handler: dbaGetMe,
+  handler: cmuxGetMe,
 });
 
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "GET",
-  handler: dbaInstanceGetRouter,
+  handler: cmuxInstanceGetRouter,
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "POST",
-  handler: dbaInstanceActionRouter,
+  handler: cmuxInstanceActionRouter,
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "DELETE",
-  handler: dbaInstanceDeleteRouter,
+  handler: cmuxInstanceDeleteRouter,
 });
 
 export default http;

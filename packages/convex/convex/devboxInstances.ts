@@ -11,11 +11,11 @@ const instanceStatusValidator = v.union(
 );
 
 /**
- * Generate a friendly ID for CLI users (dba_xxxxxxxx)
+ * Generate a friendly ID for CLI users (cmux_xxxxxxxx)
  */
 function generateDevboxId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "dba_";
+  let result = "cmux_";
   const array = new Uint8Array(8);
   crypto.getRandomValues(array);
   for (let i = 0; i < 8; i++) {
@@ -61,12 +61,12 @@ export const list = authQuery({
 });
 
 /**
- * Get a specific devbox instance by ID (dba_xxxxxxxx).
+ * Get a specific devbox instance by ID (cmux_xxxxxxxx).
  */
 export const getById = authQuery({
   args: {
     teamSlugOrId: v.string(),
-    id: v.string(), // The devboxId (dba_xxx)
+    id: v.string(), // The devboxId (cmux_xxx)
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;

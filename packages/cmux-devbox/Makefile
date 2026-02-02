@@ -11,7 +11,7 @@ LDFLAGS := -X main.Version=$(VERSION) \
 .PHONY: build clean test install fmt lint run deps
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox ./cmd/dba
+	go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox ./cmd/cmux-devbox
 
 install: build
 	cp bin/cmux-devbox /usr/local/bin/cmux-devbox
@@ -37,7 +37,7 @@ run: build
 
 # Build for all platforms
 build-all:
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-darwin-amd64 ./cmd/dba
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-darwin-arm64 ./cmd/dba
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-linux-amd64 ./cmd/dba
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-linux-arm64 ./cmd/dba
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-darwin-amd64 ./cmd/cmux-devbox
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-darwin-arm64 ./cmd/cmux-devbox
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-linux-amd64 ./cmd/cmux-devbox
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-devbox-linux-arm64 ./cmd/cmux-devbox
