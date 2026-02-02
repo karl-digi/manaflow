@@ -278,7 +278,10 @@ fn validate_shell(shell: &str) -> Result<&'static str, &'static str> {
         }
     }
 
-    warn!("[security] Rejected shell: {} (not in whitelist or known mappings)", shell);
+    warn!(
+        "[security] Rejected shell: {} (not in whitelist or known mappings)",
+        shell
+    );
     Err("Shell not in allowed list")
 }
 
