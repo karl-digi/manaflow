@@ -67,24 +67,26 @@ function TaskDetailPage() {
     taskId,
   });
 
-  // Mark as read when viewing AND focused, triggers when unread state changes
+  // Mark as read when viewing AND visible, triggers when unread state changes
+  // Uses Page Visibility API instead of document.hasFocus() to work correctly
+  // in Electron where focus may be in embedded WebContentsView (VSCode/VNC preview)
   useEffect(() => {
     if (!taskId || !hasUnread) return;
 
-    const markReadIfFocused = () => {
-      if (document.hasFocus()) {
+    const markReadIfVisible = () => {
+      if (document.visibilityState === "visible") {
         setTaskReadState(taskId, true).catch((err) => {
           console.error("Failed to mark task notifications as read:", err);
         });
       }
     };
 
-    // Mark as read immediately if focused
-    markReadIfFocused();
+    // Mark as read immediately if visible
+    markReadIfVisible();
 
-    // Handle user returning to the page
-    window.addEventListener("focus", markReadIfFocused);
-    return () => window.removeEventListener("focus", markReadIfFocused);
+    // Handle user returning to the page (tab becomes visible again)
+    document.addEventListener("visibilitychange", markReadIfVisible);
+    return () => document.removeEventListener("visibilitychange", markReadIfVisible);
   }, [hasUnread, taskId, setTaskReadState]);
 
   // Get the deepest matched child to extract runId if present
