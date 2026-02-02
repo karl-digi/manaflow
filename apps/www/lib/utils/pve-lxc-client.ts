@@ -632,7 +632,7 @@ export class PveLxcClient {
     const effectiveTimeoutMs = timeoutMs ?? 300000;
 
     const body = JSON.stringify({
-      command: `HOME=/root XDG_RUNTIME_DIR=/run/user/0 ${command}`,
+      command: `export HOME=/root XDG_RUNTIME_DIR=/run/user/0; ${command}`,
       timeout_ms: effectiveTimeoutMs,
     });
 
