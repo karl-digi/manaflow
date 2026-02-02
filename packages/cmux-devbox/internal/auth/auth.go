@@ -24,18 +24,76 @@ const (
 	// Stack Auth API
 	StackAuthAPIURL = "https://api.stack-auth.com"
 
-	// Dev Stack Auth project
-	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"
-	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
-	DevCmuxURL         = "http://localhost:9779"
-	DevConvexSiteURL   = "https://famous-camel-162.convex.site" // Dev Convex HTTP site
+	// ==========================================================================
+	// Production defaults - used when Mode="prod" and no other values provided
+	// ==========================================================================
+	ProdProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"
+	ProdPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
+	ProdCmuxURL        = "https://cmux.sh"
+	ProdConvexSiteURL  = "https://adorable-wombat-701.convex.site"
 
-	// Prod Stack Auth project
-	ProdProjectID       = "8a877114-b905-47c5-8b64-3a2d90679577"
-	ProdPublishableKey  = "pck_8761mjjmyqc84e1e8ga3rn0k1nkggmggwa3pyzzgntv70"
-	ProdCmuxURL         = "https://cmux.sh"
-	ProdConvexSiteURL   = "https://adorable-wombat-701.convex.site" // Production Convex HTTP site
+	// ==========================================================================
+	// Development defaults - used when Mode="dev" and no other values provided
+	// These point to local development servers
+	// ==========================================================================
+	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"        // Same Stack Auth project for dev
+	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0" // Same publishable key
+	DevCmuxURL        = "http://localhost:9779"                        // Local dev server
+	DevConvexSiteURL  = "https://famous-camel-162.convex.site"         // Dev Convex deployment
 )
+
+// Build-time configuration variables
+// Set via ldflags, e.g.: -ldflags "-X 'github.com/cmux-cli/cmux-devbox/internal/auth.ProjectID=...'"
+var (
+	ProjectID      = "" // Stack Auth project ID
+	PublishableKey = "" // Stack Auth publishable client key
+	CmuxURL        = "" // cmux web app URL (e.g., https://cmux.sh)
+	ConvexSiteURL  = "" // Convex HTTP site URL
+)
+
+// buildMode determines which defaults to use ("dev" or "prod")
+// Set via SetBuildMode() from main.go based on Mode ldflags value
+var buildMode = "prod" // Default to prod for safety
+
+// SetBuildMode sets the build mode which determines default values.
+// Should be called from main() before any auth operations.
+func SetBuildMode(mode string) {
+	if mode == "dev" || mode == "prod" {
+		buildMode = mode
+	}
+}
+
+// GetBuildMode returns the current build mode
+func GetBuildMode() string {
+	return buildMode
+}
+
+// CLI flag overrides (highest priority)
+// Set via SetConfigOverrides() from CLI flags
+var (
+	cliProjectID      string
+	cliPublishableKey string
+	cliCmuxURL        string
+	cliConvexSiteURL  string
+)
+
+// SetConfigOverrides sets CLI flag overrides for configuration values.
+// These take highest priority over env vars and build-time values.
+// Pass empty string for any value you don't want to override.
+func SetConfigOverrides(projectID, publishableKey, cmuxURL, convexSiteURL string) {
+	cliProjectID = projectID
+	cliPublishableKey = publishableKey
+	cliCmuxURL = cmuxURL
+	cliConvexSiteURL = convexSiteURL
+}
+
+// getDefaultsForMode returns the appropriate default values based on build mode
+func getDefaultsForMode() (projectID, publishableKey, cmuxURL, convexSiteURL string) {
+	if buildMode == "dev" {
+		return DevProjectID, DevPublishableKey, DevCmuxURL, DevConvexSiteURL
+	}
+	return ProdProjectID, ProdPublishableKey, ProdCmuxURL, ProdConvexSiteURL
+}
 
 // Config holds auth configuration
 type Config struct {
@@ -47,53 +105,42 @@ type Config struct {
 	IsDev          bool
 }
 
-// GetConfig returns auth configuration based on environment
+// GetConfig returns auth configuration using the following priority (highest to lowest):
+// 1. CLI flags (set via SetConfigOverrides)
+// 2. Environment variables
+// 3. Build-time values (set via -ldflags)
+// 4. Mode-specific defaults (dev defaults for Mode=dev, prod defaults for Mode=prod)
 func GetConfig() Config {
-	// Check for environment overrides first
-	projectID := os.Getenv("STACK_PROJECT_ID")
-	publishableKey := os.Getenv("STACK_PUBLISHABLE_CLIENT_KEY")
-	cmuxURL := os.Getenv("CMUX_API_URL")
-	convexSiteURL := os.Getenv("CONVEX_SITE_URL")
-	stackAuthURL := os.Getenv("AUTH_API_URL")
+	// Get mode-specific defaults
+	defaultProjectID, defaultPublishableKey, defaultCmuxURL, defaultConvexSiteURL := getDefaultsForMode()
 
+	// Helper to resolve value with priority: CLI > env > build-time > default
+	resolve := func(cliVal, envKey, buildVal, defaultVal string) string {
+		if cliVal != "" {
+			return cliVal
+		}
+		if envVal := os.Getenv(envKey); envVal != "" {
+			return envVal
+		}
+		if buildVal != "" {
+			return buildVal
+		}
+		return defaultVal
+	}
+
+	projectID := resolve(cliProjectID, "STACK_PROJECT_ID", ProjectID, defaultProjectID)
+	publishableKey := resolve(cliPublishableKey, "STACK_PUBLISHABLE_CLIENT_KEY", PublishableKey, defaultPublishableKey)
+	cmuxURL := resolve(cliCmuxURL, "CMUX_API_URL", CmuxURL, defaultCmuxURL)
+	convexSiteURL := resolve(cliConvexSiteURL, "CONVEX_SITE_URL", ConvexSiteURL, defaultConvexSiteURL)
+
+	// Stack Auth URL only has env override and hardcoded default
+	stackAuthURL := os.Getenv("AUTH_API_URL")
 	if stackAuthURL == "" {
 		stackAuthURL = StackAuthAPIURL
 	}
 
-	// Dev mode is the default (set CMUX_DEVBOX_PROD=1 to use production)
-	isDev := os.Getenv("CMUX_DEVBOX_PROD") != "1" && os.Getenv("CMUX_DEVBOX_PROD") != "true"
-
-	if projectID == "" {
-		if isDev {
-			projectID = DevProjectID
-		} else {
-			projectID = ProdProjectID
-		}
-	}
-
-	if publishableKey == "" {
-		if isDev {
-			publishableKey = DevPublishableKey
-		} else {
-			publishableKey = ProdPublishableKey
-		}
-	}
-
-	if cmuxURL == "" {
-		if isDev {
-			cmuxURL = DevCmuxURL
-		} else {
-			cmuxURL = ProdCmuxURL
-		}
-	}
-
-	if convexSiteURL == "" {
-		if isDev {
-			convexSiteURL = DevConvexSiteURL
-		} else {
-			convexSiteURL = ProdConvexSiteURL
-		}
-	}
+	// Dev mode is determined by CMUX_DEVBOX_DEV env var (set by main.go based on build mode)
+	isDev := os.Getenv("CMUX_DEVBOX_DEV") == "1" || os.Getenv("CMUX_DEVBOX_DEV") == "true"
 
 	return Config{
 		ProjectID:      projectID,
@@ -181,11 +228,12 @@ func storeInKeychain(token string) error {
 	).Run()
 
 	// Add new entry
+	// Note: We use -T "" to allow only this app to access the item (not -A which allows any app)
+	// However, the user will be prompted once to allow access. For CLI tools this is acceptable.
 	cmd := exec.Command("security", "add-generic-password",
 		"-s", KeychainService,
 		"-a", account,
 		"-w", token,
-		"-A", // Allow any application
 	)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to store token in keychain: %w", err)

@@ -11,10 +11,22 @@ echo "📦 Testing npm packages locally..."
 echo "   Test directory: $TEST_DIR"
 echo ""
 
+# Auth config for build (can be overridden via environment variables)
+# Defaults are dev Stack Auth publishable keys (designed to be public)
+# Same env vars work at runtime to override build-time values.
+: "${STACK_PROJECT_ID:=1467bed0-8522-45ee-a8d8-055de324118c}"
+: "${STACK_PUBLISHABLE_CLIENT_KEY:=pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0}"
+: "${CMUX_API_URL:=http://localhost:9779}"
+: "${CONVEX_SITE_URL:=https://famous-camel-162.convex.site}"
+
 # Build binaries first
 echo "1. Building binaries..."
 cd "$SCRIPT_DIR/.."
-make build-npm
+make build-npm \
+  STACK_PROJECT_ID="$STACK_PROJECT_ID" \
+  STACK_PUBLISHABLE_CLIENT_KEY="$STACK_PUBLISHABLE_CLIENT_KEY" \
+  CMUX_API_URL="$CMUX_API_URL" \
+  CONVEX_SITE_URL="$CONVEX_SITE_URL"
 
 # Pack all packages
 echo ""

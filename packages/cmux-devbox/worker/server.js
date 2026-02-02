@@ -22,8 +22,10 @@ const path = require('node:path');
 const PORT = process.env.PORT || 39377;
 const VSCODE_PORT = Number(process.env.CMUX_VSCODE_PORT || 39378);
 const VNC_PORT = Number(process.env.CMUX_VNC_PORT || 39380);
+const PTY_PORT = Number(process.env.CMUX_PTY_PORT || 39379);
 const AUTH_COOKIE_NAME = 'cmux_auth';
 const VNC_PREFIX = '/vnc';
+const CMUX_PREFIX = '/_cmux';
 const OWNER_ID_FILE = '/var/run/cmux/owner-id';
 const PROJECT_ID_FILE = '/var/run/cmux/stack-project-id';
 
@@ -328,6 +330,10 @@ function isApiPath(pathname) {
   ].includes(pathname);
 }
 
+function isCmuxPath(pathname) {
+  return pathname.startsWith('/_cmux/');
+}
+
 function isVncPath(pathname) {
   return pathname === VNC_PREFIX || pathname.startsWith(`${VNC_PREFIX}/`) || pathname === '/websockify';
 }
@@ -597,6 +603,35 @@ async function handleRequest(req, res) {
       return;
     }
 
+    // Handle /_cmux/* endpoints
+    if (isCmuxPath(reqPath)) {
+      // /_cmux/generate-token - Generate a one-time auth token for browser auth
+      if (reqPath === '/_cmux/generate-token' && req.method === 'POST') {
+        // The user is already authenticated via JWT, return the token for cookie auth
+        sendJson(res, { token: authResult.token });
+        return;
+      }
+
+      // /_cmux/auth - Set auth cookie and redirect
+      if (reqPath === '/_cmux/auth' && req.method === 'GET') {
+        const returnPath = url.searchParams.get('return') || '/';
+        setAuthCookie(res, authResult.token, authResult.expiresIn);
+        res.writeHead(302, { Location: returnPath });
+        res.end();
+        return;
+      }
+
+      // /_cmux/pty/* - Proxy to PTY service
+      if (reqPath.startsWith('/_cmux/pty/')) {
+        const ptyPath = reqPath.slice('/_cmux/pty'.length);
+        proxyHttp(req, res, '127.0.0.1', PTY_PORT, ptyPath);
+        return;
+      }
+
+      sendJson(res, { error: 'Not found' }, 404);
+      return;
+    }
+
     const targetHost = '127.0.0.1';
     const isVnc = isVncPath(reqPath);
     const targetPort = isVnc ? VNC_PORT : VSCODE_PORT;
@@ -621,6 +656,14 @@ server.on('upgrade', async (req, socket, head) => {
 
   const reqPath = url.pathname;
   const targetHost = '127.0.0.1';
+
+  // Handle /_cmux/pty/ws/* WebSocket connections
+  if (reqPath.startsWith('/_cmux/pty/')) {
+    const ptyPath = reqPath.slice('/_cmux/pty'.length);
+    proxyWebsocket(req, socket, head, targetHost, PTY_PORT, ptyPath);
+    return;
+  }
+
   const isVnc = isVncPath(reqPath);
   const targetPort = isVnc ? VNC_PORT : VSCODE_PORT;
   const upstreamPath = buildUpstreamPath(url, isVnc ? VNC_PREFIX : '');

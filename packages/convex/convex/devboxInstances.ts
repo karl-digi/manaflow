@@ -168,6 +168,15 @@ export const create = authMutation({
         .first();
 
       if (existing) {
+        // Security: Verify ownership before allowing reuse
+        // This prevents authenticated users from hijacking other users' instances
+        // by guessing or obtaining their providerInstanceId
+        if (existing.userId !== userId || existing.teamId !== teamId) {
+          throw new Error(
+            "Provider instance already exists and belongs to a different user/team"
+          );
+        }
+
         const now = Date.now();
         await ctx.db.patch(existing._id, {
           status: "running",

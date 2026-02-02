@@ -17,6 +17,18 @@ import (
 	"github.com/cmux-cli/cmux-devbox/internal/auth"
 )
 
+// readErrorBody reads the response body for error messages, handling read errors gracefully
+func readErrorBody(body io.Reader) string {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return fmt.Sprintf("(failed to read response body: %v)", err)
+	}
+	if len(data) == 0 {
+		return "(empty response)"
+	}
+	return string(data)
+}
+
 // Instance represents a VM instance
 type Instance struct {
 	ID              string `json:"id"`              // Our cmux ID (Convex doc ID)
@@ -111,8 +123,7 @@ func (c *Client) CreateInstance(ctx context.Context, opts CreateOptions) (*Insta
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result Instance
@@ -137,8 +148,7 @@ func (c *Client) GetInstance(ctx context.Context, instanceID string) (*Instance,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result Instance
@@ -166,8 +176,7 @@ func (c *Client) StopInstance(ctx context.Context, instanceID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	return nil
@@ -190,8 +199,7 @@ func (c *Client) PauseInstance(ctx context.Context, instanceID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	return nil
@@ -214,8 +222,7 @@ func (c *Client) ResumeInstance(ctx context.Context, instanceID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	return nil
@@ -235,8 +242,7 @@ func (c *Client) ListInstances(ctx context.Context) ([]Instance, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result struct {
@@ -294,8 +300,7 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", "", -1, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return "", "", -1, fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result struct {
@@ -349,8 +354,7 @@ func (c *Client) GenerateAuthToken(ctx context.Context, instanceID string) (stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("worker error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result struct {
@@ -377,8 +381,7 @@ func (c *Client) GetSSHCredentials(ctx context.Context, instanceID string) (stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result struct {
@@ -391,6 +394,15 @@ func (c *Client) GetSSHCredentials(ctx context.Context, instanceID string) (stri
 	return result.SSHCommand, nil
 }
 
+// sshOptions returns SSH options for connecting to ephemeral VMs.
+//
+// Security Note: Host key verification is disabled because:
+// 1. VMs are ephemeral and get new host keys on each creation
+// 2. Connections go through Morph's SSH proxy which terminates TLS
+// 3. Users authenticate to their own VMs via Morph tokens
+//
+// This is a deliberate tradeoff for usability with ephemeral development
+// environments. Production systems should use proper host key verification.
 func sshOptions() []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=no",
@@ -602,8 +614,7 @@ func (c *Client) ListPtySessions(ctx context.Context, instanceID string) ([]PtyS
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("worker error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var result struct {

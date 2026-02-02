@@ -212,12 +212,52 @@ function generatePtySessionId() {
   return 'pty_' + crypto.randomBytes(8).toString('hex');
 }
 
+// Security: Whitelist of allowed shells to prevent command injection
+const ALLOWED_SHELLS = new Set(['/bin/bash', '/bin/sh', '/bin/zsh', '/usr/bin/bash', '/usr/bin/zsh']);
+
+// Security: Allowed base directories for cwd to prevent path traversal
+const ALLOWED_CWD_BASES = ['/home/cmux', '/tmp', '/root/workspace'];
+
+/**
+ * Validate shell is in whitelist
+ */
+function validateShell(shell) {
+  if (!ALLOWED_SHELLS.has(shell)) {
+    console.warn(`Shell "${shell}" not in whitelist, using /bin/bash`);
+    return '/bin/bash';
+  }
+  return shell;
+}
+
+/**
+ * Validate cwd is within allowed directories to prevent path traversal
+ */
+function validateCwd(cwd) {
+  // Resolve to absolute path and normalize
+  const resolved = path.resolve(cwd);
+
+  // Check if path is within any allowed base
+  const isAllowed = ALLOWED_CWD_BASES.some(base =>
+    resolved === base || resolved.startsWith(base + '/')
+  );
+
+  if (!isAllowed) {
+    console.warn(`cwd "${cwd}" outside allowed directories, using /home/cmux`);
+    return '/home/cmux';
+  }
+  return resolved;
+}
+
 /**
  * Create a new PTY session
  */
 function createPtySession(sessionId, options = {}) {
-  const shell = options.shell || process.env.SHELL || '/bin/bash';
-  const cwd = options.cwd || process.env.HOME || '/home/cmux';
+  // Validate shell and cwd to prevent injection/traversal attacks
+  const requestedShell = options.shell || process.env.SHELL || '/bin/bash';
+  const requestedCwd = options.cwd || process.env.HOME || '/home/cmux';
+
+  const shell = validateShell(requestedShell);
+  const cwd = validateCwd(requestedCwd);
   const cols = options.cols || 80;
   const rows = options.rows || 24;
   const env = { ...process.env, ...options.env, TERM: 'xterm-256color' };
@@ -698,10 +738,11 @@ async function handleRequest(req, res) {
     }
 
     // Create session cookie and redirect
+    // Note: Secure flag ensures cookie only sent over HTTPS
     const sessionValue = signSession(tokenData.userId);
     res.writeHead(302, {
       'Location': returnTo,
-      'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionValue}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+      'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
     });
     res.end();
     return;
@@ -725,7 +766,21 @@ async function handleRequest(req, res) {
   }
 
   // CORS headers for API endpoints
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Use origin whitelist instead of wildcard for better security
+  const ALLOWED_ORIGINS = [
+    'https://cmux.sh',
+    'https://www.cmux.sh',
+    'https://staging.cmux.sh',
+    'http://localhost:3000',
+    'http://localhost:5173',
+  ];
+  const requestOrigin = req.headers.origin;
+  const allowedOrigin = requestOrigin && ALLOWED_ORIGINS.includes(requestOrigin) ? requestOrigin : null;
+
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

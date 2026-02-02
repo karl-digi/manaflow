@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cmux-cli/cmux-devbox/internal/auth"
 	"github.com/cmux-cli/cmux-devbox/internal/cli"
 )
 
@@ -17,11 +18,13 @@ var (
 )
 
 func main() {
+	// Set build mode in both cli and auth packages
+	// This determines which default values are used (dev vs prod endpoints)
 	cli.SetVersionInfo(Version, Commit, BuildTime)
 	cli.SetBuildMode(Mode)
+	auth.SetBuildMode(Mode)
 
-	// Set CMUX_DEVBOX_DEV based on build mode if not already set
-	// This ensures auth package uses correct config
+	// Set CMUX_DEVBOX_DEV for backwards compatibility with IsDev field
 	if os.Getenv("CMUX_DEVBOX_DEV") == "" && os.Getenv("CMUX_DEVBOX_PROD") == "" {
 		if Mode == "dev" {
 			os.Setenv("CMUX_DEVBOX_DEV", "1")

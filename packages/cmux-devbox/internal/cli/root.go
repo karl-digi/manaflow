@@ -4,6 +4,7 @@ package cli
 import (
 	"os"
 
+	"github.com/cmux-cli/cmux-devbox/internal/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -11,6 +12,10 @@ var (
 	// Global flags
 	flagJSON    bool
 	flagVerbose bool
+
+	// Config override flags
+	flagAPIURL        string
+	flagConvexSiteURL string
 )
 
 var rootCmd = &cobra.Command{
@@ -31,12 +36,21 @@ Quick start:
 	// Silence usage and errors - we handle our own error output
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	// Apply config overrides before any command runs
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Set config overrides from CLI flags (empty strings are ignored)
+		auth.SetConfigOverrides("", "", flagAPIURL, flagConvexSiteURL)
+	},
 }
 
 func init() {
 	// Global flags available to all commands
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output as JSON")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
+
+	// Config override flags (override env vars and build-time values)
+	rootCmd.PersistentFlags().StringVar(&flagAPIURL, "api-url", "", "Override API URL (default: https://cmux.sh)")
+	rootCmd.PersistentFlags().StringVar(&flagConvexSiteURL, "convex-url", "", "Override Convex site URL")
 
 	// Version command
 	rootCmd.AddCommand(versionCmd)

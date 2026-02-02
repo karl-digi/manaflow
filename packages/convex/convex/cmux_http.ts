@@ -18,6 +18,14 @@ const JSON_HEADERS = {
   "Content-Type": "application/json",
 };
 
+// Security: Validate instance ID format to prevent injection attacks
+// IDs should be cmux_ followed by 8+ alphanumeric characters
+const INSTANCE_ID_REGEX = /^cmux_[a-zA-Z0-9]{8,}$/;
+
+function isValidInstanceId(id: string): boolean {
+  return INSTANCE_ID_REGEX.test(id);
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
@@ -243,6 +251,7 @@ export const createInstance = httpAction(async (ctx, req) => {
         ttl_action: "pause",
         vcpus: body.vcpus ?? 2,
         memory: body.memory ?? 4096, // 4GB default
+        disk_size: body.diskSize ?? 8192, // 8GB default
         metadata: {
           app: "cmux-devbox",
           userId: identity!.subject,
@@ -318,64 +327,47 @@ export const createInstance = httpAction(async (ctx, req) => {
         console.log("[cmux.create] Injecting auth config...");
         const authStart = Date.now();
 
+        // Helper to run exec commands and check results
+        const runExec = async (command: string[], description: string): Promise<void> => {
+          const response = await morphFetch(`/instance/${morphData.id}/exec`, {
+            method: "POST",
+            body: JSON.stringify({ command, timeout: 10 }),
+          });
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "unknown error");
+            throw new Error(`${description} failed (${response.status}): ${errorText}`);
+          }
+        };
+
         // Fix /home/cmux ownership (may be root:root in snapshot) and create config dir
         const chownStart = Date.now();
-        await morphFetch(`/instance/${morphData.id}/exec`, {
-          method: "POST",
-          body: JSON.stringify({
-            command: ["chown", "cmux:cmux", "/home/cmux"],
-            timeout: 10,
-          }),
-        });
+        await runExec(["chown", "cmux:cmux", "/home/cmux"], "chown");
         timings.chown = Date.now() - chownStart;
         console.log(`[cmux.create] chown completed in ${timings.chown}ms`);
 
         // Create directory
         const mkdirStart = Date.now();
-        await morphFetch(`/instance/${morphData.id}/exec`, {
-          method: "POST",
-          body: JSON.stringify({
-            command: ["mkdir", "-p", "/var/run/cmux"],
-            timeout: 10,
-          }),
-        });
+        await runExec(["mkdir", "-p", "/var/run/cmux"], "mkdir");
         timings.mkdir = Date.now() - mkdirStart;
         console.log(`[cmux.create] mkdir completed in ${timings.mkdir}ms`);
 
-        // Write owner ID using echo with shell redirection
+        // Write owner ID - use sh -c for shell redirection since Morph exec
+        // runs commands directly without a shell
         const ownerId = identity!.subject;
         const ownerIdStart = Date.now();
-        await morphFetch(`/instance/${morphData.id}/exec`, {
-          method: "POST",
-          body: JSON.stringify({
-            command: ["echo", ownerId, ">", "/var/run/cmux/owner-id"],
-            timeout: 10,
-          }),
-        });
+        await runExec(["sh", "-c", `echo '${ownerId}' > /var/run/cmux/owner-id`], "write owner-id");
         timings.writeOwnerId = Date.now() - ownerIdStart;
         console.log(`[cmux.create] write owner-id completed in ${timings.writeOwnerId}ms`);
 
         // Write Stack Auth project ID
         const projectIdStart = Date.now();
-        await morphFetch(`/instance/${morphData.id}/exec`, {
-          method: "POST",
-          body: JSON.stringify({
-            command: ["echo", stackProjectId, ">", "/var/run/cmux/stack-project-id"],
-            timeout: 10,
-          }),
-        });
+        await runExec(["sh", "-c", `echo '${stackProjectId}' > /var/run/cmux/stack-project-id`], "write project-id");
         timings.writeProjectId = Date.now() - projectIdStart;
         console.log(`[cmux.create] write project-id completed in ${timings.writeProjectId}ms`);
 
         // Restart cmux-worker to pick up the new config
         const restartStart = Date.now();
-        await morphFetch(`/instance/${morphData.id}/exec`, {
-          method: "POST",
-          body: JSON.stringify({
-            command: ["systemctl", "restart", "--no-block", "cmux-worker"],
-            timeout: 10,
-          }),
-        });
+        await runExec(["systemctl", "restart", "--no-block", "cmux-worker"], "restart cmux-worker");
         timings.restartWorker = Date.now() - restartStart;
         console.log(`[cmux.create] restart cmux-worker completed in ${timings.restartWorker}ms`);
 
@@ -383,6 +375,11 @@ export const createInstance = httpAction(async (ctx, req) => {
         console.log(`[cmux.create] Auth config total: ${timings.authTotal}ms`);
       } catch (e) {
         console.error("[cmux.create] Failed to inject auth config:", e);
+        // Return error instead of silently continuing with broken auth
+        return jsonResponse(
+          { code: 500, message: `Failed to configure worker auth: ${e instanceof Error ? e.message : "unknown error"}` },
+          500
+        );
       }
     } else {
       console.warn("[cmux.create] NEXT_PUBLIC_STACK_PROJECT_ID not set, worker auth will be disabled");
@@ -598,9 +595,12 @@ async function handleExecCommand(
       return jsonResponse({ code: 404, message: "Provider mapping not found" }, 404);
     }
 
-    // Morph API expects command as an array
-    // Split string commands into array; don't wrap in bash -c as Morph handles execution
-    const commandArray = Array.isArray(command) ? command : command.split(" ");
+    // Morph API expects command as an array and runs it directly without a shell.
+    // To preserve shell operators (&&, |, >) and quoted arguments, wrap string
+    // commands in sh -c. Array commands are passed directly for precise control.
+    const commandArray = Array.isArray(command)
+      ? command
+      : ["sh", "-c", command];
 
     // Execute command via Morph API
     const morphResponse = await morphFetch(
@@ -1375,6 +1375,14 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
   const id = pathParts[4]; // instances/{id}
   const action = pathParts[5]; // {action}
 
+  // Security: Validate instance ID format
+  if (!id || !isValidInstanceId(id)) {
+    return jsonResponse(
+      { code: 400, message: "Invalid instance ID format" },
+      400
+    );
+  }
+
   let body: {
     teamSlugOrId: string;
     command?: string | string[];
@@ -1488,6 +1496,14 @@ export const instanceGetRouter = httpAction(async (ctx, req) => {
   const id = pathParts[4];
   const action = pathParts[5]; // May be undefined for GET /instances/{id}
 
+  // Security: Validate instance ID format
+  if (!id || !isValidInstanceId(id)) {
+    return jsonResponse(
+      { code: 400, message: "Invalid instance ID format" },
+      400
+    );
+  }
+
   // Route based on the action suffix
   if (action === "ssh") {
     return handleGetInstanceSsh(ctx, id, teamSlugOrId);
@@ -1519,6 +1535,14 @@ export const instanceDeleteRouter = httpAction(async (ctx, req) => {
   const pathParts = path.split("/").filter(Boolean);
   const id = pathParts[4];
   const action = pathParts[5];
+
+  // Security: Validate instance ID format
+  if (!id || !isValidInstanceId(id)) {
+    return jsonResponse(
+      { code: 400, message: "Invalid instance ID format" },
+      400
+    );
+  }
 
   if (action === "http") {
     const serviceName = pathParts[6];
