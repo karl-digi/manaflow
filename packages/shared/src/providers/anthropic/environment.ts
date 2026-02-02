@@ -223,17 +223,6 @@ exit 0`;
           ],
         },
       ],
-      Notification: [
-        {
-          matcher: ".*",
-          hooks: [
-            {
-              type: "command",
-              command: `${claudeLifecycleDir}/stop-hook.sh`,
-            },
-          ],
-        },
-      ],
     },
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
