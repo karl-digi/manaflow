@@ -17,10 +17,12 @@ CONVEX_SITE_URL ?=
 AUTH_PKG := github.com/cmux-cli/cmux-devbox/internal/auth
 
 # Strip debug info and disable DWARF for smaller binaries
+# Mode=prod ensures production defaults are used
 LDFLAGS := -s -w \
            -X main.Version=$(VERSION) \
            -X main.Commit=$(COMMIT) \
            -X main.BuildTime=$(BUILD_TIME) \
+           -X main.Mode=prod \
            -X '$(AUTH_PKG).ProjectID=$(STACK_PROJECT_ID)' \
            -X '$(AUTH_PKG).PublishableKey=$(STACK_PUBLISHABLE_CLIENT_KEY)' \
            -X '$(AUTH_PKG).CmuxURL=$(CMUX_API_URL)' \

@@ -25,21 +25,23 @@ const (
 	StackAuthAPIURL = "https://api.stack-auth.com"
 
 	// ==========================================================================
-	// Production defaults - used when Mode="prod" and no other values provided
+	// Production defaults - intentionally empty
+	// Production values MUST be injected at build time via -ldflags
+	// This prevents accidental hardcoding of production credentials in source
 	// ==========================================================================
-	ProdProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"
-	ProdPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
-	ProdCmuxURL        = "https://cmux.sh"
-	ProdConvexSiteURL  = "https://adorable-wombat-701.convex.site"
+	ProdProjectID      = ""
+	ProdPublishableKey = ""
+	ProdCmuxURL        = ""
+	ProdConvexSiteURL  = ""
 
 	// ==========================================================================
 	// Development defaults - used when Mode="dev" and no other values provided
-	// These point to local development servers
+	// These point to local development servers for convenience
 	// ==========================================================================
-	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"        // Same Stack Auth project for dev
-	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0" // Same publishable key
-	DevCmuxURL        = "http://localhost:9779"                        // Local dev server
-	DevConvexSiteURL  = "https://famous-camel-162.convex.site"         // Dev Convex deployment
+	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"         // Dev Stack Auth project
+	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0" // Dev publishable key
+	DevCmuxURL        = "http://localhost:9779"                         // Local dev server
+	DevConvexSiteURL  = "https://famous-camel-162.convex.site"          // Dev Convex deployment
 )
 
 // Build-time configuration variables
@@ -103,6 +105,28 @@ type Config struct {
 	ConvexSiteURL  string
 	StackAuthURL   string
 	IsDev          bool
+}
+
+// Validate checks if the config has all required values.
+// Returns an error if any required value is missing.
+func (c Config) Validate() error {
+	var missing []string
+	if c.ProjectID == "" {
+		missing = append(missing, "STACK_PROJECT_ID")
+	}
+	if c.PublishableKey == "" {
+		missing = append(missing, "STACK_PUBLISHABLE_CLIENT_KEY")
+	}
+	if c.CmuxURL == "" {
+		missing = append(missing, "CMUX_API_URL")
+	}
+	if c.ConvexSiteURL == "" {
+		missing = append(missing, "CONVEX_SITE_URL")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required configuration: %v. For production builds, these must be set via -ldflags or environment variables", missing)
+	}
+	return nil
 }
 
 // GetConfig returns auth configuration using the following priority (highest to lowest):
