@@ -1,14 +1,22 @@
----
-description: Run code review with codex and analyze against project guidelines
-allowed-tools: Bash(codex:*), Read
----
+- Read the project review guidelines from REVIEW.md at the project root.
+- Run the codex code review against main branch and report findings:
 
-Read the project review guidelines from REVIEW.md at the project root.
+```bash
+cd "$CLAUDE_PROJECT_DIR"
+TMPFILE=$(mktemp)
+trap 'rm -f "$TMPFILE"' EXIT
 
-Then run codex code review against main branch (timeout 5 minutes):
+script -q "$TMPFILE" codex \
+  --dangerously-bypass-approvals-and-sandbox \
+  --model gpt-5.2 \
+  -c model_reasoning_effort="high" \
+  review --base main 2>&1 || true
 
+# Extract findings after last "codex" marker
+FINDINGS=$(awk '/^codex$/ { found=1; content=""; next } found { content = content $0 "\n" } END { print content }' "$TMPFILE" | sed 's/\x1b\[[0-9;]*m//g' | sed '/^$/d')
+
+echo "## Codex Review Findings"
+echo "$FINDINGS"
 ```
-codex review --base main -c model="gpt-5.2" -c model_reasoning_effort="xhigh"
-```
 
-Analyze the codex findings against the review guidelines and address any issues found.
+Analyze these findings and address any issues found.
