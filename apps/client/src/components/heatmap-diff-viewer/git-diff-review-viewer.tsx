@@ -1986,8 +1986,17 @@ export function GitDiffHeatmapReviewViewer({
             className="flex items-center gap-1.5 text-[11px] font-medium ml-auto text-neutral-500 dark:text-neutral-400"
             title={isHeatmapActive ? "Switch to standard diff" : "Switch to heatmap diff"}
           >
-            <Flame className="w-3 h-3" />
-            <span>Diff Heatmap</span>
+            {isHeatmapActive ? (
+              <>
+                <FileCode className="w-3 h-3" />
+                <span>Normal View</span>
+              </>
+            ) : (
+              <>
+                <Flame className="w-3 h-3" />
+                <span>Diff Heatmap</span>
+              </>
+            )}
           </button>
         )}
 
