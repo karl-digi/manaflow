@@ -1,6 +1,6 @@
-# DBA (DevBox Agent) CLI
+# cmux devbox (DevBox Agent) CLI
 
-DBA is a command-line tool that creates isolated, reproducible cloud development environments for AI coding agents. It provides workspace management, service orchestration, file operations, code intelligence, and browser automation capabilities—all running in Morph Cloud VMs.
+cmux devbox is a command-line tool that creates isolated, reproducible cloud development environments for AI coding agents. It provides workspace management, service orchestration, file operations, code intelligence, and browser automation capabilities—all running in Morph Cloud VMs.
 
 > **Architecture**: Everything runs in the cloud. The CLI on your local machine communicates with Morph Cloud VMs that contain your dev environment, browser automation (via Chrome DevTools Protocol), VS Code (code-server), and VNC access. The CLI is a single Go binary with no external dependencies.
 
@@ -11,7 +11,7 @@ DBA is a command-line tool that creates isolated, reproducible cloud development
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                              MORPH CLOUD VM                                      │
-│                              (dba-workspace-xyz)                                 │
+│                              (cmux-workspace-xyz)                                 │
 │                                                                                  │
 │  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────────┐   │
 │  │   code-server     │  │   Your App        │  │   Chrome + CDP            │   │
@@ -41,7 +41,7 @@ DBA is a command-line tool that creates isolated, reproducible cloud development
 │                              LOCAL MACHINE                                       │
 │                                                                                  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐ │
-│  │                         DBA CLI (single Go binary)                        │ │
+│  │                         cmux devbox CLI (single Go binary)                        │ │
 │  │                                                                            │ │
 │  │  Morph API Client (pure Go)         CDP Browser Client (chromedp)        │ │
 │  │  ├─ StartInstance(snapshot_id)      ├─ Connect(cdp_url)                  │ │
@@ -67,7 +67,7 @@ DBA is a command-line tool that creates isolated, reproducible cloud development
 | **Workspace** | An isolated cloud dev environment with its own packages, ports, and services |
 | **Morph Cloud VM** | Cloud VM running your entire dev stack (app, code-server, browser) |
 | **Base Snapshot** | Pre-configured VM image with Chrome, VNC, code-server, nginx - boots in ~0.6s |
-| **Element Refs** | AI-friendly element identifiers (@e1, @e2) from `dba computer snapshot` |
+| **Element Refs** | AI-friendly element identifiers (@e1, @e2) from `cmux computer snapshot` |
 | **Computer Use** | Browser automation using Chrome DevTools Protocol with ref-based element selection |
 | **Snapshots** | Save and restore entire VM state including running processes and browser state |
 
@@ -115,8 +115,8 @@ DBA is a command-line tool that creates isolated, reproducible cloud development
 
 ```bash
 # Clone the repository
-git clone https://github.com/anthropics/dba-cloud-cli.git
-cd dba-cloud-cli/dba
+git clone https://github.com/anthropics/cmux-devbox-cli.git
+cd cmux-devbox-cli/dba
 
 # Build the CLI
 make build
@@ -125,7 +125,7 @@ make build
 export PATH="$PWD/bin:$PATH"
 
 # Verify installation
-./bin/dba --help
+./bin/cmux-devbox --help
 ```
 
 ---
@@ -137,41 +137,41 @@ export PATH="$PWD/bin:$PATH"
 export MORPH_API_KEY="your-api-key"
 
 # 2. Start the daemon
-dba daemon start
+cmux daemon start
 
 # 3. Create a workspace
-dba create my-app --template=node
+cmux create my-app --template=node
 
 # 4. Get your workspace ID
-dba list
+cmux list
 # Find your workspace ID (e.g., ws_abc123)
 
 # 5. Start the Morph Cloud VM
-dba computer start -w ws_abc123
+cmux computer start -w ws_abc123
 # Output shows URLs for VS Code, VNC, and App
 
 # 6. Open a website in the cloud browser
-dba computer open "https://example.com" -w ws_abc123
+cmux computer open "https://example.com" -w ws_abc123
 
 # 7. Get interactive elements (THE KEY FEATURE!)
-dba computer snapshot -i -w ws_abc123
+cmux computer snapshot -i -w ws_abc123
 # Output:
 # @e1: link "More information..."
 
 # 8. Interact with elements using refs
-dba computer click @e1 -w ws_abc123
+cmux computer click @e1 -w ws_abc123
 
 # 9. Take a screenshot to verify
-dba computer screenshot --output=result.png -w ws_abc123
+cmux computer screenshot --output=result.png -w ws_abc123
 
 # 10. Save state for later
-dba computer save --name=my-checkpoint -w ws_abc123
+cmux computer save --name=my-checkpoint -w ws_abc123
 
 # 11. Stop when done
-dba computer stop -w ws_abc123
+cmux computer stop -w ws_abc123
 
 # 12. Later, resume exactly where you left off
-dba computer start --from=my-checkpoint -w ws_abc123
+cmux computer start --from=my-checkpoint -w ws_abc123
 # Browser state, processes - everything restored!
 ```
 
@@ -186,12 +186,12 @@ dba computer start --from=my-checkpoint -w ws_abc123
 export MORPH_API_KEY="your-api-key-here"
 
 # Optional - Override base snapshot
-export DBA_BASE_SNAPSHOT="snapshot_3namut0l"
+export cmux devbox_BASE_SNAPSHOT="snapshot_3namut0l"
 ```
 
 ### Config File (Optional)
 
-Create `~/.dba/config.yaml`:
+Create `~/.cmux/config.yaml`:
 
 ```yaml
 # Morph Cloud settings
@@ -209,7 +209,7 @@ morph:
 
 ## Commands Reference
 
-> **Important**: Throughout this documentation, examples using `-w $WS_ID` or similar are placeholders. Replace with your actual workspace ID (e.g., `-w ws_abc123`). Use `dba list` to find workspace IDs.
+> **Important**: Throughout this documentation, examples using `-w $WS_ID` or similar are placeholders. Replace with your actual workspace ID (e.g., `-w ws_abc123`). Use `cmux list` to find workspace IDs.
 
 ### Global Flags
 
@@ -227,47 +227,47 @@ morph:
 
 The daemon manages workspace state and provides IPC.
 
-### `dba daemon start`
+### `cmux daemon start`
 Start the background daemon.
 
 ```bash
-dba daemon start
-# Output: {"pid": 12345, "socket": "/Users/.../.dba/daemon.sock", "status": "started"}
+cmux daemon start
+# Output: {"pid": 12345, "socket": "/Users/.../.cmux/daemon.sock", "status": "started"}
 ```
 
-### `dba daemon stop`
+### `cmux daemon stop`
 Stop the running daemon.
 
-### `dba daemon status`
+### `cmux daemon status`
 Check daemon status.
 
 ---
 
 ## Workspace Commands
 
-### `dba create <name>`
+### `cmux create <name>`
 Create a new workspace.
 
 ```bash
 # Basic creation
-dba create my-app --template=node
+cmux create my-app --template=node
 
 # With git clone
-dba create my-app --template=node --clone=https://github.com/org/repo
+cmux create my-app --template=node --clone=https://github.com/org/repo
 
 # With additional packages
-dba create my-app --template=python --packages=pytorch,numpy
+cmux create my-app --template=python --packages=pytorch,numpy
 ```
 
 **Templates:** `node`, `nextjs`, `python`, `go`, `react`, `rust`
 
-### `dba list`
+### `cmux list`
 List all workspaces.
 
-### `dba status`
+### `cmux status`
 Get workspace status including Morph VM state and detected ports.
 
-### `dba destroy <workspace>`
+### `cmux destroy <workspace>`
 Destroy a workspace and its cloud resources.
 
 ---
@@ -278,18 +278,18 @@ Browser automation via Morph Cloud VM and Chrome DevTools Protocol.
 
 ### VM Lifecycle
 
-#### `dba computer start`
+#### `cmux computer start`
 Start the Morph Cloud VM.
 
 ```bash
 # Start from base snapshot
-dba computer start -w $WS_ID
+cmux computer start -w $WS_ID
 
 # Start from a saved snapshot
-dba computer start --from=logged-in -w $WS_ID
+cmux computer start --from=logged-in -w $WS_ID
 
 # Start from specific snapshot ID
-dba computer start --snapshot=snap_abc123 -w $WS_ID
+cmux computer start --snapshot=snap_abc123 -w $WS_ID
 ```
 
 **Output:**
@@ -302,45 +302,45 @@ VS Code: https://ws-abc123.morph.so/code/
 VNC:     https://ws-abc123.morph.so/vnc/
 ```
 
-#### `dba computer stop`
+#### `cmux computer stop`
 Stop the VM.
 
 ```bash
-dba computer stop -w $WS_ID
+cmux computer stop -w $WS_ID
 
 # Save snapshot before stopping
-dba computer stop --save=my-state -w $WS_ID
+cmux computer stop --save=my-state -w $WS_ID
 ```
 
-#### `dba computer status`
+#### `cmux computer status`
 Show VM status and URLs.
 
 ```bash
-dba computer status -w $WS_ID
-dba computer status --json -w $WS_ID
+cmux computer status -w $WS_ID
+cmux computer status --json -w $WS_ID
 ```
 
-#### `dba computer save`
+#### `cmux computer save`
 Save current state as a snapshot.
 
 ```bash
-dba computer save --name=after-login -w $WS_ID
+cmux computer save --name=after-login -w $WS_ID
 ```
 
-#### `dba computer vnc`
+#### `cmux computer vnc`
 Open VNC viewer in browser.
 
 ```bash
-dba computer vnc -w $WS_ID
+cmux computer vnc -w $WS_ID
 ```
 
 ### Element Discovery
 
-#### `dba computer snapshot`
+#### `cmux computer snapshot`
 Get interactive elements with refs. **This is the key command for AI agents.**
 
 ```bash
-dba computer snapshot -i -w $WS_ID
+cmux computer snapshot -i -w $WS_ID
 ```
 
 **Output:**
@@ -354,138 +354,138 @@ dba computer snapshot -i -w $WS_ID
 
 ### Interaction Commands
 
-#### `dba computer click`
+#### `cmux computer click`
 Click an element by ref, CSS selector, or text.
 
 ```bash
-dba computer click @e1 -w $WS_ID           # By ref
-dba computer click "#submit-btn" -w $WS_ID # By CSS selector
-dba computer click "text=Login" -w $WS_ID  # By visible text
+cmux computer click @e1 -w $WS_ID           # By ref
+cmux computer click "#submit-btn" -w $WS_ID # By CSS selector
+cmux computer click "text=Login" -w $WS_ID  # By visible text
 ```
 
-#### `dba computer dblclick`
+#### `cmux computer dblclick`
 Double-click an element.
 
-#### `dba computer type`
+#### `cmux computer type`
 Type text into an element (appends to existing content).
 
 ```bash
-dba computer type @e2 "additional text" -w $WS_ID
+cmux computer type @e2 "additional text" -w $WS_ID
 ```
 
-#### `dba computer fill`
+#### `cmux computer fill`
 Clear and fill an element with text.
 
 ```bash
-dba computer fill @e2 "test@example.com" -w $WS_ID
+cmux computer fill @e2 "test@example.com" -w $WS_ID
 ```
 
-#### `dba computer press`
+#### `cmux computer press`
 Press a keyboard key.
 
 ```bash
-dba computer press Enter -w $WS_ID
-dba computer press Tab -w $WS_ID
-dba computer press Control+a -w $WS_ID
+cmux computer press Enter -w $WS_ID
+cmux computer press Tab -w $WS_ID
+cmux computer press Control+a -w $WS_ID
 ```
 
-#### `dba computer hover`
+#### `cmux computer hover`
 Hover over an element.
 
-#### `dba computer select`
+#### `cmux computer select`
 Select an option in a dropdown.
 
 ```bash
-dba computer select @e5 "Option 2" -w $WS_ID
+cmux computer select @e5 "Option 2" -w $WS_ID
 ```
 
-#### `dba computer scroll`
+#### `cmux computer scroll`
 Scroll the page.
 
 ```bash
-dba computer scroll down -w $WS_ID
-dba computer scroll up 500 -w $WS_ID
+cmux computer scroll down -w $WS_ID
+cmux computer scroll up 500 -w $WS_ID
 ```
 
 ### Navigation Commands
 
-#### `dba computer open`
+#### `cmux computer open`
 Navigate to a URL.
 
 ```bash
-dba computer open "https://example.com" -w $WS_ID
-dba computer open "http://localhost:10000" -w $WS_ID
+cmux computer open "https://example.com" -w $WS_ID
+cmux computer open "http://localhost:10000" -w $WS_ID
 ```
 
-#### `dba computer back / forward / reload`
+#### `cmux computer back / forward / reload`
 Browser history navigation.
 
 ```bash
-dba computer back -w $WS_ID
-dba computer forward -w $WS_ID
-dba computer reload -w $WS_ID
+cmux computer back -w $WS_ID
+cmux computer forward -w $WS_ID
+cmux computer reload -w $WS_ID
 ```
 
 ### Information Commands
 
-#### `dba computer screenshot`
+#### `cmux computer screenshot`
 Take a screenshot.
 
 ```bash
-dba computer screenshot -w $WS_ID                    # Base64 to stdout
-dba computer screenshot --output=shot.png -w $WS_ID  # Save to file
-dba computer screenshot --full -w $WS_ID             # Full page
+cmux computer screenshot -w $WS_ID                    # Base64 to stdout
+cmux computer screenshot --output=shot.png -w $WS_ID  # Save to file
+cmux computer screenshot --full -w $WS_ID             # Full page
 ```
 
-#### `dba computer get`
+#### `cmux computer get`
 Get information from the page.
 
 ```bash
-dba computer get title -w $WS_ID           # Page title
-dba computer get url -w $WS_ID             # Current URL
-dba computer get text @e1 -w $WS_ID        # Element text
-dba computer get value @e2 -w $WS_ID       # Input value
-dba computer get attr @e1 href -w $WS_ID   # Element attribute
+cmux computer get title -w $WS_ID           # Page title
+cmux computer get url -w $WS_ID             # Current URL
+cmux computer get text @e1 -w $WS_ID        # Element text
+cmux computer get value @e2 -w $WS_ID       # Input value
+cmux computer get attr @e1 href -w $WS_ID   # Element attribute
 ```
 
-#### `dba computer is`
+#### `cmux computer is`
 Check element state.
 
 ```bash
-dba computer is visible @e1 -w $WS_ID
-dba computer is enabled @e2 -w $WS_ID
-dba computer is checked @e3 -w $WS_ID
+cmux computer is visible @e1 -w $WS_ID
+cmux computer is enabled @e2 -w $WS_ID
+cmux computer is checked @e3 -w $WS_ID
 ```
 
 ### Wait Commands
 
-#### `dba computer wait`
+#### `cmux computer wait`
 Wait for elements or conditions.
 
 ```bash
-dba computer wait @e1 -w $WS_ID                    # Wait for element
-dba computer wait 2000 -w $WS_ID                   # Wait 2 seconds
-dba computer wait --text "Success" -w $WS_ID       # Wait for text
-dba computer wait --url "/dashboard" -w $WS_ID     # Wait for URL
-dba computer wait @e1 --timeout=10000 -w $WS_ID    # Custom timeout
+cmux computer wait @e1 -w $WS_ID                    # Wait for element
+cmux computer wait 2000 -w $WS_ID                   # Wait 2 seconds
+cmux computer wait --text "Success" -w $WS_ID       # Wait for text
+cmux computer wait --url "/dashboard" -w $WS_ID     # Wait for URL
+cmux computer wait @e1 --timeout=10000 -w $WS_ID    # Custom timeout
 ```
 
 ### Utility Commands
 
-#### `dba computer app`
+#### `cmux computer app`
 Open the app in browser and show interactive elements.
 
 ```bash
-dba computer app -w $WS_ID               # Auto-detect app port
-dba computer app --port=3000 -w $WS_ID   # Specific port
+cmux computer app -w $WS_ID               # Auto-detect app port
+cmux computer app --port=3000 -w $WS_ID   # Specific port
 ```
 
-#### `dba computer ports`
+#### `cmux computer ports`
 List active ports in the VM.
 
 ```bash
-dba computer ports -w $WS_ID
-dba computer ports --json -w $WS_ID
+cmux computer ports -w $WS_ID
+cmux computer ports --json -w $WS_ID
 ```
 
 ---
@@ -494,29 +494,29 @@ dba computer ports --json -w $WS_ID
 
 Manage services inside the workspace.
 
-### `dba up [services...]`
+### `cmux up [services...]`
 Start workspace services.
 
 ```bash
-dba up -w $WS_ID           # Start all services
-dba up web api -w $WS_ID   # Start specific services
+cmux up -w $WS_ID           # Start all services
+cmux up web api -w $WS_ID   # Start specific services
 ```
 
-### `dba down [services...]`
+### `cmux down [services...]`
 Stop services.
 
-### `dba ps`
+### `cmux ps`
 List running services.
 
-### `dba logs [service]`
+### `cmux logs [service]`
 View service logs.
 
 ```bash
-dba logs -w $WS_ID
-dba logs web -f -w $WS_ID  # Follow logs
+cmux logs -w $WS_ID
+cmux logs web -f -w $WS_ID  # Follow logs
 ```
 
-### `dba restart [services...]`
+### `cmux restart [services...]`
 Restart services.
 
 ---
@@ -526,7 +526,7 @@ Restart services.
 ### Running Unit Tests
 
 ```bash
-cd dba
+cd dba # Note: the package directory is still named 'dba'
 
 # Run all unit tests
 go test ./... -v
@@ -544,42 +544,42 @@ go tool cover -html=coverage.out -o coverage.html
 
 ```bash
 # 1. Build and prepare
-cd dba
+cd dba # Note: the package directory is still named 'dba'
 make build
 export PATH="$PWD/bin:$PATH"
 export MORPH_API_KEY="your-api-key"
 
 # 2. Start the daemon
-dba daemon start
+cmux daemon start
 
 # 3. Create a test workspace
-dba create test-manual --template=node
-dba list
+cmux create test-manual --template=node
+cmux list
 # Note the workspace ID (e.g., ws_9fce9a7e)
 export WS_ID=ws_9fce9a7e  # Replace with your actual ID
 
 # 4. Start the Morph VM
-dba computer start -w $WS_ID
+cmux computer start -w $WS_ID
 
 # 5. Test browser navigation
-dba computer open "https://example.com" -w $WS_ID
-dba computer get url -w $WS_ID
-dba computer get title -w $WS_ID
+cmux computer open "https://example.com" -w $WS_ID
+cmux computer get url -w $WS_ID
+cmux computer get title -w $WS_ID
 
 # 6. Test element discovery
-dba computer snapshot -i -w $WS_ID
+cmux computer snapshot -i -w $WS_ID
 
 # 7. Test element interaction
-dba computer click @e1 -w $WS_ID
+cmux computer click @e1 -w $WS_ID
 
 # 8. Test screenshot
-dba computer screenshot --output=/tmp/test.png -w $WS_ID
+cmux computer screenshot --output=/tmp/test.png -w $WS_ID
 ls -la /tmp/test.png
 
 # 9. Clean up
-dba computer stop -w $WS_ID
-dba destroy test-manual --force
-dba daemon stop
+cmux computer stop -w $WS_ID
+cmux destroy test-manual --force
+cmux daemon stop
 
 echo "All tests passed!"
 ```
@@ -593,50 +593,50 @@ echo "All tests passed!"
 Refs become stale after page changes. Always get fresh refs:
 
 ```bash
-dba computer open "https://example.com" -w $WS_ID
-dba computer snapshot -i -w $WS_ID  # Get refs: @e1, @e2, @e3
+cmux computer open "https://example.com" -w $WS_ID
+cmux computer snapshot -i -w $WS_ID  # Get refs: @e1, @e2, @e3
 
-dba computer click @e1 -w $WS_ID    # This navigates to new page
+cmux computer click @e1 -w $WS_ID    # This navigates to new page
 
 # WRONG: Using old refs
-dba computer click @e2 -w $WS_ID    # May fail - ref is stale!
+cmux computer click @e2 -w $WS_ID    # May fail - ref is stale!
 
 # RIGHT: Refresh refs first
-dba computer snapshot -i -w $WS_ID  # Get NEW refs
-dba computer click @e1 -w $WS_ID    # Click on NEW @e1
+cmux computer snapshot -i -w $WS_ID  # Get NEW refs
+cmux computer click @e1 -w $WS_ID    # Click on NEW @e1
 ```
 
 ### 2. Verify Actions
 
 ```bash
-dba computer fill @e2 "test@example.com" -w $WS_ID
-dba computer get value @e2 -w $WS_ID  # Verify it was filled
+cmux computer fill @e2 "test@example.com" -w $WS_ID
+cmux computer get value @e2 -w $WS_ID  # Verify it was filled
 ```
 
 ### 3. Use Waits for Dynamic Content
 
 ```bash
-dba computer click @e1 -w $WS_ID
-dba computer wait --text "Loading complete" -w $WS_ID
-dba computer snapshot -i -w $WS_ID  # Now get fresh refs
+cmux computer click @e1 -w $WS_ID
+cmux computer wait --text "Loading complete" -w $WS_ID
+cmux computer snapshot -i -w $WS_ID  # Now get fresh refs
 ```
 
 ### 4. Save Snapshots at Checkpoints
 
 ```bash
 # After complex setup
-dba computer save --name=setup-complete -w $WS_ID
+cmux computer save --name=setup-complete -w $WS_ID
 
 # If something goes wrong, resume from checkpoint
-dba computer start --from=setup-complete -w $WS_ID
+cmux computer start --from=setup-complete -w $WS_ID
 ```
 
 ### 5. Take Screenshots for Debugging
 
 ```bash
-dba computer screenshot --output=/tmp/before.png -w $WS_ID
-dba computer click @e1 -w $WS_ID
-dba computer screenshot --output=/tmp/after.png -w $WS_ID
+cmux computer screenshot --output=/tmp/before.png -w $WS_ID
+cmux computer click @e1 -w $WS_ID
+cmux computer screenshot --output=/tmp/after.png -w $WS_ID
 ```
 
 ---
@@ -650,46 +650,46 @@ dba computer screenshot --output=/tmp/after.png -w $WS_ID
 echo $MORPH_API_KEY
 
 # Verify API connection
-dba daemon status
+cmux daemon status
 ```
 
 ### Browser Commands Fail
 
 ```bash
 # Check VM is running
-dba computer status -w $WS_ID
+cmux computer status -w $WS_ID
 # Must show "Status: running"
 
 # If commands timeout, try reconnecting
-dba computer status -w $WS_ID
+cmux computer status -w $WS_ID
 ```
 
 ### Element Not Found
 
 ```bash
 # Refs may be stale - refresh them
-dba computer snapshot -i -w $WS_ID
+cmux computer snapshot -i -w $WS_ID
 
 # Check if element is visible
-dba computer is visible @e1 -w $WS_ID
+cmux computer is visible @e1 -w $WS_ID
 
 # Try using CSS selector instead
-dba computer click "#submit-btn" -w $WS_ID
+cmux computer click "#submit-btn" -w $WS_ID
 
 # Or use text selector
-dba computer click "text=Submit" -w $WS_ID
+cmux computer click "text=Submit" -w $WS_ID
 ```
 
 ### Page Loads But No Elements Found
 
 ```bash
 # Wait for page to fully load
-dba computer wait 3000 -w $WS_ID
-dba computer snapshot -i -w $WS_ID
+cmux computer wait 3000 -w $WS_ID
+cmux computer snapshot -i -w $WS_ID
 
 # Or wait for specific content
-dba computer wait --text "Welcome" -w $WS_ID
-dba computer snapshot -i -w $WS_ID
+cmux computer wait --text "Welcome" -w $WS_ID
+cmux computer snapshot -i -w $WS_ID
 ```
 
 ---

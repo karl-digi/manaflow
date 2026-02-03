@@ -1215,20 +1215,20 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name
-    providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx or e2b sandbox ID)
-    snapshotId: v.optional(v.string()), // Snapshot/template ID used to create the instance
+    provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name (extensible for future providers)
+    providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
+    snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
   })
     .index("by_devboxId", ["devboxId"])
     .index("by_providerInstanceId", ["providerInstanceId"]),
 
-  // Track E2B instance activity for cleanup cron decisions
+  // E2B instance activity tracking (for managing instance lifecycle)
   e2bInstanceActivity: defineTable({
-    instanceId: v.string(), // E2B sandbox ID
-    lastPausedAt: v.optional(v.number()), // When instance timeout was last extended (pseudo-pause)
-    lastResumedAt: v.optional(v.number()), // When instance was last resumed/accessed
-    stoppedAt: v.optional(v.number()), // When instance was permanently stopped/killed
+    instanceId: v.string(), // E2B sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
   }).index("by_instanceId", ["instanceId"]),
 
 });

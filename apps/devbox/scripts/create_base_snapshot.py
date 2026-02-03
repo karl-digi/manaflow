@@ -8,14 +8,15 @@
 """
 scripts/create_base_snapshot.py
 
-Creates the DBA base snapshot in Morph Cloud.
+Creates the CMUX base snapshot in Morph Cloud.
 
 This script:
 1. Creates a VM from the morphvm-minimal image
 2. Uploads and runs the setup script
 3. Verifies all services are working
 4. Saves the VM as a reusable snapshot
-5. Outputs the snapshot ID for configuration
+5. Auto-updates DEFAULT_CMUX_SNAPSHOT_ID in packages/convex/convex/dba_http.ts
+6. Outputs the snapshot ID for configuration
 
 Requirements:
 - MORPH_API_KEY environment variable
@@ -29,7 +30,7 @@ Usage:
 Options:
     --dry-run       Show what would be done without executing
     --skip-verify   Skip service verification after setup
-    --digest NAME   Custom digest name for the snapshot (default: dba-base-v1)
+    --digest NAME   Custom digest name for the snapshot (default: cmux-base-v1)
     --vcpus N       Number of vCPUs (default: 2)
     --memory MB     Memory in MB (default: 4096)
     --disk GB       Disk size in GB (default: 32)
@@ -40,8 +41,12 @@ import sys
 import time
 import argparse
 import json
+import re
 from pathlib import Path
 from datetime import datetime
+
+# Path to dba_http.ts where DEFAULT_CMUX_SNAPSHOT_ID is defined
+CMUX_HTTP_PATH = Path(__file__).resolve().parent.parent.parent.parent / "packages/convex/convex/dba_http.ts"
 
 # Colors for terminal output
 class Colors:
@@ -98,24 +103,43 @@ def check_requirements():
 
 
 def wait_for_instance_ready(instance, timeout=300):
-    """Wait for instance to be ready with timeout."""
-    log_info("Waiting for instance to be ready...")
+    """Wait for instance to be ready with timeout and progress indicator."""
+    log_info(f"Waiting for instance {instance.id} to be ready (timeout: {timeout}s)...")
     start_time = time.time()
 
     try:
-        # Use the built-in wait_until_ready method
+        # Use the built-in wait_until_ready with periodic status updates
+        import threading
+
+        def status_printer():
+            while not stop_event.is_set():
+                elapsed = time.time() - start_time
+                print(f"\r  Waiting... ({elapsed:.0f}s elapsed)", end="", flush=True)
+                time.sleep(5)
+
+        stop_event = threading.Event()
+        printer = threading.Thread(target=status_printer, daemon=True)
+        printer.start()
+
         instance.wait_until_ready(timeout=timeout)
+
+        stop_event.set()
+        printer.join(timeout=1)
+        print()  # newline
+
         elapsed = time.time() - start_time
         log_info(f"Instance ready after {elapsed:.1f}s (status: {instance.status})")
         return True
     except Exception as e:
+        stop_event.set()
+        print()
         elapsed = time.time() - start_time
         log_error(f"Instance not ready after {elapsed:.1f}s: {e}")
         return False
 
 
 def run_setup_script(instance, script_path):
-    """Upload and run the setup script on the instance."""
+    """Upload and run the setup script on the instance with progress logging."""
     import base64
 
     log_info("Reading setup script...")
@@ -128,13 +152,49 @@ def run_setup_script(instance, script_path):
     instance.exec(f"echo '{script_b64}' | base64 -d > /tmp/setup_base_snapshot.sh")
     instance.exec("chmod +x /tmp/setup_base_snapshot.sh")
 
-    # Run the script
-    log_info("Running setup script (this will take several minutes)...")
-    log_info("Script output:")
+    # Run the script in background and tail output for real-time feedback
+    log_info("Running setup script (this will take 10-15 minutes)...")
+    log_info("Streaming output in real-time...")
     print("-" * 60)
 
-    result = instance.exec("bash /tmp/setup_base_snapshot.sh 2>&1")
-    print(result.stdout if hasattr(result, 'stdout') else str(result))
+    # Start script in background, writing to log file
+    instance.exec("nohup bash /tmp/setup_base_snapshot.sh > /tmp/setup.log 2>&1 &")
+
+    # Poll for completion and stream output
+    import time
+    last_line = 0
+    max_wait = 900  # 15 minutes max
+    start_time = time.time()
+
+    while time.time() - start_time < max_wait:
+        # Check if script is still running
+        ps_result = instance.exec("pgrep -f setup_base_snapshot.sh || echo 'DONE'")
+        ps_out = ps_result.stdout if hasattr(ps_result, 'stdout') else str(ps_result)
+
+        # Get new log lines
+        tail_result = instance.exec(f"tail -n +{last_line + 1} /tmp/setup.log 2>/dev/null | head -100")
+        tail_out = tail_result.stdout if hasattr(tail_result, 'stdout') else str(tail_result)
+
+        if tail_out.strip():
+            lines = tail_out.strip().split('\n')
+            for line in lines:
+                # Print step markers prominently
+                if '===' in line or '[INFO]' in line or '[OK]' in line or '[FAIL]' in line:
+                    print(line)
+                elif 'Step' in line:
+                    print(f"\n{Colors.BLUE}{line}{Colors.NC}")
+            last_line += len(lines)
+
+        if 'DONE' in ps_out:
+            # Script finished, get any remaining output
+            final_result = instance.exec(f"tail -n +{last_line + 1} /tmp/setup.log 2>/dev/null")
+            final_out = final_result.stdout if hasattr(final_result, 'stdout') else str(final_result)
+            if final_out.strip():
+                print(final_out)
+            break
+
+        time.sleep(5)  # Check every 5 seconds
+
     print("-" * 60)
 
     # Check for the marker file
@@ -146,11 +206,15 @@ def run_setup_script(instance, script_path):
         return True
     else:
         log_error("Setup script may have failed - marker file not found")
+        # Show last 50 lines of log for debugging
+        debug_result = instance.exec("tail -50 /tmp/setup.log 2>/dev/null")
+        debug_out = debug_result.stdout if hasattr(debug_result, 'stdout') else str(debug_result)
+        print(f"\nLast 50 lines of setup log:\n{debug_out}")
         return False
 
 
 def verify_services(instance):
-    """Verify all DBA services are running correctly."""
+    """Verify all CMUX services are running correctly."""
     log_info("Verifying services...")
 
     services = {
@@ -158,7 +222,7 @@ def verify_services(instance):
         'xfce-session': 'systemctl is-active xfce-session',
         'chrome-cdp': 'systemctl is-active chrome-cdp',
         'novnc': 'systemctl is-active novnc',
-        'code-server': 'systemctl is-active code-server',
+        'openvscode': 'systemctl is-active openvscode',
         'nginx': 'systemctl is-active nginx',
         'docker': 'systemctl is-active docker',
     }
@@ -167,7 +231,7 @@ def verify_services(instance):
         'VNC (5901)': 'nc -z localhost 5901 && echo "open" || echo "closed"',
         'noVNC (6080)': 'nc -z localhost 6080 && echo "open" || echo "closed"',
         'Chrome CDP (9222)': 'nc -z localhost 9222 && echo "open" || echo "closed"',
-        'code-server (10080)': 'nc -z localhost 10080 && echo "open" || echo "closed"',
+        'openvscode (10080)': 'nc -z localhost 10080 && echo "open" || echo "closed"',
         'nginx (80)': 'nc -z localhost 80 && echo "open" || echo "closed"',
     }
 
@@ -220,18 +284,55 @@ def verify_services(instance):
     return all_ok
 
 
+def find_existing_snapshot(client, digest):
+    """Find an existing snapshot by digest."""
+    try:
+        snapshots = client.snapshots.list()
+        for snap in snapshots:
+            if hasattr(snap, 'digest') and snap.digest == digest:
+                return snap
+        return None
+    except Exception as e:
+        log_warn(f"Could not search for existing snapshots: {e}")
+        return None
+
+
+def update_dba_http_snapshot_id(snapshot_id):
+    """Update the DEFAULT_CMUX_SNAPSHOT_ID in dba_http.ts."""
+    if not CMUX_HTTP_PATH.exists():
+        log_warn(f"dba_http.ts not found at {CMUX_HTTP_PATH}, skipping auto-update")
+        return False
+
+    content = CMUX_HTTP_PATH.read_text()
+
+    # Pattern to match: const DEFAULT_CMUX_SNAPSHOT_ID = "snapshot_xxx";
+    pattern = r'const DEFAULT_CMUX_SNAPSHOT_ID = "snapshot_[^"]+";'
+    replacement = f'const DEFAULT_CMUX_SNAPSHOT_ID = "{snapshot_id}";'
+
+    new_content, count = re.subn(pattern, replacement, content)
+
+    if count == 0:
+        log_warn("Could not find DEFAULT_CMUX_SNAPSHOT_ID in dba_http.ts")
+        return False
+
+    CMUX_HTTP_PATH.write_text(new_content)
+    log_info(f"Updated DEFAULT_CMUX_SNAPSHOT_ID in {CMUX_HTTP_PATH}")
+    return True
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Create DBA base snapshot in Morph Cloud')
+    parser = argparse.ArgumentParser(description='Create CMUX base snapshot in Morph Cloud')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done')
     parser.add_argument('--skip-verify', action='store_true', help='Skip service verification')
-    parser.add_argument('--digest', default='dba-base-v1', help='Snapshot digest name')
-    parser.add_argument('--vcpus', type=int, default=2, help='Number of vCPUs')
+    parser.add_argument('--rebuild', action='store_true', help='Force rebuild from scratch (ignore existing snapshot)')
+    parser.add_argument('--digest', default='cmux-base-v1', help='Snapshot digest name')
+    parser.add_argument('--vcpus', type=int, default=4, help='Number of vCPUs')
     parser.add_argument('--memory', type=int, default=4096, help='Memory in MB')
     parser.add_argument('--disk', type=int, default=32, help='Disk size in GB')
     args = parser.parse_args()
 
     print("=" * 60)
-    print("       DBA Base Snapshot Creator")
+    print("       CMUX Base Snapshot Creator")
     print("=" * 60)
     print(f"\nStarted at: {datetime.now().isoformat()}")
     print(f"Configuration:")
@@ -255,22 +356,37 @@ def main():
 
     client = MorphCloudClient()
     instance = None
+    use_existing = False
+    existing_snapshot = None
 
     try:
-        # Step 2: Create VM from minimal image
-        log_step(2, 6, "Creating VM from morphvm-minimal")
+        # Step 2: Check for existing snapshot or create new VM
+        log_step(2, 6, "Preparing VM")
 
-        log_info("Creating snapshot from base image...")
-        snapshot = client.snapshots.create(
-            image_id="morphvm-minimal",
-            vcpus=args.vcpus,
-            memory=args.memory,
-            disk_size=args.disk * 1024  # Convert GB to MB
-        )
-        log_info(f"Initial snapshot created: {snapshot.id}")
+        if not args.rebuild:
+            log_info(f"Checking for existing snapshot with digest '{args.digest}'...")
+            existing_snapshot = find_existing_snapshot(client, args.digest)
 
-        log_info("Starting instance from snapshot...")
-        instance = client.instances.start(snapshot.id, ttl_seconds=7200)  # 2 hour TTL
+            if existing_snapshot:
+                log_info(f"Found existing snapshot: {existing_snapshot.id}")
+                log_info("Starting from existing snapshot (use --rebuild to force fresh build)")
+                use_existing = True
+
+        if use_existing and existing_snapshot:
+            log_info("Starting instance from existing snapshot...")
+            instance = client.instances.start(existing_snapshot.id, ttl_seconds=7200)
+        else:
+            log_info("Creating new snapshot from morphvm-minimal (this takes longer)...")
+            snapshot = client.snapshots.create(
+                image_id="morphvm-minimal",
+                vcpus=args.vcpus,
+                memory=args.memory,
+                disk_size=args.disk * 1024  # Convert GB to MB
+            )
+            log_info(f"Initial snapshot created: {snapshot.id}")
+
+            log_info("Starting instance from snapshot...")
+            instance = client.instances.start(snapshot.id, ttl_seconds=7200)  # 2 hour TTL
 
         if not wait_for_instance_ready(instance):
             log_error("Failed to start instance")
@@ -278,12 +394,17 @@ def main():
 
         log_info(f"Instance started: {instance.id}")
 
-        # Step 3: Upload and run setup script
+        # Step 3: Upload and run setup script (skip if using existing snapshot)
         log_step(3, 6, "Running setup script")
 
-        script_path = Path(__file__).parent / 'setup_base_snapshot.sh'
-        if not run_setup_script(instance, script_path):
-            log_warn("Setup script reported issues, continuing anyway...")
+        if use_existing:
+            log_info("Skipping setup script (using existing snapshot)")
+            log_info("Just restarting services to ensure they're running...")
+            instance.exec("systemctl restart vncserver xfce-session chrome-cdp novnc openvscode nginx cmux-worker 2>/dev/null || true")
+        else:
+            script_path = Path(__file__).parent / 'setup_base_snapshot.sh'
+            if not run_setup_script(instance, script_path):
+                log_warn("Setup script reported issues, continuing anyway...")
 
         # Step 4: Verify services
         log_step(4, 6, "Verifying services")
@@ -291,16 +412,14 @@ def main():
         if args.skip_verify:
             log_info("Skipping verification (--skip-verify)")
         else:
-            # Wait a bit for services to stabilize
-            log_info("Waiting 10 seconds for services to stabilize...")
-            time.sleep(10)
+            # Wait for services to stabilize (longer for fresh builds)
+            wait_time = 15 if use_existing else 30
+            log_info(f"Waiting {wait_time} seconds for services to stabilize...")
+            time.sleep(wait_time)
 
             if not verify_services(instance):
-                log_warn("Some services failed verification")
-                response = input("\nContinue with snapshot creation anyway? (y/N): ")
-                if response.lower() != 'y':
-                    log_info("Aborting snapshot creation")
-                    sys.exit(1)
+                log_warn("Some services failed verification - continuing anyway")
+                log_warn("Services may need more time to start after snapshot restore")
 
         # Step 5: Save as snapshot
         log_step(5, 6, "Saving snapshot")
@@ -308,6 +427,13 @@ def main():
         log_info(f"Creating snapshot with digest: {args.digest}")
         base_snapshot = instance.snapshot(digest=args.digest)
         log_info(f"Snapshot created: {base_snapshot.id}")
+
+        # Update dba_http.ts with the new snapshot ID
+        log_info("Updating default snapshot ID in dba_http.ts...")
+        if update_dba_http_snapshot_id(base_snapshot.id):
+            log_info(f"Successfully updated DEFAULT_CMUX_SNAPSHOT_ID to {base_snapshot.id}")
+        else:
+            log_warn("Failed to update dba_http.ts - manual update may be required")
 
         # Step 6: Cleanup and output
         log_step(6, 6, "Cleanup and summary")
@@ -330,7 +456,7 @@ def main():
         print(f'       base_snapshot_id: "{base_snapshot.id}"')
         print()
         print("  2. Or set environment variable:")
-        print(f'     export DBA_BASE_SNAPSHOT="{base_snapshot.id}"')
+        print(f'     export CMUX_BASE_SNAPSHOT="{base_snapshot.id}"')
         print()
         print("To test the snapshot:")
         print(f"  python -c \"")
@@ -345,7 +471,7 @@ def main():
         # Save snapshot info to file
         info_file = Path(__file__).parent / 'SNAPSHOT_INFO.txt'
         with open(info_file, 'w') as f:
-            f.write("DBA Base Snapshot Information\n")
+            f.write("CMUX Base Snapshot Information\n")
             f.write("=" * 40 + "\n")
             f.write(f"Created: {datetime.now().isoformat()}\n")
             f.write(f"Snapshot ID: {base_snapshot.id}\n")
@@ -357,7 +483,7 @@ def main():
             f.write("- Chrome with CDP (port 9222)\n")
             f.write("- TigerVNC (port 5901)\n")
             f.write("- noVNC (port 6080)\n")
-            f.write("- code-server (port 10080)\n")
+            f.write("- OpenVSCode Server (port 10080)\n")
             f.write("- nginx (port 80)\n")
             f.write("- Docker (docker-ce, docker-compose)\n")
             f.write("- Devbox/Nix\n")

@@ -1,7 +1,7 @@
 #!/bin/bash
 # scripts/verify_services.sh
 #
-# Verify all DBA services are running correctly inside a Morph VM.
+# Verify all cmux devbox services are running correctly inside a Morph VM.
 # Run this script inside the VM to check the health of all services.
 #
 # Usage:
@@ -157,21 +157,21 @@ check_display() {
     fi
 }
 
-# Check dba user
+# Check cmux user
 check_user() {
-    if id "dba" &>/dev/null; then
-        add_result "user" "dba user" "ok" "exists"
+    if id "cmux" &>/dev/null; then
+        add_result "user" "cmux user" "ok" "exists"
     else
-        add_result "user" "dba user" "fail" "not found"
+        add_result "user" "cmux user" "fail" "not found"
     fi
 }
 
 # Check snapshot marker
 check_snapshot_marker() {
-    if [ -f /dba_base_snapshot_valid ]; then
+    if [ -f /cmux_base_snapshot_valid ]; then
         add_result "marker" "Snapshot marker" "ok" "valid"
     else
-        add_result "marker" "Snapshot marker" "warn" "not found (may not be a DBA snapshot)"
+        add_result "marker" "Snapshot marker" "warn" "not found (may not be a cmux devbox snapshot)"
     fi
 }
 
@@ -190,7 +190,7 @@ check_docker() {
 # Main execution
 if [ "$JSON_MODE" = false ]; then
     echo "=============================================="
-    echo "       DBA Service Verification              "
+    echo "    cmux devbox Service Verification         "
     echo "=============================================="
     echo ""
     echo "Checking at: $(date)"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # test/test_edge_cases.sh
 #
-# Edge case and error handling tests for DBA + Morph Cloud
+# Edge case and error handling tests for cmux devbox + Morph Cloud
 #
 # This script tests error conditions and edge cases:
 # - Invalid refs
@@ -13,7 +13,7 @@
 # - And more...
 #
 # Prerequisites:
-# - DBA CLI installed and in PATH
+# - cmux devbox CLI installed and in PATH
 # - MORPH_API_KEY environment variable set
 # - Base snapshot created
 #
@@ -33,7 +33,7 @@ NC='\033[0m'
 
 # Configuration
 KEEP_WORKSPACE=false
-WS_PREFIX="dba-edge-test"
+WS_PREFIX="cmux-edge-test"
 WS=""
 
 # Statistics
@@ -176,8 +176,8 @@ cleanup() {
     fi
 
     info "Cleaning up workspace: $WS"
-    dba computer stop -w "$WS" 2>/dev/null || true
-    dba destroy "$WS" --force 2>/dev/null || true
+    cmux computer stop -w "$WS" 2>/dev/null || true
+    cmux destroy "$WS" --force 2>/dev/null || true
     info "Cleanup complete"
 }
 
@@ -188,7 +188,7 @@ trap cleanup EXIT
 # =============================================================================
 
 echo "=============================================="
-echo "       DBA Edge Case Test Suite"
+echo "       cmux devbox Edge Case Test Suite"
 echo "=============================================="
 echo ""
 echo "Workspace: $WS"
@@ -203,19 +203,19 @@ echo "=== Pre-VM Edge Cases ==="
 
 # Test: Status of non-existent workspace
 expect_error "Status of non-existent workspace" "not found" \
-    "dba computer status -w nonexistent-workspace-xyz-123"
+    "cmux computer status -w nonexistent-workspace-xyz-123"
 
 # Test: Start non-existent workspace
 expect_error "Start non-existent workspace" "not found" \
-    "dba computer start -w nonexistent-workspace-xyz-123"
+    "cmux computer start -w nonexistent-workspace-xyz-123"
 
 # Test: Stop non-existent workspace
 expect_error "Stop non-existent workspace" "not found" \
-    "dba computer stop -w nonexistent-workspace-xyz-123"
+    "cmux computer stop -w nonexistent-workspace-xyz-123"
 
 # Test: Start with invalid snapshot
 expect_error "Start with invalid snapshot ID" "" \
-    "dba computer start --snapshot=invalid-snapshot-id-xyz -w $WS"
+    "cmux computer start --snapshot=invalid-snapshot-id-xyz -w $WS"
 
 # =============================================================================
 # SETUP: Create workspace and start VM
@@ -225,14 +225,14 @@ echo ""
 echo "=== Setup ==="
 
 info "Creating workspace: $WS"
-dba create "$WS" --template=node || true
+cmux create "$WS" --template=node || true
 
 info "Starting VM..."
-dba computer start -w "$WS"
+cmux computer start -w "$WS"
 sleep 5
 
 info "Navigating to example.com..."
-dba computer open "https://example.com" -w "$WS"
+cmux computer open "https://example.com" -w "$WS"
 sleep 2
 
 # =============================================================================
@@ -244,26 +244,26 @@ echo "=== Browser Automation Edge Cases ==="
 
 # Test: Click non-existent ref
 expect_error "Click non-existent ref @e999" "not found" \
-    "dba computer click @e999 -w $WS"
+    "cmux computer click @e999 -w $WS"
 
 # Test: Click invalid ref format
 expect_error "Click invalid ref format" "" \
-    "dba computer click 'invalid-ref-format' -w $WS"
+    "cmux computer click 'invalid-ref-format' -w $WS"
 
 # Test: Navigate to invalid URL
 expect_error "Navigate to invalid URL" "" \
-    "dba computer open 'https://this-domain-definitely-does-not-exist-xyz.invalid' -w $WS"
+    "cmux computer open 'https://this-domain-definitely-does-not-exist-xyz.invalid' -w $WS"
 
 # Test: Press invalid key
 expect_error "Press invalid key" "" \
-    "dba computer press 'NotARealKey' -w $WS"
+    "cmux computer press 'NotARealKey' -w $WS"
 
 # Test: Fill on non-input element (h1)
 # This might not error but should handle gracefully
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}--- Edge Case $TESTS_RUN: Fill on non-input element ---${NC}"
-OUTPUT=$(dba computer fill "h1" "test text" -w "$WS" 2>&1 || true)
+OUTPUT=$(cmux computer fill "h1" "test text" -w "$WS" 2>&1 || true)
 echo "  Output: ${OUTPUT:0:200}"
 if [[ "$OUTPUT" == *"not"* ]] || [[ "$OUTPUT" == *"error"* ]] || [[ "$OUTPUT" == *"cannot"* ]]; then
     pass "Fill on non-input handled gracefully"
@@ -273,7 +273,7 @@ fi
 
 # Test: Get text from non-existent element
 expect_error "Get text from non-existent element" "" \
-    "dba computer get text '#element-that-does-not-exist' -w $WS"
+    "cmux computer get text '#element-that-does-not-exist' -w $WS"
 
 # Test: Wait for non-existent element (should timeout)
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -282,7 +282,7 @@ echo -e "${BLUE}--- Edge Case $TESTS_RUN: Wait for non-existent element (timeout
 echo "  This test may take a while..."
 START=$(date +%s)
 set +e
-OUTPUT=$(timeout 35 dba computer wait "#nonexistent-element-xyz" --timeout=5000 -w "$WS" 2>&1)
+OUTPUT=$(timeout 35 cmux computer wait "#nonexistent-element-xyz" --timeout=5000 -w "$WS" 2>&1)
 EXIT_CODE=$?
 set -e
 END=$(date +%s)
@@ -305,16 +305,16 @@ echo "=== VM Lifecycle Edge Cases ==="
 
 # Test: Start when already running
 expect_success "Start when already running (should be idempotent)" \
-    "dba computer start -w $WS"
+    "cmux computer start -w $WS"
 
 # Test: Double screenshot (rapid fire)
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}--- Edge Case $TESTS_RUN: Rapid screenshots ---${NC}"
 set +e
-dba computer screenshot --output=/tmp/edge1.png -w "$WS" &
+cmux computer screenshot --output=/tmp/edge1.png -w "$WS" &
 PID1=$!
-dba computer screenshot --output=/tmp/edge2.png -w "$WS" &
+cmux computer screenshot --output=/tmp/edge2.png -w "$WS" &
 PID2=$!
 wait $PID1
 wait $PID2
@@ -328,18 +328,18 @@ fi
 
 # Test: Snapshot on blank page
 info "Navigating to about:blank..."
-dba computer open "about:blank" -w "$WS" 2>/dev/null || true
+cmux computer open "about:blank" -w "$WS" 2>/dev/null || true
 sleep 1
 
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}--- Edge Case $TESTS_RUN: Snapshot on blank page ---${NC}"
-OUTPUT=$(dba computer snapshot -i -w "$WS" 2>&1 || true)
+OUTPUT=$(cmux computer snapshot -i -w "$WS" 2>&1 || true)
 echo "  Output: ${OUTPUT:0:200}"
 pass "Snapshot on blank page handled"
 
 # Navigate back to a real page for remaining tests
-dba computer open "https://example.com" -w "$WS"
+cmux computer open "https://example.com" -w "$WS"
 sleep 2
 
 # =============================================================================
@@ -351,26 +351,26 @@ echo "=== Stop/Restart Edge Cases ==="
 
 # Stop the VM
 info "Stopping VM..."
-dba computer stop -w "$WS"
+cmux computer stop -w "$WS"
 sleep 2
 
 # Test: Double stop
 expect_success "Stop when already stopped (should be idempotent)" \
-    "dba computer stop -w $WS"
+    "cmux computer stop -w $WS"
 
 # Test: Commands on stopped VM
 expect_error "Screenshot on stopped VM" "" \
-    "dba computer screenshot --output=/tmp/test.png -w $WS"
+    "cmux computer screenshot --output=/tmp/test.png -w $WS"
 
 expect_error "Click on stopped VM" "" \
-    "dba computer click @e1 -w $WS"
+    "cmux computer click @e1 -w $WS"
 
 expect_error "Get URL on stopped VM" "" \
-    "dba computer get url -w $WS"
+    "cmux computer get url -w $WS"
 
 # Restart for any remaining tests
 info "Restarting VM..."
-dba computer start -w "$WS"
+cmux computer start -w "$WS"
 sleep 5
 
 # =============================================================================
@@ -384,9 +384,9 @@ echo "=== Special Character Edge Cases ==="
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}--- Edge Case $TESTS_RUN: URL with query parameters ---${NC}"
-OUTPUT=$(dba computer open "https://example.com/?param=value&other=test" -w "$WS" 2>&1 || true)
+OUTPUT=$(cmux computer open "https://example.com/?param=value&other=test" -w "$WS" 2>&1 || true)
 echo "  Output: ${OUTPUT:0:200}"
-URL=$(dba computer get url -w "$WS" 2>/dev/null || echo "")
+URL=$(cmux computer get url -w "$WS" 2>/dev/null || echo "")
 if [[ "$URL" == *"example.com"* ]]; then
     pass "URL with query params handled"
 else
@@ -398,7 +398,7 @@ TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}--- Edge Case $TESTS_RUN: Special characters in text ---${NC}"
 # Navigate to example.com (has no inputs, but test the command parsing)
-OUTPUT=$(dba computer type "@e1" "Hello! @#\$%^&*()" -w "$WS" 2>&1 || true)
+OUTPUT=$(cmux computer type "@e1" "Hello! @#\$%^&*()" -w "$WS" 2>&1 || true)
 echo "  Output: ${OUTPUT:0:200}"
 pass "Special characters in type command handled"
 

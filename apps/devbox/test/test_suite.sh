@@ -1,9 +1,9 @@
 #!/bin/bash
 # test/test_suite.sh
 #
-# Full DBA + Morph Cloud Integration Test Suite
+# Full cmux devbox + Morph Cloud Integration Test Suite
 #
-# This script tests the complete DBA workflow:
+# This script tests the complete cmux devbox workflow:
 # 1. Workspace creation
 # 2. VM start/stop lifecycle
 # 3. Browser automation commands
@@ -11,7 +11,7 @@
 # 5. State persistence across restarts
 #
 # Prerequisites:
-# - DBA CLI installed and in PATH
+# - cmux devbox CLI installed and in PATH
 # - MORPH_API_KEY environment variable set
 # - Base snapshot created (see scripts/create_base_snapshot.py)
 #
@@ -33,7 +33,7 @@ NC='\033[0m'
 # Test configuration
 QUICK_MODE=false
 KEEP_WORKSPACE=false
-WS_PREFIX="dba-test"
+WS_PREFIX="cmux-test"
 WS=""  # Will be set later
 
 # Statistics
@@ -189,13 +189,13 @@ cleanup() {
     info "Cleaning up workspace: $WS"
 
     # Stop VM if running
-    dba computer stop -w "$WS" 2>/dev/null || true
+    cmux computer stop -w "$WS" 2>/dev/null || true
 
     # Destroy workspace
-    dba destroy "$WS" --force 2>/dev/null || true
+    cmux destroy "$WS" --force 2>/dev/null || true
 
     # Remove temp files
-    rm -f /tmp/dba-test-*.png 2>/dev/null || true
+    rm -f /tmp/cmux-test-*.png 2>/dev/null || true
 
     info "Cleanup complete"
 }
@@ -208,7 +208,7 @@ trap cleanup EXIT
 # =============================================================================
 
 echo "=============================================="
-echo "       DBA + Morph Cloud Test Suite"
+echo "  cmux devbox + Morph Cloud Test Suite"
 echo "=============================================="
 echo ""
 echo "Workspace: $WS"
@@ -219,12 +219,12 @@ echo ""
 # Check prerequisites
 echo "=== Prerequisites ==="
 
-if ! command -v dba &> /dev/null; then
-    fail "dba CLI not found in PATH"
-    echo "Please install dba CLI first"
+if ! command -v cmux &> /dev/null; then
+    fail "cmux CLI not found in PATH"
+    echo "Please install cmux CLI first"
     exit 1
 fi
-pass "dba CLI found"
+pass "cmux CLI found"
 
 if [ -z "$MORPH_API_KEY" ]; then
     fail "MORPH_API_KEY not set"
@@ -233,9 +233,9 @@ if [ -z "$MORPH_API_KEY" ]; then
 fi
 pass "MORPH_API_KEY is set"
 
-# Check if dba base snapshot exists (via config or env)
+# Check if cmux base snapshot exists (via config or env)
 # This is a soft check - the create command will fail if not configured
-info "Base snapshot should be configured in dba config"
+info "Base snapshot should be configured in cmux config"
 
 # =============================================================================
 # WORKSPACE TESTS
@@ -246,12 +246,12 @@ echo "=== Workspace Tests ==="
 
 # Test 1: Create workspace
 run_test "Create workspace" "
-    dba create $WS --template=node
+    cmux create $WS --template=node
 "
 
 # Test 2: List workspaces
 run_test "List workspaces includes new workspace" "
-    OUTPUT=\$(dba list 2>&1)
+    OUTPUT=\$(cmux list 2>&1)
     assert_contains '$WS' \"\$OUTPUT\"
 "
 
@@ -264,25 +264,25 @@ echo "=== VM Lifecycle Tests ==="
 
 # Test 3: Start VM
 run_test "Start VM" "
-    dba computer start -w $WS
+    cmux computer start -w $WS
     sleep 5
 "
 
 # Test 4: Check status is running
 run_test "VM status is running" "
-    STATUS=\$(dba computer status -w $WS --json 2>/dev/null | jq -r '.status' || echo 'unknown')
+    STATUS=\$(cmux computer status -w $WS --json 2>/dev/null | jq -r '.status' || echo 'unknown')
     assert_equals 'running' \"\$STATUS\" 'VM should be running'
 "
 
 # Test 5: Verify services (via exec)
 run_test "Services are running" "
-    RESULT=\$(dba computer exec -w $WS 'systemctl is-active chrome-cdp' 2>/dev/null || echo 'inactive')
+    RESULT=\$(cmux computer exec -w $WS 'systemctl is-active chrome-cdp' 2>/dev/null || echo 'inactive')
     assert_equals 'active' \"\$RESULT\" 'chrome-cdp should be active'
 "
 
 # Test 5b: Verify Docker is available
 run_test "Docker is available" "
-    RESULT=\$(dba computer exec -w $WS 'docker --version' 2>/dev/null || echo '')
+    RESULT=\$(cmux computer exec -w $WS 'docker --version' 2>/dev/null || echo '')
     assert_contains 'Docker version' \"\$RESULT\"
 "
 
@@ -295,43 +295,43 @@ echo "=== Browser Automation Tests ==="
 
 # Test 6: Navigate to URL
 run_test "Navigate to example.com" "
-    dba computer open 'https://example.com' -w $WS
+    cmux computer open 'https://example.com' -w $WS
     sleep 2
 "
 
 # Test 7: Get URL
 run_test "Get current URL" "
-    URL=\$(dba computer get url -w $WS 2>/dev/null || echo '')
+    URL=\$(cmux computer get url -w $WS 2>/dev/null || echo '')
     assert_contains 'example.com' \"\$URL\"
 "
 
 # Test 8: Get title
 run_test "Get page title" "
-    TITLE=\$(dba computer get title -w $WS 2>/dev/null || echo '')
+    TITLE=\$(cmux computer get title -w $WS 2>/dev/null || echo '')
     assert_contains 'Example' \"\$TITLE\"
 "
 
 # Test 9: Get snapshot
 run_test "Get element snapshot" "
-    SNAPSHOT=\$(dba computer snapshot -i -w $WS 2>/dev/null || echo '')
+    SNAPSHOT=\$(cmux computer snapshot -i -w $WS 2>/dev/null || echo '')
     assert_contains '@e' \"\$SNAPSHOT\"
 "
 
 # Test 10: Take screenshot
 run_test "Take screenshot" "
-    dba computer screenshot --output=/tmp/dba-test-screenshot.png -w $WS
-    assert_file_exists '/tmp/dba-test-screenshot.png'
-    assert_file_not_empty '/tmp/dba-test-screenshot.png' 10000
+    cmux computer screenshot --output=/tmp/cmux-test-screenshot.png -w $WS
+    assert_file_exists '/tmp/cmux-test-screenshot.png'
+    assert_file_not_empty '/tmp/cmux-test-screenshot.png' 10000
 "
 
 if [ "$QUICK_MODE" = false ]; then
     # Test 11: Click element
     run_test "Click element" "
         # Example.com has a 'More information...' link
-        dba computer click 'text=More information' -w $WS 2>/dev/null || true
+        cmux computer click 'text=More information' -w $WS 2>/dev/null || true
         sleep 2
         # URL should change
-        URL=\$(dba computer get url -w $WS 2>/dev/null || echo '')
+        URL=\$(cmux computer get url -w $WS 2>/dev/null || echo '')
         # Note: example.com link goes to IANA, so URL should change
         echo \"New URL: \$URL\"
         true  # This is a soft test
@@ -339,15 +339,15 @@ if [ "$QUICK_MODE" = false ]; then
 
     # Test 12: Back navigation
     run_test "Back navigation" "
-        dba computer back -w $WS
+        cmux computer back -w $WS
         sleep 1
-        URL=\$(dba computer get url -w $WS 2>/dev/null || echo '')
+        URL=\$(cmux computer get url -w $WS 2>/dev/null || echo '')
         assert_contains 'example.com' \"\$URL\"
     "
 
     # Test 13: Reload
     run_test "Reload page" "
-        dba computer reload -w $WS
+        cmux computer reload -w $WS
         sleep 1
     "
 fi
@@ -362,31 +362,31 @@ if [ "$QUICK_MODE" = false ]; then
 
     # Test 14: Save snapshot
     run_test "Save VM snapshot" "
-        dba computer save --name='test-state' -w $WS
+        cmux computer save --name='test-state' -w $WS
     "
 
     # Test 15: Stop VM
     run_test "Stop VM" "
-        dba computer stop -w $WS
+        cmux computer stop -w $WS
         sleep 2
     "
 
     # Test 16: Status shows stopped
     run_test "VM status is stopped" "
-        STATUS=\$(dba computer status -w $WS --json 2>/dev/null | jq -r '.status' || echo 'unknown')
+        STATUS=\$(cmux computer status -w $WS --json 2>/dev/null | jq -r '.status' || echo 'unknown')
         assert_equals 'stopped' \"\$STATUS\" 'VM should be stopped'
     "
 
     # Test 17: Resume from snapshot
     run_test "Resume from snapshot" "
-        dba computer start --snapshot='test-state' -w $WS
+        cmux computer start --snapshot='test-state' -w $WS
         sleep 5
     "
 
     # Test 18: Verify state persisted
     run_test "State persisted across restart" "
         # Page should still be example.com from before stop
-        URL=\$(dba computer get url -w $WS 2>/dev/null || echo '')
+        URL=\$(cmux computer get url -w $WS 2>/dev/null || echo '')
         assert_contains 'example.com' \"\$URL\"
     "
 fi
@@ -401,7 +401,7 @@ if [ "$QUICK_MODE" = false ]; then
 
     run_test "VNC URL is accessible" "
         # Get the VNC URL and verify it responds
-        VNC_URL=\$(dba computer vnc --url-only -w $WS 2>/dev/null || echo '')
+        VNC_URL=\$(cmux computer vnc --url-only -w $WS 2>/dev/null || echo '')
         if [ -n \"\$VNC_URL\" ]; then
             # Try to fetch the VNC page
             HTTP_CODE=\$(curl -s -o /dev/null -w '%{http_code}' \"\$VNC_URL\" 2>/dev/null || echo '000')
@@ -421,7 +421,7 @@ echo ""
 echo "=== Final Cleanup ==="
 
 run_test "Final stop VM" "
-    dba computer stop -w $WS
+    cmux computer stop -w $WS
 "
 
 # =============================================================================

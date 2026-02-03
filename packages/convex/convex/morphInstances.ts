@@ -78,7 +78,7 @@ export const recordResume = authMutation({
 });
 
 /**
- * Record that a Morph instance was resumed (internal, for dba CLI and cron jobs).
+ * Record that a Morph instance was resumed (internal, for cmux devbox CLI and cron jobs).
  */
 export const recordResumeInternal = internalMutation({
   args: {

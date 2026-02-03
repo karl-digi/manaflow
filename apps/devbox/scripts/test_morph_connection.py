@@ -161,14 +161,14 @@ def test_list_snapshots(client, verbose=False):
             if len(snapshots) > 5:
                 print(f"    ... and {len(snapshots) - 5} more")
 
-        # Look for DBA base snapshot
-        dba_snapshots = [
+        # Look for cmux devbox base snapshot
+        cmux_snapshots = [
             s for s in snapshots
-            if 'dba' in str(getattr(s, 'digest', '')).lower()
+            if 'cmux' in str(getattr(s, 'digest', '')).lower()
         ]
-        if dba_snapshots:
-            log_info(f"Found {len(dba_snapshots)} DBA snapshot(s)")
-            for s in dba_snapshots:
+        if cmux_snapshots:
+            log_info(f"Found {len(cmux_snapshots)} cmux devbox snapshot(s)")
+            for s in cmux_snapshots:
                 print(f"    - {s.id}: {getattr(s, 'digest', 'no digest')}")
 
         return True
@@ -313,15 +313,15 @@ def main():
         # Determine snapshot to use
         snapshot_id = args.snapshot
         if not snapshot_id:
-            # Try to find a DBA snapshot
+            # Try to find a cmux devbox snapshot
             snapshots = client.snapshots.list()
-            dba_snapshots = [
+            cmux_snapshots = [
                 s for s in snapshots
-                if 'dba' in str(getattr(s, 'digest', '')).lower()
+                if 'cmux' in str(getattr(s, 'digest', '')).lower()
             ]
-            if dba_snapshots:
-                snapshot_id = dba_snapshots[0].id
-                log_info(f"Using DBA snapshot: {snapshot_id}")
+            if cmux_snapshots:
+                snapshot_id = cmux_snapshots[0].id
+                log_info(f"Using cmux devbox snapshot: {snapshot_id}")
             elif snapshots:
                 snapshot_id = snapshots[0].id
                 log_info(f"Using first available snapshot: {snapshot_id}")

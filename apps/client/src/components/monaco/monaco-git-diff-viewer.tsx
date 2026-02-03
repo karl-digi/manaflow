@@ -978,7 +978,10 @@ function MonacoFileDiffRow({
   return (
     <div
       ref={rowContainerRef}
-      className={cn("bg-white dark:bg-neutral-900", classNames?.container)}
+      className={cn(
+        "bg-white dark:bg-neutral-900 border-b border-neutral-200/80 dark:border-neutral-800/70",
+        classNames?.container,
+      )}
     >
       <FileDiffHeader
         filePath={file.filePath}
@@ -992,7 +995,7 @@ function MonacoFileDiffRow({
       />
 
       <div
-        className="overflow-hidden border-b border-neutral-200 dark:border-neutral-800 flex flex-col"
+        className="overflow-hidden flex flex-col"
         style={
           isExpanded
             ? isHeightSettled
@@ -1205,7 +1208,7 @@ export function MonacoGitDiffViewer({
 
   return (
     <div className="grow bg-white dark:bg-neutral-900">
-      <div className="flex flex-col -space-y-[2px]">
+      <div className="flex flex-col">
         {fileGroups.map((file) => (
           <MemoMonacoFileDiffRow
             key={`monaco:${file.filePath}`}
@@ -1217,13 +1220,13 @@ export function MonacoGitDiffViewer({
             classNames={classNames?.fileDiffRow}
           />
         ))}
-        <hr className="border-neutral-200 dark:border-neutral-800" />
+        <hr className="border-neutral-200/80 dark:border-neutral-800/70" />
         <div className="px-3 py-6 text-center">
           <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
             You’ve reached the end of the diff!
           </span>
           <div className="grid place-content-center">
-            <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+            <pre className="mt-2 pb-12 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
               {kitty}
             </pre>
           </div>

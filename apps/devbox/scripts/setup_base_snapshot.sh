@@ -2,11 +2,11 @@
 # scripts/setup_base_snapshot.sh
 # Run this ONCE on a fresh Morph VM to create the reusable base snapshot
 #
-# This script installs all required software for the DBA development environment:
+# This script installs all required software for the cmux devbox development environment:
 # - Chrome with CDP for browser automation
 # - TigerVNC + XFCE for visual desktop
 # - noVNC for web-based VNC access
-# - code-server for VS Code in browser
+# - OpenVSCode Server for VS Code in browser
 # - Docker for containerized development
 # - nginx as reverse proxy
 # - Devbox/Nix for package management
@@ -15,7 +15,7 @@
 #   ./setup_base_snapshot.sh
 #
 # After running, save as snapshot with:
-#   morph snapshot create --digest="dba-base-v1"
+#   morph snapshot create --digest="cmux-base-v1"
 
 set -e
 
@@ -43,7 +43,7 @@ log_step() {
 }
 
 echo "=============================================="
-echo "       DBA Base Snapshot Setup Script        "
+echo "    cmux devbox Base Snapshot Setup Script   "
 echo "=============================================="
 echo ""
 echo "Started at: $(date)"
@@ -70,7 +70,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
     ca-certificates gnupg lsb-release \
     jq netcat-openbsd \
-    sudo openssh-server
+    sudo openssh-server \
+    zsh
 
 log_info "System packages installed"
 
@@ -113,11 +114,21 @@ log_info "npm installed: $NPM_VERSION"
 # It will use the existing Chrome via CDP on port 9222
 npm install -g agent-browser || log_warn "agent-browser installation failed"
 
-# Install dba-worker daemon script
-cat > /usr/local/bin/dba-worker << 'WORKER_EOF'
+# Create directory for cmux-worker and its dependencies
+mkdir -p /opt/cmux-worker
+cd /opt/cmux-worker
+
+# Install node-pty and ws locally for cmux-worker
+npm init -y
+npm install node-pty ws || log_warn "node-pty/ws installation failed"
+
+cd -
+
+# Install cmux-worker daemon script
+cat > /usr/local/bin/cmux-worker << 'WORKER_EOF'
 #!/usr/bin/env node
 /**
- * DBA Worker Daemon
+ * cmux devbox Worker Daemon
  *
  * HTTP server that wraps agent-browser commands.
  * Runs on port 39377 (exposed via Morph's worker URL).
@@ -130,15 +141,21 @@ cat > /usr/local/bin/dba-worker << 'WORKER_EOF'
 
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// Load modules from /opt/cmux-worker/node_modules
+const modulePath = '/opt/cmux-worker/node_modules';
+const WebSocket = require(path.join(modulePath, 'ws'));
+const pty = require(path.join(modulePath, 'node-pty'));
+
 const PORT = process.env.PORT || 39377;
-const OWNER_ID_FILE = '/var/run/dba/owner-id';
-const PROJECT_ID_FILE = '/var/run/dba/stack-project-id';
-const SESSION_SECRET_FILE = '/var/run/dba/session-secret';
+const OWNER_ID_FILE = '/var/run/cmux/owner-id';
+const PROJECT_ID_FILE = '/var/run/cmux/stack-project-id';
+const SESSION_SECRET_FILE = '/var/run/cmux/session-secret';
 
 // Auth configuration - loaded at startup
 let ownerId = null;
@@ -147,7 +164,7 @@ let sessionSecret = null;
 let jwksCache = null;
 let jwksCacheTime = 0;
 const JWKS_CACHE_TTL = 3600000; // 1 hour
-const SESSION_COOKIE_NAME = 'dba_session';
+const SESSION_COOKIE_NAME = 'cmux_session';
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
 /**
@@ -170,7 +187,7 @@ function loadAuthConfig() {
     // Generate new session secret
     sessionSecret = crypto.randomBytes(32).toString('hex');
     try {
-      fs.mkdirSync('/var/run/dba', { recursive: true });
+      fs.mkdirSync('/var/run/cmux', { recursive: true });
       fs.writeFileSync(SESSION_SECRET_FILE, sessionSecret);
       console.log('Generated new session secret');
     } catch (writeErr) {
@@ -179,6 +196,153 @@ function loadAuthConfig() {
   }
 
   return !!(ownerId && projectId);
+}
+
+// =============================================================================
+// PTY Session Management
+// =============================================================================
+
+// Store active PTY sessions: Map<sessionId, { pty, clients: Set<WebSocket> }>
+const ptySessions = new Map();
+
+/**
+ * Generate a unique PTY session ID
+ */
+function generatePtySessionId() {
+  return 'pty_' + crypto.randomBytes(8).toString('hex');
+}
+
+// Security: Whitelist of allowed shells to prevent command injection
+const ALLOWED_SHELLS = new Set(['/bin/bash', '/bin/sh', '/bin/zsh', '/usr/bin/bash', '/usr/bin/zsh']);
+
+// Security: Allowed base directories for cwd to prevent path traversal
+const ALLOWED_CWD_BASES = ['/home/cmux', '/tmp', '/root/workspace'];
+
+/**
+ * Validate shell is in whitelist
+ */
+function validateShell(shell) {
+  if (!ALLOWED_SHELLS.has(shell)) {
+    console.warn(`Shell "${shell}" not in whitelist, using /bin/bash`);
+    return '/bin/bash';
+  }
+  return shell;
+}
+
+/**
+ * Validate cwd is within allowed directories to prevent path traversal
+ */
+function validateCwd(cwd) {
+  // Resolve to absolute path and normalize
+  const resolved = path.resolve(cwd);
+
+  // Check if path is within any allowed base
+  const isAllowed = ALLOWED_CWD_BASES.some(base =>
+    resolved === base || resolved.startsWith(base + '/')
+  );
+
+  if (!isAllowed) {
+    console.warn(`cwd "${cwd}" outside allowed directories, using /home/cmux`);
+    return '/home/cmux';
+  }
+  return resolved;
+}
+
+/**
+ * Create a new PTY session
+ */
+function createPtySession(sessionId, options = {}) {
+  // Validate shell and cwd to prevent injection/traversal attacks
+  const requestedShell = options.shell || process.env.SHELL || '/bin/bash';
+  const requestedCwd = options.cwd || process.env.HOME || '/home/cmux';
+
+  const shell = validateShell(requestedShell);
+  const cwd = validateCwd(requestedCwd);
+  const cols = options.cols || 80;
+  const rows = options.rows || 24;
+  const env = { ...process.env, ...options.env, TERM: 'xterm-256color' };
+
+  const ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols,
+    rows,
+    cwd,
+    env,
+  });
+
+  const session = {
+    id: sessionId,
+    pty: ptyProcess,
+    clients: new Set(),
+    createdAt: Date.now(),
+  };
+
+  ptySessions.set(sessionId, session);
+  console.log(`PTY session created: ${sessionId} (shell: ${shell}, cwd: ${cwd})`);
+
+  // Handle PTY output
+  ptyProcess.onData((data) => {
+    // Broadcast to all connected clients
+    for (const client of session.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: 'output', data }));
+      }
+    }
+  });
+
+  // Handle PTY exit
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    console.log(`PTY session ${sessionId} exited: code=${exitCode}, signal=${signal}`);
+    // Notify all clients
+    for (const client of session.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: 'exit', exitCode, signal }));
+        client.close();
+      }
+    }
+    ptySessions.delete(sessionId);
+  });
+
+  return session;
+}
+
+/**
+ * Get an existing PTY session
+ */
+function getPtySession(sessionId) {
+  return ptySessions.get(sessionId);
+}
+
+/**
+ * Destroy a PTY session
+ */
+function destroyPtySession(sessionId) {
+  const session = ptySessions.get(sessionId);
+  if (session) {
+    session.pty.kill();
+    for (const client of session.clients) {
+      client.close();
+    }
+    ptySessions.delete(sessionId);
+    console.log(`PTY session destroyed: ${sessionId}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * List all PTY sessions
+ */
+function listPtySessions() {
+  const sessions = [];
+  for (const [id, session] of ptySessions) {
+    sessions.push({
+      id,
+      createdAt: session.createdAt,
+      clientCount: session.clients.size,
+    });
+  }
+  return sessions;
 }
 
 /**
@@ -227,7 +391,7 @@ function getAccessDeniedHtml() {
   return `<!DOCTYPE html>
 <html>
 <head>
-  <title>Access Denied - DBA</title>
+  <title>Access Denied</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
@@ -239,16 +403,12 @@ function getAccessDeniedHtml() {
     .container { text-align: center; padding: 2rem; max-width: 400px; }
     h1 { margin-bottom: 0.5rem; }
     p { color: #888; line-height: 1.6; }
-    code { background: #222; padding: 2px 6px; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Access Denied</h1>
-    <p>This DBA workspace requires authentication.</p>
-    <p>Use the CLI to open this workspace:</p>
-    <p><code>dba code &lt;instance-id&gt;</code></p>
-    <p><code>dba vnc &lt;instance-id&gt;</code></p>
+    <p>You don't have permission to view this page.</p>
   </div>
 </body>
 </html>`;
@@ -269,7 +429,7 @@ function verifyLoginToken(token) {
     if (signature !== expectedSig) return null;
 
     const parsed = JSON.parse(data);
-    // Token expires after 5 minutes
+    // Token expires after 24 hours
     if (!parsed.exp || parsed.exp < Date.now()) return null;
     if (!parsed.userId) return null;
 
@@ -529,8 +689,8 @@ function isBrowserPath(pathname) {
   if (pathname.startsWith('/static')) return true;
   if (pathname.startsWith('/stable')) return true;
   if (pathname.startsWith('/vscode')) return true;
-  // VS Code internal paths (but not our /_dba/ endpoints)
-  if (pathname.startsWith('/_') && !pathname.startsWith('/_dba')) return true;
+  // VS Code internal paths (but not our /_cmux/ endpoints)
+  if (pathname.startsWith('/_') && !pathname.startsWith('/_cmux')) return true;
   // Favicon, manifest, etc.
   if (pathname === '/favicon.ico') return true;
   if (pathname === '/manifest.json') return true;
@@ -551,8 +711,8 @@ async function handleRequest(req, res) {
   }
 
   // Auth endpoint - CLI generates URL with signed token, sets session cookie
-  // URL format: /_dba/auth?token=xxx&return=/code/
-  if (reqPath === '/_dba/auth') {
+  // URL format: /_cmux/auth?token=xxx&return=/code/
+  if (reqPath === '/_cmux/auth') {
     const token = url.searchParams.get('token');
     const returnTo = url.searchParams.get('return') || '/code/';
 
@@ -566,22 +726,23 @@ async function handleRequest(req, res) {
     const tokenData = verifyLoginToken(token);
     if (!tokenData) {
       res.writeHead(401, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h1>Invalid or expired link</h1><p>Please use the CLI to generate a new link: <code>dba code &lt;id&gt;</code></p></body></html>');
+      res.end(getAccessDeniedHtml());
       return;
     }
 
     // Check user is the instance owner
     if (tokenData.userId !== ownerId) {
       res.writeHead(403, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h1>Access Denied</h1><p>You are not the owner of this workspace.</p></body></html>');
+      res.end(getAccessDeniedHtml());
       return;
     }
 
     // Create session cookie and redirect
+    // Note: Secure flag ensures cookie only sent over HTTPS
     const sessionValue = signSession(tokenData.userId);
     res.writeHead(302, {
       'Location': returnTo,
-      'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionValue}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+      'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
     });
     res.end();
     return;
@@ -605,7 +766,21 @@ async function handleRequest(req, res) {
   }
 
   // CORS headers for API endpoints
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Use origin whitelist instead of wildcard for better security
+  const ALLOWED_ORIGINS = [
+    'https://cmux.sh',
+    'https://www.cmux.sh',
+    'https://staging.cmux.sh',
+    'http://localhost:3000',
+    'http://localhost:5173',
+  ];
+  const requestOrigin = req.headers.origin;
+  const allowedOrigin = requestOrigin && ALLOWED_ORIGINS.includes(requestOrigin) ? requestOrigin : null;
+
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
@@ -633,10 +808,10 @@ async function handleRequest(req, res) {
     switch (reqPath) {
 
       // Generate one-time auth token for browser access (CLI calls this)
-      case '/_dba/generate-token':
+      case '/_cmux/generate-token':
         const tokenData = {
           userId: ownerId,
-          exp: Date.now() + 5 * 60 * 1000 // 5 minutes
+          exp: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
         };
         const tokenJson = JSON.stringify(tokenData);
         const tokenB64 = Buffer.from(tokenJson).toString('base64url');
@@ -765,6 +940,75 @@ async function handleRequest(req, res) {
         result = await runAgentBrowser(['eval', body.script]);
         break;
 
+      // =====================================================================
+      // PTY Endpoints
+      // =====================================================================
+
+      case '/_cmux/pty/create':
+        // Create a new PTY session
+        const ptySessionId = generatePtySessionId();
+        const ptySession = createPtySession(ptySessionId, {
+          shell: body.shell,
+          cwd: body.cwd,
+          cols: body.cols,
+          rows: body.rows,
+          env: body.env,
+        });
+        sendJson(res, {
+          success: true,
+          sessionId: ptySession.id,
+          createdAt: ptySession.createdAt,
+        });
+        return;
+
+      case '/_cmux/pty/list':
+        // List all PTY sessions
+        sendJson(res, {
+          success: true,
+          sessions: listPtySessions(),
+        });
+        return;
+
+      case '/_cmux/pty/destroy':
+        // Destroy a PTY session
+        if (!body.sessionId) {
+          sendJson(res, { error: 'sessionId required' }, 400);
+          return;
+        }
+        const destroyed = destroyPtySession(body.sessionId);
+        sendJson(res, { success: destroyed });
+        return;
+
+      case '/_cmux/pty/resize':
+        // Resize a PTY session
+        if (!body.sessionId || !body.cols || !body.rows) {
+          sendJson(res, { error: 'sessionId, cols, and rows required' }, 400);
+          return;
+        }
+        const resizeSession = getPtySession(body.sessionId);
+        if (!resizeSession) {
+          sendJson(res, { error: 'Session not found' }, 404);
+          return;
+        }
+        resizeSession.pty.resize(body.cols, body.rows);
+        sendJson(res, { success: true });
+        return;
+
+      case '/_cmux/pty/write':
+        // Write to a PTY session (for non-WebSocket clients)
+        if (!body.sessionId || body.data === undefined) {
+          sendJson(res, { error: 'sessionId and data required' }, 400);
+          return;
+        }
+        const writeSession = getPtySession(body.sessionId);
+        if (!writeSession) {
+          sendJson(res, { error: 'Session not found' }, 404);
+          return;
+        }
+        writeSession.pty.write(body.data);
+        sendJson(res, { success: true });
+        return;
+
       default:
         sendJson(res, { error: 'Not found' }, 404);
         return;
@@ -779,27 +1023,222 @@ async function handleRequest(req, res) {
 
 const server = http.createServer(handleRequest);
 
+// =============================================================================
+// WebSocket Server for PTY
+// =============================================================================
+
+const wss = new WebSocket.Server({ noServer: true });
+
+/**
+ * Authenticate WebSocket connection
+ * Supports both session cookie (browser) and JWT (API)
+ */
+async function authenticateWebSocket(req) {
+  // Try session cookie first (for browser connections)
+  const cookies = parseCookies(req);
+  const sessionCookie = cookies[SESSION_COOKIE_NAME];
+  if (sessionCookie) {
+    const session = verifySession(sessionCookie);
+    if (session && session.userId === ownerId) {
+      return { valid: true, userId: session.userId, method: 'session' };
+    }
+  }
+
+  // Try JWT from query parameter (for programmatic connections)
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const token = url.searchParams.get('token');
+  if (token) {
+    // Verify one-time login token
+    const tokenData = verifyLoginToken(token);
+    if (tokenData && tokenData.userId === ownerId) {
+      return { valid: true, userId: tokenData.userId, method: 'token' };
+    }
+  }
+
+  // Try Authorization header
+  const authResult = await verifyAuth(req);
+  if (authResult.valid) {
+    return { valid: true, userId: authResult.userId, method: 'jwt' };
+  }
+
+  return { valid: false, error: 'Unauthorized' };
+}
+
+/**
+ * Proxy WebSocket upgrade to nginx for browser paths (VNC, VS Code)
+ */
+function proxyWebSocketToNginx(req, socket, head) {
+  const proxySocket = net.connect(80, '127.0.0.1', () => {
+    // Forward the upgrade request to nginx
+    const headers = Object.entries(req.headers)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('\r\n');
+    const upgradeRequest = `${req.method} ${req.url} HTTP/1.1\r\n${headers}\r\n\r\n`;
+    proxySocket.write(upgradeRequest);
+    if (head && head.length > 0) {
+      proxySocket.write(head);
+    }
+    // Pipe data bidirectionally
+    socket.pipe(proxySocket);
+    proxySocket.pipe(socket);
+  });
+
+  proxySocket.on('error', (err) => {
+    console.error('WebSocket proxy error:', err.message);
+    socket.destroy();
+  });
+
+  socket.on('error', (err) => {
+    console.error('Client socket error:', err.message);
+    proxySocket.destroy();
+  });
+
+  socket.on('close', () => proxySocket.destroy());
+  proxySocket.on('close', () => socket.destroy());
+}
+
+/**
+ * Handle WebSocket upgrade for PTY connections and browser paths
+ */
+server.on('upgrade', async (req, socket, head) => {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const pathname = url.pathname;
+
+  // Handle browser path WebSocket upgrades (VNC, VS Code)
+  if (isBrowserPath(pathname)) {
+    // Check session cookie for authentication
+    const cookies = parseCookies(req);
+    const session = cookies[SESSION_COOKIE_NAME] ? verifySession(cookies[SESSION_COOKIE_NAME]) : null;
+
+    if (!session || session.userId !== ownerId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // Proxy WebSocket to nginx
+    proxyWebSocketToNginx(req, socket, head);
+    return;
+  }
+
+  // Handle PTY WebSocket connections
+  if (!pathname.startsWith('/_cmux/pty/ws/')) {
+    socket.destroy();
+    return;
+  }
+
+  // Authenticate the connection
+  const auth = await authenticateWebSocket(req);
+  if (!auth.valid) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  // Extract session ID from path: /_cmux/pty/ws/{sessionId}
+  const sessionId = pathname.replace('/_cmux/pty/ws/', '');
+
+  // Get or create the PTY session
+  let session = getPtySession(sessionId);
+
+  // If sessionId is 'new', create a new session
+  if (sessionId === 'new' || !session) {
+    const newSessionId = sessionId === 'new' ? generatePtySessionId() : sessionId;
+    const cols = parseInt(url.searchParams.get('cols')) || 80;
+    const rows = parseInt(url.searchParams.get('rows')) || 24;
+    const cwd = url.searchParams.get('cwd') || undefined;
+    const shell = url.searchParams.get('shell') || undefined;
+
+    session = createPtySession(newSessionId, { cols, rows, cwd, shell });
+  }
+
+  // Complete WebSocket upgrade
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    // Add client to session
+    session.clients.add(ws);
+    console.log(`WebSocket client connected to PTY ${session.id} (total: ${session.clients.size})`);
+
+    // Send session info
+    ws.send(JSON.stringify({
+      type: 'connected',
+      sessionId: session.id,
+    }));
+
+    // Handle incoming messages
+    ws.on('message', (message) => {
+      try {
+        const msg = JSON.parse(message);
+        switch (msg.type) {
+          case 'input':
+            // Write input to PTY
+            session.pty.write(msg.data);
+            break;
+          case 'resize':
+            // Resize PTY
+            if (msg.cols && msg.rows) {
+              session.pty.resize(msg.cols, msg.rows);
+            }
+            break;
+          case 'ping':
+            ws.send(JSON.stringify({ type: 'pong' }));
+            break;
+        }
+      } catch (e) {
+        // If not JSON, treat as raw input
+        session.pty.write(message.toString());
+      }
+    });
+
+    // Handle client disconnect
+    ws.on('close', () => {
+      session.clients.delete(ws);
+      console.log(`WebSocket client disconnected from PTY ${session.id} (remaining: ${session.clients.size})`);
+
+      // Optionally destroy session when last client disconnects
+      // Uncomment to enable auto-destroy:
+      // if (session.clients.size === 0) {
+      //   destroyPtySession(session.id);
+      // }
+    });
+
+    ws.on('error', (err) => {
+      console.error(`WebSocket error for PTY ${session.id}:`, err.message);
+      session.clients.delete(ws);
+    });
+  });
+});
+
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`DBA Worker daemon listening on port ${PORT}`);
+  console.log(`cmux devbox Worker daemon listening on port ${PORT}`);
+  console.log(`PTY WebSocket endpoint: ws://localhost:${PORT}/_cmux/pty/ws/{sessionId}`);
 });
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('Shutting down...');
+  // Close all PTY sessions
+  for (const [id, session] of ptySessions) {
+    destroyPtySession(id);
+  }
+  wss.close();
   server.close(() => process.exit(0));
 });
 
 process.on('SIGINT', () => {
   console.log('Shutting down...');
+  for (const [id, session] of ptySessions) {
+    destroyPtySession(id);
+  }
+  wss.close();
   server.close(() => process.exit(0));
 });
 WORKER_EOF
 
-chmod +x /usr/local/bin/dba-worker
-log_info "Installed dba-worker daemon"
+chmod +x /usr/local/bin/cmux-worker
+log_info "Installed cmux devbox worker daemon"
 
 # Create token directory
-mkdir -p /var/run/dba
+mkdir -p /var/run/cmux
 
 # -----------------------------------------------------------------------------
 # Step 4/13: Install Docker
@@ -870,18 +1309,110 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 6/13: Install code-server
+# Step 6/13: Install OpenVSCode Server (works directly in browser, no PWA prompt)
 # -----------------------------------------------------------------------------
-log_step "Step 6/13: Installing code-server"
+log_step "Step 6/13: Installing OpenVSCode Server"
 
-curl -fsSL https://code-server.dev/install.sh | sh
+# Get latest release version
+CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest | jq -r '.tag_name' | sed 's|^openvscode-server-v||')"
+log_info "Installing OpenVSCode Server version: $CODE_RELEASE"
 
-# Verify code-server installation
-if command -v code-server &> /dev/null; then
-    CODE_SERVER_VERSION=$(code-server --version | head -1)
-    log_info "code-server installed: $CODE_SERVER_VERSION"
+# Detect architecture
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64) ARCH="x64" ;;
+    aarch64) ARCH="arm64" ;;
+    *) log_error "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# Download and install
+mkdir -p /app/openvscode-server
+url="https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${CODE_RELEASE}/openvscode-server-v${CODE_RELEASE}-linux-${ARCH}.tar.gz"
+log_info "Downloading from: $url"
+curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "${url}"
+tar xf /tmp/openvscode-server.tar.gz -C /app/openvscode-server --strip-components=1
+rm -f /tmp/openvscode-server.tar.gz
+
+# Create user data directory
+# Note: cmux user may not exist yet, but we create the directory structure
+# and will fix ownership in Step 11
+mkdir -p /home/cmux/.openvscode-server/data/User
+mkdir -p /home/cmux/.openvscode-server/data/User/profiles/default-profile
+mkdir -p /home/cmux/.openvscode-server/data/Machine
+mkdir -p /home/cmux/.openvscode-server/extensions
+
+# Create configure-openvscode script
+cat > /usr/local/bin/configure-openvscode << 'CONFIGURE_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${HOME:-/home/cmux}"
+user_base="${home}/.openvscode-server"
+user_dir="${user_base}/data/User"
+default_profile_dir="${user_base}/data/User/profiles/default-profile"
+machine_dir="${user_base}/data/Machine"
+
+mkdir -p "${user_dir}" "${default_profile_dir}" "${machine_dir}"
+
+# Base settings for terminal and workspace
+BASE_SETTINGS=$(cat << 'SETTINGSJSON'
+{
+    "workbench.colorTheme": "Default Dark Modern",
+    "workbench.startupEditor": "none",
+    "workbench.welcomePage.walkthroughs.openOnInstall": false,
+    "workbench.tips.enabled": false,
+    "workbench.secondarySideBar.visible": false,
+    "workbench.activityBar.visible": true,
+    "workbench.sideBar.location": "left",
+    "editor.fontSize": 14,
+    "editor.tabSize": 2,
+    "editor.minimap.enabled": false,
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "terminal.integrated.fontSize": 14,
+    "terminal.integrated.shellIntegration.enabled": false,
+    "terminal.integrated.showTerminalConfigPrompt": false,
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.profiles.linux": {
+        "zsh": {
+            "path": "/usr/bin/zsh",
+            "args": ["-l"]
+        },
+        "bash": {
+            "path": "/bin/bash",
+            "args": ["-l"]
+        }
+    },
+    "security.workspace.trust.enabled": false,
+    "security.workspace.trust.startupPrompt": "never",
+    "security.workspace.trust.untrustedFiles": "open",
+    "security.workspace.trust.emptyWindow": false,
+    "git.openDiffOnClick": true,
+    "scm.defaultViewMode": "tree",
+    "chat.commandCenter.enabled": false,
+    "github.copilot.enable": {}
+}
+SETTINGSJSON
+)
+
+# Write settings to all required locations
+for settings_file in "${user_dir}/settings.json" "${default_profile_dir}/settings.json" "${machine_dir}/settings.json"; do
+    echo "$BASE_SETTINGS" > "$settings_file"
+done
+
+# Ensure workspace state directories exist
+mkdir -p "${user_base}/data/User/workspaceStorage"
+mkdir -p "${user_base}/data/User/globalStorage"
+CONFIGURE_EOF
+
+chmod +x /usr/local/bin/configure-openvscode
+log_info "Created configure-openvscode script"
+
+# Verify installation
+if [ -x /app/openvscode-server/bin/openvscode-server ]; then
+    log_info "OpenVSCode Server installed to /app/openvscode-server"
 else
-    log_error "code-server installation failed"
+    log_error "OpenVSCode Server installation failed"
     exit 1
 fi
 
@@ -899,27 +1430,53 @@ chmod +x /opt/noVNC/utils/novnc_proxy
 log_info "noVNC installed to /opt/noVNC"
 
 # -----------------------------------------------------------------------------
-# Step 8/13: Create dba user
+# Step 8/13: Create cmux user
 # -----------------------------------------------------------------------------
-log_step "Step 8/13: Creating dba user"
+log_step "Step 8/13: Creating cmux user"
 
 # Create user if doesn't exist
-if ! id "dba" &>/dev/null; then
-    useradd -m -s /bin/bash dba
-    log_info "Created user 'dba'"
+if ! id "cmux" &>/dev/null; then
+    useradd -m -s /usr/bin/zsh cmux
+    log_info "Created user 'cmux'"
 else
-    log_info "User 'dba' already exists"
+    log_info "User 'cmux' already exists"
+    # Update shell to zsh if not already set
+    chsh -s /usr/bin/zsh cmux 2>/dev/null || true
 fi
 
+# Create basic zsh config
+cat > /home/cmux/.zshrc << 'ZSHRC_EOF'
+# Basic zsh configuration
+export TERM=xterm-256color
+export EDITOR=nano
+export PATH="$HOME/.local/bin:$PATH"
+
+# History
+HISTSIZE=10000
+SAVEHIST=10000
+HISTFILE=~/.zsh_history
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+
+# Prompt
+PS1='%F{green}%n@%m%f:%F{blue}%~%f$ '
+
+# Aliases
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls -CF'
+ZSHRC_EOF
+chown cmux:cmux /home/cmux/.zshrc
+
 # Add to sudoers
-echo "dba ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dba
-chmod 440 /etc/sudoers.d/dba
+echo "cmux ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cmux
+chmod 440 /etc/sudoers.d/cmux
 
-# Add dba user to docker group
-usermod -aG docker dba
-log_info "User 'dba' added to docker group"
+# Add cmux user to docker group
+usermod -aG docker cmux
+log_info "User 'cmux' added to docker group"
 
-log_info "User 'dba' configured with sudo access"
+log_info "User 'cmux' configured with sudo access"
 
 # -----------------------------------------------------------------------------
 # Step 9/13: Configure VNC
@@ -927,10 +1484,10 @@ log_info "User 'dba' configured with sudo access"
 log_step "Step 9/13: Configuring VNC"
 
 # Create VNC directory
-mkdir -p /home/dba/.vnc
+mkdir -p /home/cmux/.vnc
 
 # Create VNC startup script for XFCE
-cat > /home/dba/.vnc/xstartup << 'EOF'
+cat > /home/cmux/.vnc/xstartup << 'EOF'
 #!/bin/bash
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
@@ -946,10 +1503,42 @@ fi
 exec startxfce4
 EOF
 
-chmod +x /home/dba/.vnc/xstartup
-chown -R dba:dba /home/dba/.vnc
+chmod +x /home/cmux/.vnc/xstartup
+chown -R cmux:cmux /home/cmux/.vnc
 
-log_info "VNC configured"
+# Create XFCE autostart for Chrome browser (visible in VNC desktop)
+# Flags prevent restore pages dialog and other session-related popups
+mkdir -p /home/cmux/.config/autostart
+cat > /home/cmux/.config/autostart/chrome-browser.desktop << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Google Chrome
+Exec=/usr/bin/google-chrome --no-first-run --no-default-browser-check --start-maximized --disable-session-crashed-bubble --disable-infobars --hide-crash-restore-bubble
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+EOF
+chown -R cmux:cmux /home/cmux/.config
+
+# Create Chrome preferences to disable session restore
+mkdir -p /home/cmux/.config/google-chrome/Default
+cat > /home/cmux/.config/google-chrome/Default/Preferences << 'CHROME_PREFS_EOF'
+{
+  "session": {
+    "restore_on_startup": 5
+  },
+  "profile": {
+    "exit_type": "Normal"
+  },
+  "browser": {
+    "has_seen_welcome_page": true
+  }
+}
+CHROME_PREFS_EOF
+chown -R cmux:cmux /home/cmux/.config/google-chrome
+
+log_info "VNC configured with Chrome autostart (session restore disabled)"
 
 # -----------------------------------------------------------------------------
 # Step 10/13: Create systemd services
@@ -959,15 +1548,15 @@ log_step "Step 10/13: Creating systemd services"
 # VNC Server service
 cat > /etc/systemd/system/vncserver.service << 'EOF'
 [Unit]
-Description=TigerVNC Server for DBA
+Description=TigerVNC Server for cmux devbox
 After=network.target
 
 [Service]
 Type=simple
-User=dba
-Group=dba
+User=cmux
+Group=cmux
 Environment=DISPLAY=:1
-Environment=HOME=/home/dba
+Environment=HOME=/home/cmux
 
 # Kill any existing VNC server on display :1
 ExecStartPre=-/usr/bin/vncserver -kill :1
@@ -1005,10 +1594,10 @@ Requires=vncserver.service
 
 [Service]
 Type=simple
-User=dba
-Group=dba
+User=cmux
+Group=cmux
 Environment=DISPLAY=:1
-Environment=HOME=/home/dba
+Environment=HOME=/home/cmux
 Environment=XDG_SESSION_TYPE=x11
 
 # Wait for VNC to be ready
@@ -1035,13 +1624,13 @@ Requires=xfce-session.service
 
 [Service]
 Type=simple
-User=dba
-Group=dba
+User=cmux
+Group=cmux
 Environment=DISPLAY=:1
-Environment=HOME=/home/dba
+Environment=HOME=/home/cmux
 
 # Wait for XFCE to be ready
-ExecStartPre=/bin/bash -c 'for i in {1..60}; do pgrep -u dba xfwm4 > /dev/null && break; sleep 0.5; done'
+ExecStartPre=/bin/bash -c 'for i in {1..60}; do pgrep -u cmux xfwm4 > /dev/null && break; sleep 0.5; done'
 ExecStartPre=/bin/sleep 2
 
 ExecStart=/usr/bin/google-chrome \
@@ -1069,7 +1658,7 @@ ExecStart=/usr/bin/google-chrome \
     --safebrowsing-disable-auto-update \
     --password-store=basic \
     --use-mock-keychain \
-    --user-data-dir=/home/dba/.chrome-dba \
+    --user-data-dir=/home/cmux/.chrome-cmux \
     about:blank
 
 Restart=on-failure
@@ -1108,25 +1697,31 @@ EOF
 
 log_info "Created novnc.service"
 
-# code-server service
-cat > /etc/systemd/system/code-server.service << 'EOF'
+# OpenVSCode Server service
+cat > /etc/systemd/system/openvscode.service << 'EOF'
 [Unit]
-Description=code-server IDE
+Description=OpenVSCode Server IDE
 After=network.target
 
 [Service]
 Type=simple
-User=dba
-Group=dba
-Environment=HOME=/home/dba
-Environment=PASSWORD=
-WorkingDirectory=/home/dba
+User=cmux
+Group=cmux
+Environment=HOME=/home/cmux
+Environment=SHELL=/usr/bin/zsh
+WorkingDirectory=/home/cmux
 
-ExecStart=/usr/bin/code-server \
-    --bind-addr 0.0.0.0:10080 \
-    --auth none \
-    --disable-telemetry \
-    /home/dba/workspace
+ExecStartPre=/usr/local/bin/configure-openvscode
+ExecStart=/app/openvscode-server/bin/openvscode-server \
+    --host 0.0.0.0 \
+    --port 10080 \
+    --server-base-path=/code/ \
+    --without-connection-token \
+    --disable-workspace-trust \
+    --server-data-dir /home/cmux/.openvscode-server/data \
+    --user-data-dir /home/cmux/.openvscode-server/data \
+    --extensions-dir /home/cmux/.openvscode-server/extensions \
+    /home/cmux/workspace
 
 Restart=on-failure
 RestartSec=3
@@ -1135,12 +1730,12 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-log_info "Created code-server.service"
+log_info "Created openvscode.service"
 
-# dba-worker service (browser automation API)
-cat > /etc/systemd/system/dba-worker.service << 'EOF'
+# cmux-worker service (browser automation API)
+cat > /etc/systemd/system/cmux-worker.service << 'EOF'
 [Unit]
-Description=DBA Worker Daemon (Browser Automation API)
+Description=cmux devbox Worker Daemon (Browser Automation API)
 After=chrome-cdp.service
 Requires=chrome-cdp.service
 
@@ -1148,9 +1743,9 @@ Requires=chrome-cdp.service
 Type=simple
 Environment=PORT=39377
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/home/dba
+WorkingDirectory=/home/cmux
 
-ExecStart=/usr/bin/node /usr/local/bin/dba-worker
+ExecStart=/usr/bin/node /usr/local/bin/cmux-worker
 
 Restart=on-failure
 RestartSec=3
@@ -1159,7 +1754,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-log_info "Created dba-worker.service"
+log_info "Created cmux-worker.service"
 
 # Reload systemd
 systemctl daemon-reload
@@ -1169,8 +1764,8 @@ systemctl daemon-reload
 # -----------------------------------------------------------------------------
 log_step "Step 11/13: Configuring nginx"
 
-cat > /etc/nginx/sites-available/dba << 'EOF'
-# DBA nginx configuration
+cat > /etc/nginx/sites-available/cmux << 'EOF'
+# cmux devbox nginx configuration
 # Routes all services through port 80
 
 upstream code_server {
@@ -1198,9 +1793,9 @@ server {
     proxy_send_timeout 7d;
     proxy_read_timeout 7d;
 
-    # code-server (VS Code IDE)
+    # OpenVSCode Server (VS Code IDE)
     location /code/ {
-        proxy_pass http://code_server/;
+        proxy_pass http://code_server;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
@@ -1271,7 +1866,7 @@ server {
     # Health check endpoint
     location /health {
         access_log off;
-        return 200 'DBA VM is healthy\n';
+        return 200 'cmux devbox VM is healthy\n';
         add_header Content-Type text/plain;
     }
 
@@ -1283,7 +1878,7 @@ server {
 EOF
 
 # Enable the site
-ln -sf /etc/nginx/sites-available/dba /etc/nginx/sites-enabled/dba
+ln -sf /etc/nginx/sites-available/cmux /etc/nginx/sites-enabled/cmux
 
 # Remove default site
 rm -f /etc/nginx/sites-enabled/default
@@ -1299,14 +1894,19 @@ log_info "nginx configured"
 log_step "Step 12/13: Final setup"
 
 # Create workspace directory
-mkdir -p /home/dba/workspace
-mkdir -p /home/dba/.chrome-dba
-chown -R dba:dba /home/dba/workspace
-chown -R dba:dba /home/dba/.chrome-dba
+mkdir -p /home/cmux/workspace
+mkdir -p /home/cmux/.chrome-cmux
+mkdir -p /home/cmux/.openvscode-server/extensions
+# Fix ownership of entire home directory (some files may have been created as root)
+chown -R cmux:cmux /home/cmux
+
+# Run configure-openvscode to set up initial settings (now that ownership is correct)
+sudo -u cmux HOME=/home/cmux /usr/local/bin/configure-openvscode
+log_info "Configured OpenVSCode settings for cmux user"
 
 # Create a welcome file in workspace
-cat > /home/dba/workspace/README.md << 'EOF'
-# DBA Workspace
+cat > /home/cmux/workspace/README.md << 'EOF'
+# cmux devbox Workspace
 
 This is your development workspace in the Morph Cloud VM.
 
@@ -1341,23 +1941,23 @@ docker compose up -d
 | Service | Port |
 |---------|------|
 | Your App | 10000 |
-| code-server | 10080 |
+| OpenVSCode | 10080 |
 | Chrome CDP | 9222 |
 | VNC | 5901 |
 | noVNC | 6080 |
 | nginx | 80 |
 
 EOF
-chown dba:dba /home/dba/workspace/README.md
+chown cmux:cmux /home/cmux/workspace/README.md
 
 # Enable services
 systemctl enable vncserver
 systemctl enable xfce-session
 systemctl enable chrome-cdp
 systemctl enable novnc
-systemctl enable code-server
+systemctl enable openvscode
 systemctl enable nginx
-systemctl enable dba-worker
+systemctl enable cmux-worker
 
 log_info "Services enabled"
 
@@ -1366,34 +1966,71 @@ log_info "Services enabled"
 # -----------------------------------------------------------------------------
 log_step "Step 13/13: Starting and verifying services"
 
-# Start services in order
+# Start services in order with proper wait times
+log_info "Starting nginx..."
 systemctl start nginx
 log_info "Started nginx"
 
+log_info "Starting VNC server..."
 systemctl start vncserver
-sleep 2
+# Wait for X11 socket to appear
+for i in {1..30}; do
+    [ -e /tmp/.X11-unix/X1 ] && break
+    sleep 1
+done
 log_info "Started vncserver"
 
+log_info "Starting XFCE session..."
 systemctl start xfce-session
+# Wait for XFCE window manager to start
+for i in {1..60}; do
+    pgrep -u cmux xfwm4 > /dev/null && break
+    sleep 1
+done
 sleep 3
 log_info "Started xfce-session"
 
+log_info "Starting noVNC..."
 systemctl start novnc
 log_info "Started novnc"
 
-systemctl start code-server
-log_info "Started code-server"
+log_info "Starting OpenVSCode Server..."
+systemctl start openvscode
+log_info "Started openvscode"
 
+log_info "Starting Chrome CDP..."
 systemctl start chrome-cdp
-sleep 5
+# Wait for Chrome to be ready
+for i in {1..30}; do
+    curl -s http://localhost:9222/json/version > /dev/null 2>&1 && break
+    sleep 1
+done
 log_info "Started chrome-cdp"
 
-systemctl start dba-worker
-log_info "Started dba-worker"
+log_info "Starting cmux-worker..."
+systemctl start cmux-worker
+log_info "Started cmux-worker"
 
-# Wait for all services to fully initialize
-log_info "Waiting for services to initialize..."
-sleep 10
+# Final stabilization wait
+log_info "Waiting for services to stabilize..."
+sleep 5
+
+# Clean Chrome session state to prevent "restore pages" dialog on next boot
+log_info "Cleaning Chrome session state..."
+# Stop visible Chrome processes (not headless CDP)
+pkill -f "google-chrome.*--start-maximized" || true
+sleep 2
+# Remove session files that cause restore prompts
+rm -f /home/cmux/.config/google-chrome/Default/Current\ Session 2>/dev/null || true
+rm -f /home/cmux/.config/google-chrome/Default/Current\ Tabs 2>/dev/null || true
+rm -f /home/cmux/.config/google-chrome/Default/Last\ Session 2>/dev/null || true
+rm -f /home/cmux/.config/google-chrome/Default/Last\ Tabs 2>/dev/null || true
+rm -rf /home/cmux/.config/google-chrome/Default/Sessions 2>/dev/null || true
+# Ensure exit_type is Normal
+if [ -f /home/cmux/.config/google-chrome/Default/Preferences ]; then
+    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g' /home/cmux/.config/google-chrome/Default/Preferences 2>/dev/null || true
+fi
+log_info "Chrome session state cleaned"
 
 # -----------------------------------------------------------------------------
 # Verification
@@ -1432,10 +2069,10 @@ check_service "vncserver"
 check_service "xfce-session"
 check_service "chrome-cdp"
 check_service "novnc"
-check_service "code-server"
+check_service "openvscode"
 check_service "nginx"
 check_service "docker"
-check_service "dba-worker"
+check_service "cmux-worker"
 
 echo ""
 
@@ -1444,8 +2081,8 @@ check_port 80 "nginx"
 check_port 5901 "VNC"
 check_port 6080 "noVNC"
 check_port 9222 "Chrome CDP"
-check_port 10080 "code-server"
-check_port 39377 "dba-worker"
+check_port 10080 "openvscode"
+check_port 39377 "cmux-worker"
 
 echo ""
 
@@ -1474,9 +2111,9 @@ fi
 # -----------------------------------------------------------------------------
 # Create marker file
 # -----------------------------------------------------------------------------
-touch /dba_base_snapshot_valid
-echo "DBA_SNAPSHOT_VERSION=1.0" > /dba_snapshot_info
-echo "DBA_SNAPSHOT_DATE=$(date -Iseconds)" >> /dba_snapshot_info
+touch /cmux_base_snapshot_valid
+echo "CMUX_SNAPSHOT_VERSION=1.0" > /cmux_snapshot_info
+echo "CMUX_SNAPSHOT_DATE=$(date -Iseconds)" >> /cmux_snapshot_info
 
 echo ""
 echo "=============================================="
@@ -1486,9 +2123,9 @@ if [ $FAILED -eq 0 ]; then
     echo ""
     echo "All services are running. You can now:"
     echo "  1. Save this VM as a snapshot"
-    echo "  2. Use this snapshot as the base for DBA workspaces"
+    echo "  2. Use this snapshot as the base for cmux devbox workspaces"
     echo ""
-    echo "Marker file created: /dba_base_snapshot_valid"
+    echo "Marker file created: /cmux_base_snapshot_valid"
 else
     echo -e "${RED}       SETUP COMPLETED WITH ERRORS          ${NC}"
     echo "=============================================="
