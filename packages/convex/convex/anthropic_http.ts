@@ -323,6 +323,76 @@ function hasUserApiKey(key: string | null): boolean {
   return key !== null && key !== hardCodedApiKey && isAnthropicApiKey(key);
 }
 
+/**
+ * Normalize cache_control fields in content blocks.
+ *
+ * Some versions of Claude Code CLI send cache_control in the wrong format:
+ *   { "cache_control": { "ephemeral": { "scope": "..." } } }
+ *
+ * The API expects:
+ *   { "cache_control": { "type": "ephemeral" } }
+ *
+ * This function fixes the format to prevent API errors like:
+ *   "system.2.cache_control.ephemeral.scope: Extra inputs are not permitted"
+ */
+function normalizeCacheControl(block: unknown): unknown {
+  if (!isRecord(block)) {
+    return block;
+  }
+
+  const cacheControl = block.cache_control;
+  if (!isRecord(cacheControl)) {
+    return block;
+  }
+
+  // Check if cache_control has the wrong format (ephemeral object instead of type)
+  if ("ephemeral" in cacheControl && !("type" in cacheControl)) {
+    // Fix the format: { ephemeral: {...} } -> { type: "ephemeral" }
+    const { cache_control: _, ...rest } = block;
+    return {
+      ...rest,
+      cache_control: { type: "ephemeral" },
+    };
+  }
+
+  return block;
+}
+
+/**
+ * Normalize the request body to fix any malformed cache_control fields.
+ * Applies to both system blocks (array) and message content blocks.
+ */
+function normalizeRequestBody(body: unknown): unknown {
+  if (!isRecord(body)) {
+    return body;
+  }
+
+  const result = { ...body };
+
+  // Normalize system blocks
+  if (Array.isArray(body.system)) {
+    result.system = body.system.map(normalizeCacheControl);
+  }
+
+  // Normalize message content blocks
+  if (Array.isArray(body.messages)) {
+    result.messages = body.messages.map((message: unknown) => {
+      if (!isRecord(message)) {
+        return message;
+      }
+      if (Array.isArray(message.content)) {
+        return {
+          ...message,
+          content: message.content.map(normalizeCacheControl),
+        };
+      }
+      return message;
+    });
+  }
+
+  return result;
+}
+
 const TEMPORARY_DISABLE_AUTH = true;
 
 /**
@@ -378,9 +448,11 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
 
   try {
     const useUserApiKey = hasUserApiKey(xApiKey);
-    const body = await req.json();
-    const requestedModel = body.model ?? "unknown";
-    const isStreaming = body.stream ?? false;
+    const rawBody = await req.json();
+    // Normalize cache_control fields to fix malformed requests from older CLI versions
+    const body = normalizeRequestBody(rawBody) as Record<string, unknown>;
+    const requestedModel = (body.model as string) ?? "unknown";
+    const isStreaming = (body.stream as boolean) ?? false;
     const payloadSummary = summarizeAnthropicPayload(body);
 
     if (useUserApiKey) {
