@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     unzip \
     openssl \
+    rsync \
+    openssh-server \
     # VNC and desktop environment
     xfce4 \
     xfce4-goodies \
@@ -32,6 +34,13 @@ RUN apt-get update && apt-get install -y \
     fonts-dejavu-core \
     fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH server on port 10000 (since 22 may not be exposed by E2B)
+RUN mkdir -p /var/run/sshd \
+    && sed -i 's/#Port 22/Port 10000/' /etc/ssh/sshd_config \
+    && echo "PermitRootLogin no" >> /etc/ssh/sshd_config \
+    && echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config \
+    && echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
 
 # Install Node.js 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -115,20 +124,21 @@ RUN echo "" | vncpasswd -f > /home/user/.vnc/passwd \
     && chown user:user /home/user/.vnc/passwd
 
 # Create VNC xstartup script
-COPY scripts/xstartup /home/user/.vnc/xstartup
+COPY worker/xstartup /home/user/.vnc/xstartup
 RUN chmod +x /home/user/.vnc/xstartup \
     && chown user:user /home/user/.vnc/xstartup
 
 # Create the start services script
-COPY scripts/start-services.sh /usr/local/bin/start-services.sh
+COPY worker/start-services.sh /usr/local/bin/start-services.sh
 RUN chmod +x /usr/local/bin/start-services.sh
 
 # Create the worker daemon script and install dependencies
-COPY scripts/worker-daemon.js /usr/local/bin/worker-daemon.js
-RUN cd /usr/local/bin && npm install ws
+COPY worker/worker-daemon.js /usr/local/bin/worker-daemon.js
+COPY worker/browser-agent-runner.js /usr/local/bin/browser-agent-runner.js
+RUN cd /usr/local/bin && npm install ws puppeteer-core
 
 # Create the VNC auth proxy (token-based auth like VSCode)
-COPY scripts/vnc-auth-proxy.js /usr/local/bin/vnc-auth-proxy.js
+COPY worker/vnc-auth-proxy.js /usr/local/bin/vnc-auth-proxy.js
 
 # Make sure user can run services - add to sudoers
 RUN echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

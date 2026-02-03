@@ -11,7 +11,7 @@
 # const sandbox = await Sandbox.create('cmux-devbox')
 
 template_id = "pou9b3m5z92g2hafjxrl"
-dockerfile = "e2b.Dockerfile"
+dockerfile = "template/e2b.Dockerfile"
 template_name = "cmux-devbox"
 start_cmd = "/usr/local/bin/start-services.sh"
 ready_cmd = "curl -sf http://localhost:39377/health || exit 1"

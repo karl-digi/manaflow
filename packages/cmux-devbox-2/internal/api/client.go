@@ -260,3 +260,38 @@ func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
 	}
 	return resp.Token, nil
 }
+
+// DoWorkerRequest makes a direct request to the worker daemon
+func DoWorkerRequest(workerURL, path, token string, body []byte) ([]byte, error) {
+	return DoWorkerRequestWithTimeout(workerURL, path, token, body, 60)
+}
+
+// DoWorkerRequestWithTimeout makes a direct request to the worker daemon with custom timeout
+func DoWorkerRequestWithTimeout(workerURL, path, token string, body []byte, timeoutSecs int) ([]byte, error) {
+	client := &http.Client{Timeout: time.Duration(timeoutSecs) * time.Second}
+
+	req, err := http.NewRequest("POST", workerURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}

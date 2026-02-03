@@ -1,9 +1,0 @@
-# Build output
-bin/
-
-# NPM platform binaries (built by make build-npm)
-npm/*/bin/cmux2
-npm/*/bin/cmux2.exe
-
-# But keep the wrapper script
-!npm/cmux2/bin/cmux2
