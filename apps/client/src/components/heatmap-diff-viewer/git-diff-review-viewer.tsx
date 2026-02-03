@@ -120,7 +120,7 @@ type FileTreeNode = {
 };
 
 function getStatusIcon(status: ReplaceDiffEntry["status"]) {
-  const iconClass = "w-3.5 h-3.5 flex-shrink-0";
+  const iconClass = "w-3.5 h-3.5 shrink-0";
   switch (status) {
     case "added":
       return <FilePlus className={cn(iconClass, "text-green-600 dark:text-green-400")} />;
@@ -683,23 +683,23 @@ function FileTreeNavigator({
               >
                 {isExpanded ? (
                   <ChevronDown
-                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    className="h-4 w-4 text-neutral-500 shrink-0"
                     style={{ minWidth: "16px", minHeight: "16px" }}
                   />
                 ) : (
                   <ChevronRight
-                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    className="h-4 w-4 text-neutral-500 shrink-0"
                     style={{ minWidth: "16px", minHeight: "16px" }}
                   />
                 )}
                 {isExpanded ? (
                   <FolderOpen
-                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    className="h-4 w-4 text-neutral-500 shrink-0 pr-0.5"
                     style={{ minWidth: "14px", minHeight: "14px" }}
                   />
                 ) : (
                   <Folder
-                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    className="h-4 w-4 text-neutral-500 shrink-0 pr-0.5"
                     style={{ minWidth: "14px", minHeight: "14px" }}
                   />
                 )}
@@ -736,13 +736,13 @@ function FileTreeNavigator({
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
-            {file ? getStatusIcon(file.status) : <FileText className="w-3.5 h-3.5 flex-shrink-0 text-neutral-500" />}
+            {file ? getStatusIcon(file.status) : <FileText className="w-3.5 h-3.5 shrink-0 text-neutral-500" />}
             <span className="truncate">{node.name}</span>
             {node.isLoading ? (
               <Tooltip delayDuration={300}>
                 <TooltipTrigger asChild>
                   <span className="inline-flex items-center ml-auto">
-                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin shrink-0" />
                   </span>
                 </TooltipTrigger>
                 <TooltipContent
@@ -1115,9 +1115,9 @@ export function GitDiffHeatmapReviewViewer({
         diffHeatmapArtifacts,
         diffHeatmap: diffHeatmapArtifacts
           ? renderDiffHeatmapFromArtifacts(
-              diffHeatmapArtifacts,
-              deferredHeatmapThreshold
-            )
+            diffHeatmapArtifacts,
+            deferredHeatmapThreshold
+          )
           : null,
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
       };
@@ -1331,7 +1331,7 @@ export function GitDiffHeatmapReviewViewer({
   const firstPath = parsedDiffs[0]?.entry.filePath ?? "";
   const initialPath =
     hydratedInitialPath &&
-    sortedFiles.some((file) => file.filePath === hydratedInitialPath)
+      sortedFiles.some((file) => file.filePath === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -1927,7 +1927,7 @@ export function GitDiffHeatmapReviewViewer({
   return (
     <div ref={rootRef} className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
       {/* Header bar */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
+      <div className="shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
         <button
           type="button"
           onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -1994,7 +1994,7 @@ export function GitDiffHeatmapReviewViewer({
             ) : (
               <>
                 <Flame className="w-3 h-3" />
-                <span>Diff Heatmap</span>
+                <span>Heatmap View</span>
               </>
             )}
           </button>
@@ -2006,7 +2006,7 @@ export function GitDiffHeatmapReviewViewer({
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Sidebar with resize handle */}
         {!isSidebarCollapsed && (
-          <div className="relative flex-shrink-0 h-full">
+          <div className="relative shrink-0 h-full">
             <aside
               id={sidebarPanelId}
               className="flex flex-col border-r border-neutral-200/80 dark:border-neutral-800/70 h-full overflow-hidden"
@@ -2019,7 +2019,7 @@ export function GitDiffHeatmapReviewViewer({
               }
             >
               {/* Search input */}
-              <div className="flex-shrink-0 p-2">
+              <div className="shrink-0 p-2">
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400 dark:text-neutral-500 pointer-events-none" />
                   <input
@@ -2093,7 +2093,7 @@ export function GitDiffHeatmapReviewViewer({
               </span>
               <div
                 className={cn(
-                  "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[3px] rounded-full transition-opacity",
+                  "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-0.75 rounded-full transition-opacity",
                   isResizingSidebar
                     ? "bg-sky-500 dark:bg-sky-400 opacity-100"
                     : "opacity-0 group-hover/resize:opacity-100 group-hover/resize:bg-sky-500 dark:group-hover/resize:bg-sky-400"
@@ -2113,9 +2113,9 @@ export function GitDiffHeatmapReviewViewer({
             const focusedLine = isFocusedFile
               ? focusedError
                 ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
+                  side: focusedError.side,
+                  lineNumber: focusedError.lineNumber,
+                }
                 : null
               : null;
             const focusedChangeKey = isFocusedFile
@@ -2123,12 +2123,12 @@ export function GitDiffHeatmapReviewViewer({
               : null;
             const autoTooltipLine =
               isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === fileEntry.entry.entry.filePath
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === fileEntry.entry.entry.filePath
                 ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+                  side: autoTooltipTarget.side,
+                  lineNumber: autoTooltipTarget.lineNumber,
+                }
                 : null;
             const streamState = streamStateMap.get(
               fileEntry.entry.entry.filePath
