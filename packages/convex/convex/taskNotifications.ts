@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { authMutation, authQuery } from "./users/utils";
 
 // Get all notifications for the current user (paginated, newest first)
@@ -353,6 +354,14 @@ export const createInternal = internalMutation({
         });
       }
     }
+
+    await ctx.scheduler.runAfter(0, internal.pushNotificationsActions.sendTaskRunNotification, {
+      taskId: args.taskId,
+      taskRunId: args.taskRunId,
+      teamId: args.teamId,
+      userId: args.userId,
+      type: args.type,
+    });
   },
 });
 
