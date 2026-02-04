@@ -549,140 +549,154 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               const headRepoFullName = prPayload.pull_request?.head?.repo?.full_name ?? undefined;
               const headRepoCloneUrl = prPayload.pull_request?.head?.repo?.clone_url ?? undefined;
 
-              console.log("[preview-jobs] Preview config found for PR", {
-                repoFullName,
-                prNumber,
-                prUrl,
-                headSha: headSha?.slice(0, 7),
-                headRef,
-                headRepoFullName,
-                isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
-                previewConfigId: previewConfig._id,
-              });
+              const previewRunsEnabled =
+                env.CMUX_ENABLE_PREVIEW_RUNS === "true" ||
+                env.CMUX_ENABLE_PREVIEW_RUNS === "1";
 
-              if (prNumber && prUrl && headSha) {
-                try {
-                  // Use previewConfig.teamId instead of connection's teamId
-                  // The previewConfig was set up with a specific team, so we should use that
-                  const runId = await _ctx.runMutation(
-                    internal.previewRuns.enqueueFromWebhook,
-                    {
-                      previewConfigId: previewConfig._id,
-                      teamId: previewConfig.teamId,
+              if (!previewRunsEnabled) {
+                console.log("[preview-jobs] Preview runs disabled (CMUX_ENABLE_PREVIEW_RUNS not set to true/1)", {
+                  repoFullName,
+                  prNumber,
+                  prUrl,
+                  headSha: headSha?.slice(0, 7),
+                  previewConfigId: previewConfig._id,
+                });
+              } else {
+                console.log("[preview-jobs] Preview config found for PR", {
+                  repoFullName,
+                  prNumber,
+                  prUrl,
+                  headSha: headSha?.slice(0, 7),
+                  headRef,
+                  headRepoFullName,
+                  isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
+                  previewConfigId: previewConfig._id,
+                });
+
+                if (prNumber && prUrl && headSha) {
+                  try {
+                    // Use previewConfig.teamId instead of connection's teamId
+                    // The previewConfig was set up with a specific team, so we should use that
+                    const runId = await _ctx.runMutation(
+                      internal.previewRuns.enqueueFromWebhook,
+                      {
+                        previewConfigId: previewConfig._id,
+                        teamId: previewConfig.teamId,
+                        repoFullName,
+                        repoInstallationId: installation,
+                        prNumber,
+                        prUrl,
+                        prTitle,
+                        prDescription,
+                        headSha,
+                        baseSha,
+                        headRef,
+                        headRepoFullName,
+                        headRepoCloneUrl,
+                      },
+                    );
+
+                    const existingRun = await _ctx.runQuery(
+                      internal.previewRuns.getById,
+                      { id: runId },
+                    );
+
+                    console.log("[preview-jobs] Preview run enqueued", {
+                      runId,
                       repoFullName,
-                      repoInstallationId: installation,
                       prNumber,
                       prUrl,
-                      prTitle,
-                      prDescription,
-                      headSha,
-                      baseSha,
-                      headRef,
-                      headRepoFullName,
-                      headRepoCloneUrl,
-                    },
-                  );
-
-                  const existingRun = await _ctx.runQuery(
-                    internal.previewRuns.getById,
-                    { id: runId },
-                  );
-
-                  console.log("[preview-jobs] Preview run enqueued", {
-                    runId,
-                    repoFullName,
-                    prNumber,
-                    prUrl,
-                  });
-
-                  // Track webhook event (non-blocking, drained at end of handler)
-                  capturePosthogEvent({
-                    distinctId: previewConfig.teamId,
-                    event: "preview_webhook_received",
-                    properties: {
-                      repo_full_name: repoFullName,
-                      pr_number: prNumber,
-                      action,
-                      preview_run_id: runId,
-                      preview_config_id: previewConfig._id,
-                    },
-                  });
-
-                  if (existingRun?.taskRunId) {
-                    console.log("[preview-jobs] Preview run already has taskRun; skipping duplicate creation", {
-                      runId,
-                      taskRunId: existingRun.taskRunId,
-                      status: existingRun.status,
                     });
-                    if (existingRun.status === "pending") {
+
+                    // Track webhook event (non-blocking, drained at end of handler)
+                    capturePosthogEvent({
+                      distinctId: previewConfig.teamId,
+                      event: "preview_webhook_received",
+                      properties: {
+                        repo_full_name: repoFullName,
+                        pr_number: prNumber,
+                        action,
+                        preview_run_id: runId,
+                        preview_config_id: previewConfig._id,
+                      },
+                    });
+
+                    if (existingRun?.taskRunId) {
+                      console.log("[preview-jobs] Preview run already has taskRun; skipping duplicate creation", {
+                        runId,
+                        taskRunId: existingRun.taskRunId,
+                        status: existingRun.status,
+                      });
+                      if (existingRun.status === "pending") {
+                        await _ctx.scheduler.runAfter(
+                          0,
+                          internal.preview_jobs.requestDispatch,
+                          { previewRunId: runId },
+                        );
+                      }
+                    } else {
+                      // Create task and taskRun for screenshot collection
+                      // The existing worker infrastructure will pick this up and process it
+                      // Use "system" as fallback for legacy configs without createdByUserId
+                      const previewUserId = previewConfig.createdByUserId ?? "system";
+                      const taskId = await _ctx.runMutation(
+                        internal.tasks.createForPreview,
+                        {
+                          teamId: previewConfig.teamId,
+                          userId: previewUserId,
+                          previewRunId: runId,
+                          repoFullName,
+                          prNumber,
+                          prUrl,
+                          headSha,
+                          baseBranch: previewConfig.repoDefaultBranch,
+                        },
+                      );
+
+                      const { taskRunId } = await _ctx.runMutation(
+                        internal.taskRuns.createForPreview,
+                        {
+                          taskId,
+                          teamId: previewConfig.teamId,
+                          userId: previewUserId,
+                          prUrl,
+                          environmentId: previewConfig.environmentId,
+                          newBranch: headRef,
+                        },
+                      );
+
+                      // Link the taskRun to the preview run
+                      await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
+                        previewRunId: runId,
+                        taskRunId,
+                      });
+
+                      console.log("[preview-jobs] Task and taskRun created", {
+                        runId,
+                        taskId,
+                        taskRunId,
+                        repoFullName,
+                        prNumber,
+                      });
+
+                      // Trigger the preview job dispatch
                       await _ctx.scheduler.runAfter(
                         0,
                         internal.preview_jobs.requestDispatch,
                         { previewRunId: runId },
                       );
+
+                      console.log("[preview-jobs] Preview job dispatch scheduled", {
+                        runId,
+                      });
                     }
-                  } else {
-                    // Create task and taskRun for screenshot collection
-                    // The existing worker infrastructure will pick this up and process it
-                    // Use "system" as fallback for legacy configs without createdByUserId
-                    const previewUserId = previewConfig.createdByUserId ?? "system";
-                    const taskId = await _ctx.runMutation(
-                      internal.tasks.createForPreview,
-                      {
-                        teamId: previewConfig.teamId,
-                        userId: previewUserId,
-                        previewRunId: runId,
-                        repoFullName,
-                        prNumber,
-                        prUrl,
-                        headSha,
-                        baseBranch: previewConfig.repoDefaultBranch,
-                      },
-                    );
-
-                    const { taskRunId } = await _ctx.runMutation(
-                      internal.taskRuns.createForPreview,
-                      {
-                        taskId,
-                        teamId: previewConfig.teamId,
-                        userId: previewUserId,
-                        prUrl,
-                        environmentId: previewConfig.environmentId,
-                        newBranch: headRef,
-                      },
-                    );
-
-                    // Link the taskRun to the preview run
-                    await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
-                      previewRunId: runId,
-                      taskRunId,
-                    });
-
-                    console.log("[preview-jobs] Task and taskRun created", {
-                      runId,
-                      taskId,
-                      taskRunId,
+                  } catch (error) {
+                    console.error("[preview-jobs] Failed to enqueue preview run", {
                       repoFullName,
                       prNumber,
-                    });
-
-                    // Trigger the preview job dispatch
-                    await _ctx.scheduler.runAfter(
-                      0,
-                      internal.preview_jobs.requestDispatch,
-                      { previewRunId: runId },
-                    );
-
-                    console.log("[preview-jobs] Preview job dispatch scheduled", {
-                      runId,
+                      error,
                     });
                   }
-                } catch (error) {
-                  console.error("[preview-jobs] Failed to enqueue preview run", {
-                    repoFullName,
-                    prNumber,
-                    error,
-                  });
                 }
               }
             } else {

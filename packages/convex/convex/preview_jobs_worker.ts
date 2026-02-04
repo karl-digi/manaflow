@@ -1981,238 +1981,27 @@ export async function runPreviewJob(
         throw new Error(`Task run ${taskRunId} not queryable after verification attempts`);
       }
 
-      // Trigger screenshot collection via Morph exec (bypasses worker)
-      // Always use production releases (staging=false) to avoid missing release issues
-      // Both staging and production Convex deployments will fetch from the same release pool
-      const isStaging = false;
+      const screenshotWorkflowEnabled =
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
 
-      // Fetch the screenshot collector release URL
-      const collectorRelease = await fetchScreenshotCollectorRelease({
-        convexUrl,
-        isStaging,
-        previewRunId,
-      });
-
-      // Get changed files via Morph exec
-      // Pass baseSha from the PR webhook for more reliable diffing (especially for repos
-      // where origin/main might not exist, e.g., forks or repos with different default branches)
-      const changedFiles = await getChangedFiles({
-        morphClient,
-        instanceId: instance.id,
-        repoDir,
-        baseBranch: defaultBranch,
-        baseSha: run.baseSha,
-        previewRunId,
-      });
-
-      if (changedFiles.length === 0) {
-        console.log("[preview-jobs] No changed files detected, skipping screenshot collection", {
-          previewRunId,
-        });
-      } else {
-        // Build screenshot collector options
-        const setupScript = [
-          environment.maintenanceScript?.trim(),
-          environment.devScript?.trim(),
-        ]
-          .filter((value): value is string => Boolean(value))
-          .join("\n\n");
-        const screenshotOptions: ScreenshotCollectorOptions = {
-          workspaceDir: repoDir,
-          changedFiles,
-          prTitle: run.prTitle || `PR #${run.prNumber}`,
-          prDescription: run.prDescription || "",
-          baseBranch: defaultBranch,
-          headBranch: run.headRef || run.headSha,
-          outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
-          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
-          setupScript: setupScript.length > 0 ? setupScript : undefined,
-          installCommand: environment.maintenanceScript ?? undefined,
-          devCommand: environment.devScript ?? undefined,
-          convexSiteUrl: convexUrl,
-          auth: { taskRunJwt: previewJwt },
-        };
-
-        // Run the screenshot collector via Morph exec
-        const collectorResult = await runScreenshotCollector({
-          ctx,
-          morphClient,
-          instanceId: instance.id,
-          collectorUrl: collectorRelease.url,
-          options: screenshotOptions,
-          previewRunId,
-        });
-
-        console.log("[preview-jobs] Screenshot collector result", {
-          previewRunId,
-          status: collectorResult.status,
-          screenshotCount: collectorResult.screenshots?.length ?? 0,
-          videoCount: collectorResult.videos?.length ?? 0,
-          hasUiChanges: collectorResult.hasUiChanges,
-          error: collectorResult.error,
-        });
-
-        // Upload screenshots to Convex storage and create screenshot set
-        const uploadedImages: Array<{
-          storageId: Id<"_storage">;
-          mimeType: string;
-          fileName?: string;
-          commitSha?: string;
-          description?: string;
-        }> = [];
-
-        const uploadedVideos: Array<{
-          storageId: Id<"_storage">;
-          mimeType: string;
-          fileName?: string;
-          description?: string;
-        }> = [];
-
-        if (collectorResult.status === "completed" && collectorResult.screenshots && collectorResult.screenshots.length > 0) {
-          console.log("[preview-jobs] Uploading screenshots to Convex storage", {
-            previewRunId,
-            screenshotCount: collectorResult.screenshots.length,
-          });
-
-          for (const screenshot of collectorResult.screenshots) {
-            try {
-              // Read the screenshot file from Morph VM
-              const fileData = await readFileFromMorph({
-                morphClient,
-                instanceId: instance.id,
-                filePath: screenshot.path,
-              });
-
-              if (!fileData) {
-                console.warn("[preview-jobs] Failed to read screenshot file", {
-                  previewRunId,
-                  path: screenshot.path,
-                });
-                continue;
-              }
-
-              // Convert base64 to binary and upload to Convex storage
-              const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
-              const mimeType = getMimeTypeFromPath(screenshot.path);
-              const blob = new Blob([binaryData], { type: mimeType });
-              const storageId = await ctx.storage.store(blob);
-
-              // Extract filename from path
-              const fileName = screenshot.path.split("/").pop() || "screenshot.png";
-
-              uploadedImages.push({
-                storageId,
-                mimeType,
-                fileName,
-                commitSha: run.headSha,
-                description: screenshot.description,
-              });
-
-              console.log("[preview-jobs] Uploaded screenshot", {
-                previewRunId,
-                path: screenshot.path,
-                storageId,
-                size: fileData.size,
-              });
-            } catch (uploadError) {
-              console.error("[preview-jobs] Failed to upload screenshot", {
-                previewRunId,
-                path: screenshot.path,
-                error: uploadError instanceof Error ? uploadError.message : String(uploadError),
-              });
-            }
-          }
-        }
-
-        // Upload videos to Convex storage
-        if (collectorResult.status === "completed" && collectorResult.videos && collectorResult.videos.length > 0) {
-          console.log("[preview-jobs] Uploading videos to Convex storage", {
-            previewRunId,
-            videoCount: collectorResult.videos.length,
-          });
-
-          for (const video of collectorResult.videos) {
-            try {
-              // Read the video file from Morph VM
-              const fileData = await readFileFromMorph({
-                morphClient,
-                instanceId: instance.id,
-                filePath: video.path,
-              });
-
-              if (!fileData) {
-                console.warn("[preview-jobs] Failed to read video file", {
-                  previewRunId,
-                  path: video.path,
-                });
-                continue;
-              }
-
-              // Convert base64 to binary and upload to Convex storage
-              const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
-              const mimeType = getMimeTypeFromPath(video.path);
-              const blob = new Blob([binaryData], { type: mimeType });
-              const storageId = await ctx.storage.store(blob);
-
-              // Extract filename from path
-              const fileName = video.path.split("/").pop() || "video.mp4";
-
-              uploadedVideos.push({
-                storageId,
-                mimeType,
-                fileName,
-                description: video.description,
-              });
-
-              console.log("[preview-jobs] Uploaded video", {
-                previewRunId,
-                path: video.path,
-                storageId,
-                size: fileData.size,
-              });
-            } catch (uploadError) {
-              console.error("[preview-jobs] Failed to upload video", {
-                previewRunId,
-                path: video.path,
-                error: uploadError instanceof Error ? uploadError.message : String(uploadError),
-              });
-            }
-          }
-        }
-
-        let finalStatus = collectorResult.status;
-        let finalError = collectorResult.error || collectorResult.reason;
-        if (
-          collectorResult.status === "completed" &&
-          collectorResult.hasUiChanges === false &&
-          uploadedImages.length === 0 &&
-          uploadedVideos.length === 0
-        ) {
-          finalStatus = "skipped";
-          finalError = finalError || "No UI changes detected - screenshots skipped";
-        }
-
-        console.log("[preview-jobs] Creating screenshot set", {
-          previewRunId,
-          status: finalStatus,
-          originalStatus: collectorResult.status,
-          imageCount: uploadedImages.length,
-          videoCount: uploadedVideos.length,
-          hasUiChanges: collectorResult.hasUiChanges,
-        });
+      if (!screenshotWorkflowEnabled) {
+        console.log(
+          "[preview-jobs] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+          { previewRunId },
+        );
 
         try {
           await ctx.runMutation(internal.previewScreenshots.createScreenshotSet, {
             previewRunId,
-            status: finalStatus,
+            status: "skipped",
             commitSha: run.headSha,
-            error: finalError,
-            hasUiChanges: collectorResult.hasUiChanges,
-            images: uploadedImages,
-            videos: uploadedVideos,
+            error: "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+            images: [],
+            videos: [],
           });
 
-          console.log("[preview-jobs] Screenshot set created, triggering GitHub comment update", {
+          console.log("[preview-jobs] Screenshot set marked as skipped", {
             previewRunId,
           });
 
@@ -2231,17 +2020,277 @@ export async function runPreviewJob(
             });
           }
         } catch (screenshotSetError) {
-          console.error("[preview-jobs] Failed to create screenshot set or update GitHub comment", {
+          console.error("[preview-jobs] Failed to create skipped screenshot set", {
             previewRunId,
-            error: screenshotSetError instanceof Error ? screenshotSetError.message : String(screenshotSetError),
+            error:
+              screenshotSetError instanceof Error
+                ? screenshotSetError.message
+                : String(screenshotSetError),
           });
         }
-      }
+      } else {
+        // Trigger screenshot collection via Morph exec (bypasses worker)
+        // Always use production releases (staging=false) to avoid missing release issues
+        // Both staging and production Convex deployments will fetch from the same release pool
+        const isStaging = false;
 
-      console.log("[preview-jobs] Screenshot collection completed via Morph exec", {
-        previewRunId,
-        taskRunId,
-      });
+        // Fetch the screenshot collector release URL
+        const collectorRelease = await fetchScreenshotCollectorRelease({
+          convexUrl,
+          isStaging,
+          previewRunId,
+        });
+
+        // Get changed files via Morph exec
+        // Pass baseSha from the PR webhook for more reliable diffing (especially for repos
+        // where origin/main might not exist, e.g., forks or repos with different default branches)
+        const changedFiles = await getChangedFiles({
+          morphClient,
+          instanceId: instance.id,
+          repoDir,
+          baseBranch: defaultBranch,
+          baseSha: run.baseSha,
+          previewRunId,
+        });
+
+        if (changedFiles.length === 0) {
+          console.log("[preview-jobs] No changed files detected, skipping screenshot collection", {
+            previewRunId,
+          });
+        } else {
+          // Build screenshot collector options
+          const setupScript = [
+            environment.maintenanceScript?.trim(),
+            environment.devScript?.trim(),
+          ]
+            .filter((value): value is string => Boolean(value))
+            .join("\n\n");
+          const screenshotOptions: ScreenshotCollectorOptions = {
+            workspaceDir: repoDir,
+            changedFiles,
+            prTitle: run.prTitle || `PR #${run.prNumber}`,
+            prDescription: run.prDescription || "",
+            baseBranch: defaultBranch,
+            headBranch: run.headRef || run.headSha,
+            outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
+            pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+            setupScript: setupScript.length > 0 ? setupScript : undefined,
+            installCommand: environment.maintenanceScript ?? undefined,
+            devCommand: environment.devScript ?? undefined,
+            convexSiteUrl: convexUrl,
+            auth: { taskRunJwt: previewJwt },
+          };
+
+          // Run the screenshot collector via Morph exec
+          const collectorResult = await runScreenshotCollector({
+            ctx,
+            morphClient,
+            instanceId: instance.id,
+            collectorUrl: collectorRelease.url,
+            options: screenshotOptions,
+            previewRunId,
+          });
+
+          console.log("[preview-jobs] Screenshot collector result", {
+            previewRunId,
+            status: collectorResult.status,
+            screenshotCount: collectorResult.screenshots?.length ?? 0,
+            videoCount: collectorResult.videos?.length ?? 0,
+            hasUiChanges: collectorResult.hasUiChanges,
+            error: collectorResult.error,
+          });
+
+          // Upload screenshots to Convex storage and create screenshot set
+          const uploadedImages: Array<{
+            storageId: Id<"_storage">;
+            mimeType: string;
+            fileName?: string;
+            commitSha?: string;
+            description?: string;
+          }> = [];
+
+          const uploadedVideos: Array<{
+            storageId: Id<"_storage">;
+            mimeType: string;
+            fileName?: string;
+            description?: string;
+          }> = [];
+
+          if (collectorResult.status === "completed" && collectorResult.screenshots && collectorResult.screenshots.length > 0) {
+            console.log("[preview-jobs] Uploading screenshots to Convex storage", {
+              previewRunId,
+              screenshotCount: collectorResult.screenshots.length,
+            });
+
+            for (const screenshot of collectorResult.screenshots) {
+              try {
+                // Read the screenshot file from Morph VM
+                const fileData = await readFileFromMorph({
+                  morphClient,
+                  instanceId: instance.id,
+                  filePath: screenshot.path,
+                });
+
+                if (!fileData) {
+                  console.warn("[preview-jobs] Failed to read screenshot file", {
+                    previewRunId,
+                    path: screenshot.path,
+                  });
+                  continue;
+                }
+
+                // Convert base64 to binary and upload to Convex storage
+                const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+                const mimeType = getMimeTypeFromPath(screenshot.path);
+                const blob = new Blob([binaryData], { type: mimeType });
+                const storageId = await ctx.storage.store(blob);
+
+                // Extract filename from path
+                const fileName = screenshot.path.split("/").pop() || "screenshot.png";
+
+                uploadedImages.push({
+                  storageId,
+                  mimeType,
+                  fileName,
+                  commitSha: run.headSha,
+                  description: screenshot.description,
+                });
+
+                console.log("[preview-jobs] Uploaded screenshot", {
+                  previewRunId,
+                  path: screenshot.path,
+                  storageId,
+                  size: fileData.size,
+                });
+              } catch (uploadError) {
+                console.error("[preview-jobs] Failed to upload screenshot", {
+                  previewRunId,
+                  path: screenshot.path,
+                  error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+                });
+              }
+            }
+          }
+
+          // Upload videos to Convex storage
+          if (collectorResult.status === "completed" && collectorResult.videos && collectorResult.videos.length > 0) {
+            console.log("[preview-jobs] Uploading videos to Convex storage", {
+              previewRunId,
+              videoCount: collectorResult.videos.length,
+            });
+
+            for (const video of collectorResult.videos) {
+              try {
+                // Read the video file from Morph VM
+                const fileData = await readFileFromMorph({
+                  morphClient,
+                  instanceId: instance.id,
+                  filePath: video.path,
+                });
+
+                if (!fileData) {
+                  console.warn("[preview-jobs] Failed to read video file", {
+                    previewRunId,
+                    path: video.path,
+                  });
+                  continue;
+                }
+
+                // Convert base64 to binary and upload to Convex storage
+                const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+                const mimeType = getMimeTypeFromPath(video.path);
+                const blob = new Blob([binaryData], { type: mimeType });
+                const storageId = await ctx.storage.store(blob);
+
+                // Extract filename from path
+                const fileName = video.path.split("/").pop() || "video.mp4";
+
+                uploadedVideos.push({
+                  storageId,
+                  mimeType,
+                  fileName,
+                  description: video.description,
+                });
+
+                console.log("[preview-jobs] Uploaded video", {
+                  previewRunId,
+                  path: video.path,
+                  storageId,
+                  size: fileData.size,
+                });
+              } catch (uploadError) {
+                console.error("[preview-jobs] Failed to upload video", {
+                  previewRunId,
+                  path: video.path,
+                  error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+                });
+              }
+            }
+          }
+
+          let finalStatus = collectorResult.status;
+          let finalError = collectorResult.error || collectorResult.reason;
+          if (
+            collectorResult.status === "completed" &&
+            collectorResult.hasUiChanges === false &&
+            uploadedImages.length === 0 &&
+            uploadedVideos.length === 0
+          ) {
+            finalStatus = "skipped";
+            finalError = finalError || "No UI changes detected - screenshots skipped";
+          }
+
+          console.log("[preview-jobs] Creating screenshot set", {
+            previewRunId,
+            status: finalStatus,
+            originalStatus: collectorResult.status,
+            imageCount: uploadedImages.length,
+            videoCount: uploadedVideos.length,
+            hasUiChanges: collectorResult.hasUiChanges,
+          });
+
+          try {
+            await ctx.runMutation(internal.previewScreenshots.createScreenshotSet, {
+              previewRunId,
+              status: finalStatus,
+              commitSha: run.headSha,
+              error: finalError,
+              hasUiChanges: collectorResult.hasUiChanges,
+              images: uploadedImages,
+              videos: uploadedVideos,
+            });
+
+            console.log("[preview-jobs] Screenshot set created, triggering GitHub comment update", {
+              previewRunId,
+            });
+
+            // Trigger GitHub comment update (skip for test runs)
+            if (!isTestRun) {
+              await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
+                previewRunId,
+              });
+
+              console.log("[preview-jobs] GitHub comment update triggered", {
+                previewRunId,
+              });
+            } else {
+              console.log("[preview-jobs] Skipping GitHub comment for test run", {
+                previewRunId,
+              });
+            }
+          } catch (screenshotSetError) {
+            console.error("[preview-jobs] Failed to create screenshot set or update GitHub comment", {
+              previewRunId,
+              error: screenshotSetError instanceof Error ? screenshotSetError.message : String(screenshotSetError),
+            });
+          }
+        }
+
+        console.log("[preview-jobs] Screenshot collection completed via Morph exec", {
+          previewRunId,
+          taskRunId,
+        });
+      }
     }
 
     // Mark the task run as completed now that screenshot collection is done

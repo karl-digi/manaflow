@@ -27,6 +27,10 @@ export const env = createEnv({
     // Note: CMUX_IS_STAGING was removed - preview_jobs_worker.ts now hardcodes
     // CMUX_IS_STAGING="false" in sandbox env to always use production releases
     CONVEX_IS_PRODUCTION: z.string().optional(),
+    // Opt-in flags for expensive preview/screenshot features (disabled by default)
+    // Set to "true" or "1" to enable
+    CMUX_ENABLE_PREVIEW_RUNS: z.string().min(1).optional(),
+    CMUX_ENABLE_SCREENSHOT_WORKFLOW: z.string().min(1).optional(),
     POSTHOG_API_KEY: z.string().optional(),
   },
   runtimeEnv: process.env,
