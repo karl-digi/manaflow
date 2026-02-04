@@ -153,6 +153,7 @@ type AdditionsAndDeletionsProps = {
   repoFullName: string;
   ref1: string;
   ref2: string;
+  teamSlugOrId: string;
 };
 
 function PullRequestLoadingState() {
@@ -197,12 +198,14 @@ function AdditionsAndDeletions({
   repoFullName,
   ref1,
   ref2,
+  teamSlugOrId,
 }: AdditionsAndDeletionsProps) {
   const diffsQuery = useRQ(
     gitDiffQueryOptions({
       repoFullName,
       baseRef: normalizeGitRef(ref1),
       headRef: normalizeGitRef(ref2),
+      teamSlugOrId,
     })
   );
 
@@ -327,6 +330,7 @@ export function PullRequestDetailView({
       repoFullName: currentPR?.repoFullName ?? "",
       baseRef: baseRef ?? "",
       headRef: headRef ?? "",
+      teamSlugOrId,
     }),
     enabled: Boolean(currentPR?.repoFullName && baseRef && headRef),
   });
@@ -849,6 +853,7 @@ export function PullRequestDetailView({
                     repoFullName={currentPR.repoFullName}
                     ref1={currentPR.baseRef || ""}
                     ref2={currentPR.headRef || ""}
+                    teamSlugOrId={teamSlugOrId}
                   />
                 </Suspense>
                 <Suspense fallback={null}>

@@ -29,6 +29,8 @@ export interface RunDiffSectionProps {
   heatmapThreshold?: number;
   /** Custom heatmap colors */
   heatmapColors?: HeatmapColorSettings;
+  /** Team slug or ID for HTTP API fallback in web mode */
+  teamSlugOrId?: string;
 }
 
 function applyRepoPrefix(
@@ -62,6 +64,7 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     heatmapByFile,
     heatmapThreshold,
     heatmapColors,
+    teamSlugOrId,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -87,6 +90,7 @@ export function RunDiffSection(props: RunDiffSectionProps) {
         lastKnownBaseSha: metadataByRepo?.[repo]?.lastKnownBaseSha,
         lastKnownMergeCommitSha:
           metadataByRepo?.[repo]?.lastKnownMergeCommitSha,
+        teamSlugOrId,
       }),
       enabled: canFetch,
     })),

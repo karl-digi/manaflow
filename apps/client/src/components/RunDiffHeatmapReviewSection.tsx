@@ -33,6 +33,8 @@ export interface RunDiffHeatmapReviewSectionProps {
   onHeatmapColorsChange?: (next: HeatmapColorSettings) => void;
   isHeatmapActive?: boolean;
   onToggleHeatmap?: () => void;
+  /** Team slug or ID for HTTP API fallback in web mode */
+  teamSlugOrId?: string;
 }
 
 function applyRepoPrefix(
@@ -70,6 +72,7 @@ export function RunDiffHeatmapReviewSection(
     onHeatmapColorsChange,
     isHeatmapActive,
     onToggleHeatmap,
+    teamSlugOrId,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -95,6 +98,7 @@ export function RunDiffHeatmapReviewSection(
         lastKnownBaseSha: metadataByRepo?.[repo]?.lastKnownBaseSha,
         lastKnownMergeCommitSha:
           metadataByRepo?.[repo]?.lastKnownMergeCommitSha,
+        teamSlugOrId,
       }),
       enabled: canFetch,
     })),

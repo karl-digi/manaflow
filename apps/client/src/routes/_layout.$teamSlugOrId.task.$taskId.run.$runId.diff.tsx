@@ -316,6 +316,7 @@ export const Route = createFileRoute(
                 baseRef: baseRefForDiff,
                 headRef: headRefForDiff,
                 repoFullName,
+                teamSlugOrId: opts.params.teamSlugOrId,
               }),
             )
             .catch(() => undefined);
@@ -489,6 +490,7 @@ function RunDiffPage() {
       repoFullName: primaryRepo ?? "",
       baseRef: baseRefForHeatmap,
       headRef: headRefForHeatmap ?? "",
+      teamSlugOrId,
       // Do not pass merge hints - let the native diff code compute the correct merge-base
     }),
     enabled: diffQueryEnabled,

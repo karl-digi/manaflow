@@ -17,6 +17,7 @@ import {
   editorSettingsRouter,
   environmentsRouter,
   githubBranchesRouter,
+  githubCompareRouter,
   githubFrameworkDetectionRouter,
   githubInstallStateRouter,
   githubOAuthTokenRouter,
@@ -134,6 +135,7 @@ app.route("/", githubPrsFileContentsBatchRouter);
 app.route("/", githubInstallStateRouter);
 app.route("/", githubOAuthTokenRouter);
 app.route("/", githubBranchesRouter);
+app.route("/", githubCompareRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);
