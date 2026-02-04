@@ -1,24 +1,23 @@
 "use client";
 
-import {
-  MORPH_SNAPSHOT_PRESETS,
-  type MorphSnapshotPresetWithLatest,
-} from "@cmux/shared";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { ChevronDown, Check, Cpu } from "lucide-react";
 import { forwardRef } from "react";
 import clsx from "clsx";
+import type { SandboxPreset, SandboxProviderType } from "@cmux/shared";
 
-export type MachinePresetId = MorphSnapshotPresetWithLatest["id"];
+export type MachinePresetId = SandboxPreset["id"];
 
 type MachinePresetSelectProps = {
+  provider: SandboxProviderType;
+  presets: SandboxPreset[];
   value: MachinePresetId;
   onValueChange: (value: MachinePresetId) => void;
 };
 
 const SelectTrigger = forwardRef<
   HTMLButtonElement,
-  SelectPrimitive.SelectTriggerProps & { preset: MorphSnapshotPresetWithLatest }
+  SelectPrimitive.SelectTriggerProps & { preset: SandboxPreset }
 >(({ className, preset, ...props }, ref) => {
   return (
     <SelectPrimitive.Trigger
@@ -81,7 +80,7 @@ SelectContent.displayName = "SelectContent";
 
 const SelectItem = forwardRef<
   HTMLDivElement,
-  SelectPrimitive.SelectItemProps & { preset: MorphSnapshotPresetWithLatest }
+  SelectPrimitive.SelectItemProps & { preset: SandboxPreset }
 >(({ className, preset, ...props }, ref) => {
   return (
     <SelectPrimitive.Item
@@ -122,24 +121,36 @@ const SelectItem = forwardRef<
 });
 SelectItem.displayName = "SelectItem";
 
-// Only show 4vCPU (Standard) and 8vCPU (Performance) options
-const ALLOWED_PRESET_IDS = ["4vcpu_16gb_48gb", "8vcpu_32gb_48gb"];
-const FILTERED_PRESETS = MORPH_SNAPSHOT_PRESETS.filter((p) =>
-  ALLOWED_PRESET_IDS.includes(p.presetId)
-);
+const ALLOWED_PRESET_IDS_BY_PROVIDER: Record<
+  SandboxProviderType,
+  readonly string[]
+> = {
+  morph: ["4vcpu_16gb_48gb", "8vcpu_32gb_48gb"],
+  "pve-lxc": ["4vcpu_8gb_32gb", "6vcpu_8gb_40gb"],
+  "pve-vm": [],
+};
 
 export function MachinePresetSelect({
+  provider,
+  presets,
   value,
   onValueChange,
 }: MachinePresetSelectProps) {
-  const selectedPreset = FILTERED_PRESETS.find((p) => p.id === value);
-  const fallbackPreset = FILTERED_PRESETS[0];
+  const allowedPresetIds = ALLOWED_PRESET_IDS_BY_PROVIDER[provider];
+  const filteredPresets =
+    allowedPresetIds.length > 0
+      ? presets.filter((preset) => allowedPresetIds.includes(preset.presetId))
+      : presets;
+
+  const selectedPreset = filteredPresets.find((p) => p.id === value);
+  const fallbackPreset = filteredPresets[0];
 
   if (!selectedPreset && !fallbackPreset) {
     return null;
   }
 
   const currentPreset = selectedPreset ?? fallbackPreset;
+  const effectiveValue = selectedPreset ? value : currentPreset.id;
 
   return (
     <div>
@@ -150,7 +161,7 @@ export function MachinePresetSelect({
         Machine Size
       </label>
       <SelectPrimitive.Root
-        value={value}
+        value={effectiveValue}
         onValueChange={(val) => onValueChange(val as MachinePresetId)}
       >
         <SelectTrigger
@@ -158,7 +169,7 @@ export function MachinePresetSelect({
           aria-labelledby="machine-preset-label"
         />
         <SelectContent>
-          {FILTERED_PRESETS.map((preset) => (
+          {filteredPresets.map((preset) => (
             <SelectItem key={preset.id} value={preset.id} preset={preset}>
               {preset.label}
             </SelectItem>
