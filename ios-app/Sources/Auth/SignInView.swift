@@ -26,17 +26,15 @@ struct SignInView: View {
                     }
                     .ignoresSafeArea()
 
-                VStack(spacing: 6) {
-                    Text("cmux")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.primary)
-
-                    Text("Sign in to continue")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 56)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                Image("CmuxLogo")
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(width: logoSize, height: logoSize)
+                    .accessibilityHidden(true)
+                    .padding(.top, 56)
+                    .padding(.leading, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
@@ -70,8 +68,7 @@ struct SignInView: View {
                         .autocapitalization(.none)
                         .padding()
                         .frame(maxWidth: .infinity)
-                        .background(Color(.tertiarySystemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(GlassSurface(cornerRadius: 12, isPressed: false))
 
                     Button {
                         Task { await sendCode() }
@@ -88,9 +85,7 @@ struct SignInView: View {
                                 .padding()
                         }
                     }
-                    .background(email.isEmpty ? Color(.systemGray4) : Color.primary)
-                    .foregroundStyle(buttonForeground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .buttonStyle(GlassButtonStyle(cornerRadius: 12))
                     .disabled(email.isEmpty || authManager.isLoading || isAppleSigningIn)
                 }
 
@@ -122,8 +117,7 @@ struct SignInView: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 32, weight: .semibold, design: .monospaced))
                     .padding()
-                    .background(Color(.tertiarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(GlassSurface(cornerRadius: 12, isPressed: false))
                     .onChange(of: code) { _, newValue in
                         if newValue.count > 6 {
                             code = String(newValue.prefix(6))
@@ -140,21 +134,19 @@ struct SignInView: View {
                 Button {
                     Task { await verifyCode() }
                 } label: {
-                    if showEmailLoader {
-                        ProgressView()
-                            .tint(buttonForeground)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    } else {
-                        Text("Verify code")
-                            .fontWeight(.semibold)
-                            .frame(maxWidth: .infinity)
-                            .padding()
+                        if showEmailLoader {
+                            ProgressView()
+                                .tint(buttonForeground)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        } else {
+                            Text("Verify code")
+                                .fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        }
                     }
-                }
-                .background(code.count == 6 ? Color.primary : Color(.systemGray4))
-                .foregroundStyle(buttonForeground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(GlassButtonStyle(cornerRadius: 12))
                 .disabled(code.count != 6 || authManager.isLoading || isAppleSigningIn)
 
                 Button("Use a different email") {
@@ -203,10 +195,13 @@ struct SignInView: View {
 
     private var appleSignInView: some View {
         ZStack {
+            GlassSurface(cornerRadius: 14, isPressed: isAppleSigningIn)
+
             AppleSignInButton(isLoading: authManager.isLoading || isAppleSigningIn) {
                 Task { await signInWithApple() }
             }
             .frame(height: 54)
+            .padding(2)
             .accessibilityIdentifier("signin.apple")
 
             if isAppleSigningIn {
@@ -246,6 +241,7 @@ struct SignInView: View {
         content()
             .padding(20)
             .frame(maxWidth: .infinity)
+            .opacity(isAuthInProgress ? 0.6 : 1.0)
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .fill(Color(.secondarySystemBackground))
@@ -298,7 +294,7 @@ struct SignInView: View {
     }
 
     private var buttonForeground: Color {
-        Color(.systemBackground)
+        Color.primary
     }
 
     private var appleProgressColor: Color {
@@ -307,6 +303,75 @@ struct SignInView: View {
 
     private var showEmailLoader: Bool {
         authManager.isLoading && !isAppleSigningIn
+    }
+
+    private let logoSize: CGFloat = 44
+
+    private var isAuthInProgress: Bool {
+        authManager.isLoading || isAppleSigningIn
+    }
+}
+
+private struct GlassSurface: View {
+    let cornerRadius: CGFloat
+    let isPressed: Bool
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(glassTint)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(glassBorder, lineWidth: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [glassHighlight, .clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                    .blendMode(.screen)
+            )
+            .shadow(color: glassShadow, radius: 10, x: 0, y: 6)
+    }
+
+    private var glassTint: Color {
+        let base = colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.28)
+        let pressed = colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.38)
+        return isPressed ? pressed : base
+    }
+
+    private var glassBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.08)
+    }
+
+    private var glassHighlight: Color {
+        colorScheme == .dark ? Color.white.opacity(0.35) : Color.white.opacity(0.6)
+    }
+
+    private var glassShadow: Color {
+        colorScheme == .dark ? Color.black.opacity(0.35) : Color.black.opacity(0.12)
+    }
+}
+
+private struct GlassButtonStyle: ButtonStyle {
+    let cornerRadius: CGFloat
+    @SwiftUI.Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.primary)
+            .background(GlassSurface(cornerRadius: cornerRadius, isPressed: configuration.isPressed))
+            .opacity(isEnabled ? 1.0 : 0.6)
+            .scaleEffect(configuration.isPressed ? 0.99 : 1.0)
     }
 }
 

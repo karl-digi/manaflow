@@ -10,8 +10,8 @@ struct ChatFix1MainView: View {
     @State private var uiTestMessages: [Message]
     let conversationId: String
     let providerId: String
-    private let topShimHeight: CGFloat
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(\.displayScale) private var displayScale
     @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showTuningPanel = false
     @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
     @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
@@ -33,7 +33,6 @@ struct ChatFix1MainView: View {
         } else {
             self._uiTestMessages = State(initialValue: [])
         }
-        self.topShimHeight = 1 / UIScreen.main.scale
     }
 
     var body: some View {
@@ -105,9 +104,13 @@ struct ChatFix1MainView: View {
         .onDisappear {
             viewModel.setViewVisible(false)
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             viewModel.setAppActive(newPhase == .active)
         }
+    }
+
+    private var topShimHeight: CGFloat {
+        1 / displayScale
     }
 
     /// Convert Convex messages to the legacy Message format used by Fix1MainViewController
@@ -129,7 +132,7 @@ struct ChatFix1MainView: View {
 struct ChatFix1MainDebugMockView: View {
     @State private var messages: [Message] = ChatFix1MainDebugMockData.makeMessages()
     @State private var isSending = false
-    private let topShimHeight: CGFloat
+    @SwiftUI.Environment(\.displayScale) private var displayScale
     @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showTuningPanel = false
     @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
     @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
@@ -140,10 +143,6 @@ struct ChatFix1MainDebugMockView: View {
     @AppStorage("debug.input.barYOffset") private var barYOffset: Double = 34
     @AppStorage("debug.input.bottomMessageGap") private var bottomMessageGap: Double = 10
     @AppStorage("debug.input.isMultiline") private var isMultilineFlag = false
-
-    init() {
-        self.topShimHeight = 1 / UIScreen.main.scale
-    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -208,6 +207,10 @@ struct ChatFix1MainDebugMockView: View {
             messages.append(assistantMessage)
             isSending = false
         }
+    }
+
+    private var topShimHeight: CGFloat {
+        1 / displayScale
     }
 }
 
@@ -281,7 +284,7 @@ private struct ChatFix1MainJankScenarioView: View {
     let messages: [Message]
     let debugScrollFraction: CGFloat?
     let debugScrollDelay: TimeInterval
-    private let topShimHeight: CGFloat
+    @SwiftUI.Environment(\.displayScale) private var displayScale
     @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showTuningPanel = false
     @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
     @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
@@ -305,7 +308,6 @@ private struct ChatFix1MainJankScenarioView: View {
         self.messages = messages
         self.debugScrollFraction = debugScrollFraction
         self.debugScrollDelay = debugScrollDelay
-        self.topShimHeight = 1 / UIScreen.main.scale
     }
 
     var body: some View {
@@ -363,6 +365,10 @@ private struct ChatFix1MainJankScenarioView: View {
                 bottomMessageGap = clampedGap
             }
         }
+    }
+
+    private var topShimHeight: CGFloat {
+        1 / displayScale
     }
 }
 
@@ -2816,7 +2822,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             updateUiTestJankMaxDownward(delta: delta, label: "scroll.min")
         }
         uiTestJankLastScrollMinY = scrollMinY
-        foundAny = true
         if shouldLogSample {
             sampleLogParts.append(String(format: "scroll.min=%.2f", scrollMinY))
         }
@@ -3980,24 +3985,24 @@ private final class TopFadeView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false
-        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
-        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
-        updateColors()
+        configure()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
         isUserInteractionEnabled = false
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
         updateColors()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            updateColors()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] _, previousTraitCollection in
+            guard let self else { return }
+            if previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle {
+                self.updateColors()
+            }
         }
     }
 
@@ -4027,24 +4032,24 @@ private final class BottomFadeView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false
-        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
-        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
-        updateColors()
+        configure()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
         isUserInteractionEnabled = false
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
         updateColors()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            updateColors()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] _, previousTraitCollection in
+            guard let self else { return }
+            if previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle {
+                self.updateColors()
+            }
         }
     }
 

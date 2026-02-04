@@ -34,7 +34,6 @@ struct CMuxApp: App {
             options.environment = "production"
             #endif
 
-            options.enableTracing = true
             options.tracesSampleRate = 1.0
         }
     }

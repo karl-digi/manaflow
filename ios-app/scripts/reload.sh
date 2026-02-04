@@ -41,7 +41,11 @@ if [ "$SIMULATOR_ONLY" -eq 1 ]; then
 fi
 
 # Check for connected device
-DEVICE_ID=$(xcrun xctrace list devices 2>&1 | grep -E "iPhone.*\([0-9]+\.[0-9]+\)" | grep -v Simulator | head -1 | grep -oE '\([A-F0-9-]+\)' | tr -d '()')
+DEVICE_ID=$(xcrun xctrace list devices 2>&1 | awk '
+    /^== Devices ==/ { in_devices = 1; next }
+    /^==/ { in_devices = 0 }
+    in_devices { print }
+' | grep -E "iPhone.*\([0-9]+\.[0-9]+\)" | head -1 | grep -oE '\([A-F0-9-]+\)' | tr -d '()')
 
 if [ -n "$DEVICE_ID" ]; then
     DEVICE_NAME=$(xcrun xctrace list devices 2>&1 | grep "$DEVICE_ID" | sed 's/ ([0-9].*//')

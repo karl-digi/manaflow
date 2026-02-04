@@ -22,6 +22,9 @@ final class AuthPresentationContextProvider: NSObject, ASWebAuthenticationPresen
         if let window = activeScene?.windows.first(where: { $0.isKeyWindow }) ?? activeScene?.windows.first {
             return window
         }
-        return UIWindow()
+        if let activeScene {
+            return UIWindow(windowScene: activeScene)
+        }
+        return UIWindow(frame: .zero)
     }
 }

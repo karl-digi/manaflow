@@ -693,7 +693,7 @@ enum UITestMockData {
             permissionMode: nil,
             stopReason: nil,
             namespaceId: nil,
-            isolationMode: .none,
+            isolationMode: nil,
             modes: nil,
             agentInfo: nil,
             acpSandboxId: nil,

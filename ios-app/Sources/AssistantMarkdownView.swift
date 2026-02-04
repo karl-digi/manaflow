@@ -1159,12 +1159,13 @@ private struct SelectableTextView: UIViewRepresentable {
 
         func textView(
             _ textView: UITextView,
-            shouldInteractWith url: URL,
-            in characterRange: NSRange,
-            interaction: UITextItemInteraction
-        ) -> Bool {
-            onOpenURL(url)
-            return false
+            primaryActionFor textItem: UITextItem,
+            defaultAction: UIAction
+        ) -> UIAction? {
+            guard let url = textItem.link else { return defaultAction }
+            return UIAction { [weak self] _ in
+                self?.onOpenURL(url)
+            }
         }
     }
 }
