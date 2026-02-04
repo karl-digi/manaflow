@@ -76,27 +76,9 @@ echo "[cmux-e2b] Starting OpenVSCode Server on port 39378 (with token auth)..."
     --extensions-dir /home/user/.openvscode-server/extensions \
     /home/user/workspace 2>/dev/null &
 
-# Start Chrome in headless mode with CDP on port 9222
-# --test-type suppresses the "unsupported --no-sandbox" warning
-echo "[cmux-e2b] Starting Chrome CDP on port 9222..."
-google-chrome \
-    --headless=new \
-    --remote-debugging-port=9222 \
-    --remote-debugging-address=0.0.0.0 \
-    --no-sandbox \
-    --test-type \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --disable-software-rasterizer \
-    --window-size=1920,1080 \
-    --no-first-run \
-    --no-default-browser-check \
-    --disable-default-apps \
-    --disable-extensions \
-    --disable-sync \
-    --disable-translate \
-    --user-data-dir=/home/user/.chrome-data \
-    about:blank 2>/dev/null &
+# Chrome with CDP is started by VNC xstartup (visible browser)
+# CDP will be available on port 9222 once VNC desktop is up
+echo "[cmux-e2b] Chrome CDP will be available on port 9222 (started via VNC)"
 
 # Start worker daemon on port 39377
 echo "[cmux-e2b] Starting worker daemon on port 39377..."

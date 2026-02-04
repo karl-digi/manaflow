@@ -1,6 +1,6 @@
 {
   "name": "cmux",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Cloud sandboxes for development - spawn isolated dev environments instantly",
   "keywords": [
     "cli",

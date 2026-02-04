@@ -14,8 +14,8 @@ sleep 5
 # Ensure user owns their home directory (fix permissions if needed)
 chown -R user:user /home/user 2>/dev/null || true
 
-# Launch Chrome browser as user (visible in VNC, separate profile from headless CDP)
-# Use --user-data-dir to avoid conflict with headless Chrome instance
+# Launch Chrome browser as user (visible in VNC AND controllable via CDP)
+# --remote-debugging-port=9222 enables Chrome DevTools Protocol
 # --test-type suppresses the "unsupported --no-sandbox" warning
 sudo -u user google-chrome \
     --no-sandbox \
@@ -26,7 +26,9 @@ sudo -u user google-chrome \
     --disable-default-apps \
     --start-maximized \
     --new-window \
-    --user-data-dir=/home/user/.chrome-visible \
+    --remote-debugging-port=9222 \
+    --remote-debugging-address=0.0.0.0 \
+    --user-data-dir=/home/user/.chrome-data \
     "https://google.com" &
 
 # Keep the script running
