@@ -53,7 +53,7 @@ export function setSandboxProviderResolverForTests(
 /**
  * Get the snapshot ID for a specific provider, falling back to default provider if not found.
  */
-function getSnapshotIdForProvider(
+export function getSnapshotIdForProvider(
   providerName?: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel"
 ): { snapshotId: string; providerName: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel" } {
   if (providerName) {

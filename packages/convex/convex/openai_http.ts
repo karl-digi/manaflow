@@ -27,8 +27,6 @@ function hasUserApiKey(key: string | null): boolean {
   return key !== null && key !== hardCodedApiKey && isOpenAIApiKey(key);
 }
 
-const TEMPORARY_DISABLE_AUTH = true;
-
 export const openaiProxyEffect = (req: Request) =>
   Effect.gen(function* () {
     const env = yield* EnvService;
@@ -42,7 +40,7 @@ export const openaiProxyEffect = (req: Request) =>
         error instanceof Error ? error : new Error("Failed to read worker auth"),
     });
 
-    if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
+    if (!workerAuth) {
       console.error("[openai-proxy] Auth error: Missing or invalid token");
       return yield* Effect.fail(httpError(401, { error: "Unauthorized" }));
     }
@@ -63,7 +61,12 @@ export const openaiProxyEffect = (req: Request) =>
     }
 
     const url = new URL(req.url);
-    const path = url.pathname.replace(/^\/api\/openai/, "");
+    let path = url.pathname.replace(/^\/api\/openai/, "");
+    // Ensure path starts with /v1/ (OpenAI API requires this prefix)
+    // Handles both /api/openai/responses and /api/openai/v1/responses
+    if (!path.startsWith("/v1/") && !path.startsWith("/v1")) {
+      path = `/v1${path}`;
+    }
     const queryString = url.search;
     const openaiUrl = `${OPENAI_BASE_URL}${path}${queryString}`;
 

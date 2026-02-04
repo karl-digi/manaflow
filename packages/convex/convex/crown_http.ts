@@ -212,10 +212,16 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
 
   let teamContext: { teamId: string; userId: string } | null = null;
 
-  if (workerAuth) {
+  if (workerAuth && workerAuth.type === "taskRun") {
     teamContext = {
       teamId: workerAuth.payload.teamId,
       userId: workerAuth.payload.userId,
+    };
+  } else if (workerAuth && workerAuth.type === "sandbox") {
+    // Sandbox auth doesn't have userId, use sandboxId as identifier
+    teamContext = {
+      teamId: workerAuth.payload.teamId,
+      userId: workerAuth.payload.sandboxId,
     };
   } else {
     const membership = await ensureTeamMembership(ctx, teamSlugOrId);
@@ -259,7 +265,7 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     }
   }
 
-  if (!targetTaskId && workerAuth?.payload.taskRunId) {
+  if (!targetTaskId && workerAuth?.type === "taskRun" && workerAuth.payload.taskRunId) {
     try {
       const run = await ctx.runQuery(internal.taskRuns.getById, {
         id: workerAuth.payload.taskRunId as Id<"taskRuns">,
@@ -377,12 +383,17 @@ export const crownSummarize = httpAction(async (ctx, req) => {
 });
 
 export const crownWorkerCheck = httpAction(async (ctx, req) => {
-  const workerAuth = await getWorkerAuth(req, {
+  const auth = await getWorkerAuth(req, {
     loggerPrefix: "[convex.crown]",
   });
-  if (!workerAuth) {
+  if (!auth) {
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
+  // This endpoint requires task run auth, not sandbox auth
+  if (auth.type !== "taskRun") {
+    throw jsonResponse({ code: 403, message: "Sandbox auth not allowed for this endpoint" }, 403);
+  }
+  const workerAuth = auth;
 
   const parsed = await ensureJsonRequest(req);
   if (parsed instanceof Response) return parsed;
@@ -667,12 +678,16 @@ async function handleCrownCheckRequest(
 }
 
 export const crownWorkerFinalize = httpAction(async (ctx, req) => {
-  const workerAuth = await getWorkerAuth(req, {
+  const auth = await getWorkerAuth(req, {
     loggerPrefix: "[convex.crown]",
   });
-  if (!workerAuth) {
+  if (!auth) {
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
+  if (auth.type !== "taskRun") {
+    throw jsonResponse({ code: 403, message: "Sandbox auth not allowed" }, 403);
+  }
+  const workerAuth = auth;
 
   const parsed = await ensureJsonRequest(req);
   if (parsed instanceof Response) return parsed;
@@ -744,11 +759,15 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
 });
 
 export const crownWorkerComplete = httpAction(async (ctx, req) => {
-  const auth = await getWorkerAuth(req, { loggerPrefix: "[convex.crown]" });
-  if (!auth) {
+  const rawAuth = await getWorkerAuth(req, { loggerPrefix: "[convex.crown]" });
+  if (!rawAuth) {
     console.error("[convex.crown] Auth failed for worker complete");
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
+  if (rawAuth.type !== "taskRun") {
+    throw jsonResponse({ code: 403, message: "Sandbox auth not allowed" }, 403);
+  }
+  const auth = rawAuth;
 
   const parsed = await ensureJsonRequest(req);
   if (parsed instanceof Response) return parsed;

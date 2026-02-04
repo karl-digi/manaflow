@@ -35,10 +35,14 @@ async function ensureJsonRequest(
 }
 
 export const uploadScreenshot = httpAction(async (ctx, req) => {
-  const auth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
-  if (!auth) {
+  const rawAuth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
+  if (!rawAuth) {
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
+  if (rawAuth.type !== "taskRun") {
+    throw jsonResponse({ code: 403, message: "Sandbox auth not allowed" }, 403);
+  }
+  const auth = rawAuth;
 
   const parsed = await ensureJsonRequest(req);
   if (parsed instanceof Response) return parsed;

@@ -318,8 +318,6 @@ function hasUserApiKey(key: string | null): boolean {
   return key !== null && key !== hardCodedApiKey && isAnthropicApiKey(key);
 }
 
-const TEMPORARY_DISABLE_AUTH = true;
-
 export const anthropicProxyEffect = (req: Request) =>
   Effect.gen(function* () {
     const startTime = Date.now();
@@ -340,6 +338,21 @@ export const anthropicProxyEffect = (req: Request) =>
         error instanceof Error ? error : new Error("Failed to read worker auth"),
     });
 
+    // Extract tracking info from auth context (handles both worker and sandbox auth)
+    const trackingInfo = workerAuth
+      ? workerAuth.type === "taskRun"
+        ? {
+            teamId: workerAuth.payload.teamId,
+            userId: workerAuth.payload.userId,
+            taskRunId: workerAuth.payload.taskRunId,
+          }
+        : {
+            teamId: workerAuth.payload.teamId,
+            userId: "sandbox",
+            taskRunId: workerAuth.payload.sandboxId,
+          }
+      : { teamId: "unknown", userId: "unknown", taskRunId: "unknown" };
+
     // Helper to track events and drain
     const trackEvent = (
       model: string,
@@ -356,9 +369,9 @@ export const anthropicProxyEffect = (req: Request) =>
       Effect.tryPromise({
         try: async () => {
           trackAnthropicProxyRequest({
-            teamId: workerAuth?.payload.teamId ?? "unknown",
-            userId: workerAuth?.payload.userId ?? "unknown",
-            taskRunId: workerAuth?.payload.taskRunId ?? "unknown",
+            teamId: trackingInfo.teamId,
+            userId: trackingInfo.userId,
+            taskRunId: trackingInfo.taskRunId,
             source,
             model,
             stream,
@@ -375,7 +388,7 @@ export const anthropicProxyEffect = (req: Request) =>
         },
       });
 
-    if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
+    if (!workerAuth) {
       console.error("[anthropic-proxy] Auth error: Missing or invalid token");
       yield* trackEvent("unknown", false, 401, { errorType: "unauthorized" });
       return yield* Effect.fail(httpError(401, { error: "Unauthorized" }));

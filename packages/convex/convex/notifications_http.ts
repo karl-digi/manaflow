@@ -28,13 +28,17 @@ const AgentStoppedRequestSchema = z.object({
  * - notifications/agent-stopped for user notifications
  */
 export const agentStopped = httpAction(async (ctx, req) => {
-  const auth = await getWorkerAuth(req, {
+  const rawAuth = await getWorkerAuth(req, {
     loggerPrefix: "[convex.notifications]",
   });
-  if (!auth) {
+  if (!rawAuth) {
     console.error("[convex.notifications] Auth failed for agent-stopped");
     return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
+  if (rawAuth.type !== "taskRun") {
+    return jsonResponse({ code: 403, message: "Sandbox auth not allowed" }, 403);
+  }
+  const auth = rawAuth;
 
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
