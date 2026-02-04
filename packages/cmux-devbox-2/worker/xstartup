@@ -16,8 +16,10 @@ chown -R user:user /home/user 2>/dev/null || true
 
 # Launch Chrome browser as user (visible in VNC, separate profile from headless CDP)
 # Use --user-data-dir to avoid conflict with headless Chrome instance
+# --test-type suppresses the "unsupported --no-sandbox" warning
 sudo -u user google-chrome \
     --no-sandbox \
+    --test-type \
     --disable-gpu \
     --no-first-run \
     --no-default-browser-check \

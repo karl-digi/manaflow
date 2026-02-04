@@ -77,12 +77,14 @@ echo "[cmux-e2b] Starting OpenVSCode Server on port 39378 (with token auth)..."
     /home/user/workspace 2>/dev/null &
 
 # Start Chrome in headless mode with CDP on port 9222
+# --test-type suppresses the "unsupported --no-sandbox" warning
 echo "[cmux-e2b] Starting Chrome CDP on port 9222..."
 google-chrome \
     --headless=new \
     --remote-debugging-port=9222 \
     --remote-debugging-address=0.0.0.0 \
     --no-sandbox \
+    --test-type \
     --disable-gpu \
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
