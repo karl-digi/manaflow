@@ -1,7 +1,7 @@
 {
   "name": "cmux",
   "version": "0.7.2",
-  "description": "Cloud sandboxes for development - spawn isolated dev environments instantly",
+  "description": "CLI tool to instantly spin up cloud VMs preloaded with Chrome, VNC, SSH, and rsync",
   "keywords": [
     "cli",
     "devbox",
