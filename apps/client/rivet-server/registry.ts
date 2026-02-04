@@ -80,7 +80,11 @@ interface OpenCodeEvent {
   properties: {
     part?: OpenCodeResponsePart & { sessionID?: string };
     delta?: string;
-    info?: { id: string; sessionID: string };
+    info?: {
+      id: string;
+      sessionID: string;
+      time?: { created?: number; completed?: number };
+    };
     sessionID?: string;
     messageID?: string;
   };
@@ -127,7 +131,6 @@ async function streamOpenCodeMessage(
         return; // Fall back to non-streaming
       }
 
-      console.log("[OpenCode SSE] Connected, waiting for events...");
       const reader = sseResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -157,8 +160,18 @@ async function streamOpenCodeMessage(
 
               onEvent(data);
 
-              // Message complete - we can stop listening
+              // Message complete - check multiple completion indicators
+              // OpenCode uses session.idle or message.updated with time.completed
               if (data.type === "message.complete") {
+                messageComplete = true;
+                break;
+              }
+              if (data.type === "session.idle") {
+                messageComplete = true;
+                break;
+              }
+              // Also check for message.updated with completed timestamp
+              if (data.type === "message.updated" && data.properties?.info?.time?.completed) {
                 messageComplete = true;
                 break;
               }
@@ -307,8 +320,8 @@ const aiChat = actor({
     createdAt: Date.now(),
     openCodeSessionId: null as string | null,
     sandboxUrl: null as string | null,
-    providerID: "anthropic" as string,
-    modelID: "claude-sonnet-4-5" as string,
+    providerID: "opencode" as string,
+    modelID: "trinity-large-preview-free" as string,
     /** Queue of messages waiting to be processed */
     _messageQueue: [] as QueuedMessage[],
     /** Flag indicating queue is being processed */
@@ -353,6 +366,10 @@ const aiChat = actor({
      * @param input - Either a string (text only) or SendMessageInput object with text and images
      */
     send: async (c, input: string | SendMessageInput): Promise<Message> => {
+      // Initialize missing state fields for actors created before these fields existed
+      if (!c.state._messageQueue) c.state._messageQueue = [];
+      if (c.state._processing === undefined) c.state._processing = false;
+
       // Normalize input to SendMessageInput
       const messageInput: SendMessageInput =
         typeof input === "string" ? { text: input } : input;
@@ -417,6 +434,10 @@ const aiChat = actor({
 
 /** Process queued messages sequentially */
 async function processQueue(c: AiChatContext): Promise<void> {
+  // Initialize missing state fields for actors created before these fields existed
+  if (!c.state._messageQueue) c.state._messageQueue = [];
+  if (c.state._processing === undefined) c.state._processing = false;
+
   // Prevent concurrent processing
   if (c.state._processing) return;
 

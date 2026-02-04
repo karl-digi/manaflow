@@ -1990,6 +1990,7 @@ function ConversationThread() {
                 ? () => handleRetryMessage(item.message._id)
                 : undefined
             }
+            sandboxStatus={sandboxMeta?.status}
           />
         );
       })}
@@ -2121,10 +2122,12 @@ function ConversationMessage({
   message,
   isOwn,
   onRetry,
+  sandboxStatus,
 }: {
   message: Doc<"conversationMessages">;
   isOwn: boolean;
   onRetry?: () => void;
+  sandboxStatus?: ConversationSandboxStatus;
 }) {
   const timeLabel = formatDistanceToNow(new Date(message.createdAt), {
     addSuffix: true,
@@ -2136,6 +2139,7 @@ function ConversationMessage({
       error={message.deliveryError}
       timeLabel={timeLabel}
       onRetry={onRetry}
+      sandboxStatus={sandboxStatus}
     />
   ) : (
     <div className="text-[11px] text-neutral-400">Received · {timeLabel}</div>
@@ -2322,11 +2326,13 @@ function MessageDeliveryStatus({
   error,
   timeLabel,
   onRetry,
+  sandboxStatus,
 }: {
   status?: "queued" | "sent" | "error";
   error?: string;
   timeLabel: string;
   onRetry?: () => void;
+  sandboxStatus?: ConversationSandboxStatus;
 }) {
   const handleCopyError = async (value: string) => {
     try {
@@ -2339,10 +2345,16 @@ function MessageDeliveryStatus({
   };
 
   if (status === "queued") {
+    // Show more specific message based on sandbox status
+    const queuedMessage = error ?? (
+      sandboxStatus === "running" ? "Sending to agent..." :
+      sandboxStatus === "starting" ? "Waiting for sandbox..." :
+      "Waiting for sandbox"
+    );
     return (
       <div className="flex items-center gap-2 text-[11px] text-amber-400">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        {error ?? "Waiting for sandbox"} · {timeLabel}
+        {queuedMessage} · {timeLabel}
       </div>
     );
   }

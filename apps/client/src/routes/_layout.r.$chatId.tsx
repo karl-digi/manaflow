@@ -92,8 +92,8 @@ function RivetChatView() {
         // Configure the Rivet actor with the spawned sandbox
         await chatActor.connection?.configure({
           sandboxUrl,
-          providerID: "anthropic",
-          modelID: "claude-sonnet-4-5",
+          providerID: "opencode",
+          modelID: "trinity-large-preview-free",
         });
         setSandboxStatus("ready");
         console.log("[RivetChat] Configured with sandbox:", sandboxUrl);
