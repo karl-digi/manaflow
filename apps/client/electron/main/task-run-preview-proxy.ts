@@ -1990,6 +1990,24 @@ function deriveRoute(url: string): ProxyRoute | null {
         };
       }
     }
+    // PVE-LXC URLs: port-{port}-pvelxc-{instanceSuffix}.{domain}
+    // Supports any PVE_PUBLIC_DOMAIN (e.g., alphasolves.com, example.com)
+    const pvelxcMatch = hostname.match(/^port-(\d+)-pvelxc-([^.]+)(\..+)$/);
+    if (pvelxcMatch) {
+      const instanceSuffix = pvelxcMatch[2];
+      const pvelxcDomainSuffix = pvelxcMatch[3]; // e.g., ".alphasolves.com"
+      if (instanceSuffix) {
+        const instanceId = `pvelxc-${instanceSuffix}`;
+        return {
+          morphId: instanceId,
+          scope: "base",
+          // domainSuffix is unused when cmuxProxyOrigin is set (type placeholder only)
+          domainSuffix: "cmux.app",
+          // cmuxProxyOrigin takes precedence - routes to actual PVE-LXC domain
+          cmuxProxyOrigin: `${protocol}//port-${CMUX_PROXY_PORT}-pvelxc-${instanceSuffix}${pvelxcDomainSuffix}`,
+        };
+      }
+    }
     for (const domain of CMUX_DOMAINS) {
       const suffix = `.${domain}`;
       if (!hostname.endsWith(suffix)) {
