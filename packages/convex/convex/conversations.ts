@@ -798,3 +798,19 @@ export const getFullConversation = authQuery({
     };
   },
 });
+
+/**
+ * Internal mutation to set conversation model.
+ */
+export const setModel = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    modelId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.conversationId, {
+      modelId: args.modelId,
+      updatedAt: Date.now(),
+    });
+  },
+});
