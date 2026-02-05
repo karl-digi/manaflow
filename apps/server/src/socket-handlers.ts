@@ -2,6 +2,7 @@ import { api } from "@cmux/convex/api";
 import { env } from "./utils/server-env";
 import type { Id } from "@cmux/convex/dataModel";
 import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
+import type { WorkerSyncFiles } from "@cmux/shared/worker-schemas";
 import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
@@ -17,6 +18,8 @@ import {
   type CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
+  TriggerLocalCloudSyncSchema,
+  type TriggerLocalCloudSyncResponse,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -45,6 +48,7 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
+import { localCloudSyncManager } from "./localCloudSync";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
@@ -61,11 +65,15 @@ import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { extractSandboxStartError } from "./utils/sandboxErrors";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
+import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
+import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import {
   getVSCodeServeWebBaseUrl,
   getVSCodeServeWebPort,
   waitForVSCodeServeWebBaseUrl,
+  getLastVSCodeDetectionResult,
+  refreshVSCodeDetection,
 } from "./vscode/serveWeb";
 import { getProjectPaths } from "./workspace";
 import {
@@ -86,6 +94,56 @@ interface ExecError extends Error {
 }
 
 const isWindows = process.platform === "win32";
+
+const DOCKER_PULL_TIMEOUT_MS = 10 * 60 * 1000;
+const DOCKER_PULL_PROGRESS_THROTTLE_MS = 2_000;
+
+type DockerPullProgressEvent = {
+  status?: string;
+  progress?: string;
+  id?: string;
+  progressDetail?: {
+    current?: number;
+    total?: number;
+  };
+};
+
+function isMutableDockerTag(imageName: string): boolean {
+  const digestSeparatorIndex = imageName.indexOf("@");
+  if (digestSeparatorIndex !== -1) {
+    return false;
+  }
+
+  const lastSlashIndex = imageName.lastIndexOf("/");
+  const lastColonIndex = imageName.lastIndexOf(":");
+
+  // No colon means no explicit tag, which is implicitly :latest.
+  if (lastColonIndex === -1) {
+    return true;
+  }
+
+  // If the last colon appears before the last slash, it belongs to the registry port.
+  if (lastColonIndex < lastSlashIndex) {
+    return true;
+  }
+
+  const tag = imageName.slice(lastColonIndex + 1);
+  return tag === "latest";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exponent);
+  return `${value.toFixed(value >= 10 ? 1 : 2)}${units[exponent]}`;
+}
 
 function collectWorktreePaths(nodes: unknown): string[] {
   const paths = new Set<string>();
@@ -436,18 +494,23 @@ export function setupSocketHandlers(
           );
         }
 
-        const diffs = await getGitDiff({
-          headRef: parsed.headRef,
-          baseRef: parsed.baseRef,
-          repoFullName: parsed.repoFullName,
-          repoUrl: parsed.repoUrl,
-          originPathOverride: parsed.originPathOverride,
-          includeContents: parsed.includeContents ?? true,
-          maxBytes: parsed.maxBytes,
-          teamSlugOrId: safeTeam,
-          lastKnownBaseSha: parsed.lastKnownBaseSha,
-          lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
-        });
+        const diffs = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          () =>
+            getGitDiff({
+              headRef: parsed.headRef,
+              baseRef: parsed.baseRef,
+              repoFullName: parsed.repoFullName,
+              repoUrl: parsed.repoUrl,
+              originPathOverride: parsed.originPathOverride,
+              includeContents: parsed.includeContents ?? true,
+              maxBytes: parsed.maxBytes,
+              teamSlugOrId: safeTeam,
+              lastKnownBaseSha: parsed.lastKnownBaseSha,
+              lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
+            })
+        );
 
         if (parsed.originPathOverride) {
           const workspacePath = parsed.originPathOverride;
@@ -578,6 +641,34 @@ export function setupSocketHandlers(
 
         // For local mode, ensure Docker is running and image is available before attempting to spawn
         if (!taskData.isCloudMode) {
+          const updateTaskRunStatusMessage = async (
+            message: string | undefined
+          ): Promise<void> => {
+            if (!taskData.taskRunIds || taskData.taskRunIds.length === 0) {
+              return;
+            }
+            try {
+              await Promise.all(
+                taskData.taskRunIds.map((taskRunId) =>
+                  getConvex().mutation(api.taskRuns.updateVSCodeStatusMessage, {
+                    teamSlugOrId: safeTeam,
+                    id: taskRunId,
+                    statusMessage: message,
+                  })
+                )
+              );
+            } catch (error) {
+              console.error(
+                "[start-task] Failed to update VSCode status message",
+                error
+              );
+              serverLogger.warn(
+                "[start-task] Failed to update VSCode status message",
+                error
+              );
+            }
+          };
+
           try {
             const { checkDockerStatus } = await import(
               "@cmux/shared/providers/common/check-docker"
@@ -591,23 +682,229 @@ export function setupSocketHandlers(
               });
               return;
             }
-            // Check if the worker image is available
-            if (docker.workerImage && !docker.workerImage.isAvailable) {
-              const imageName = docker.workerImage.name;
-              if (docker.workerImage.isPulling) {
-                callback({
-                  taskId,
-                  error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
-                });
-              } else {
-                callback({
-                  taskId,
-                  error: `Docker image "${imageName}" is not available. Please pull the image first using: docker pull ${imageName}`,
-                });
+
+            const imageName =
+              docker.workerImage?.name ||
+              process.env.WORKER_IMAGE_NAME ||
+              "docker.io/manaflow/cmux:latest";
+            const dockerClient = DockerVSCodeInstance.getDocker();
+            const shouldForcePull = isMutableDockerTag(imageName);
+            let imageAvailableAfterWait = false;
+
+            if (docker.workerImage?.isPulling) {
+              serverLogger.info(
+                `Docker image "${imageName}" is currently being pulled, waiting for completion...`
+              );
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Waiting for existing pull",
+                phase: "waiting",
+              });
+              await updateTaskRunStatusMessage(
+                `Waiting for Docker image pull: ${imageName}`
+              );
+
+              const deadline = Date.now() + DOCKER_PULL_TIMEOUT_MS;
+              let lastStatusUpdate = 0;
+              while (Date.now() < deadline) {
+                try {
+                  await dockerClient.getImage(imageName).inspect();
+                  imageAvailableAfterWait = true;
+                  await updateTaskRunStatusMessage(undefined);
+                  break;
+                } catch (error) {
+                  const now = Date.now();
+                  if (now - lastStatusUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS) {
+                    lastStatusUpdate = now;
+                    await updateTaskRunStatusMessage(
+                      `Waiting for Docker image pull: ${imageName}`
+                    );
+                  }
+                  await sleep(2_000);
+                }
               }
-              return;
+
+              if (Date.now() >= deadline) {
+                await updateTaskRunStatusMessage(undefined);
+                callback({
+                  taskId,
+                  error: `Timed out waiting for Docker image "${imageName}" to finish pulling.`,
+                });
+                return;
+              }
+            }
+
+            if (!docker.workerImage?.isAvailable || shouldForcePull) {
+              serverLogger.info(
+                `Ensuring Docker image "${imageName}" is pulled before starting task`
+              );
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Starting pull",
+                phase: "pulling",
+              });
+              await updateTaskRunStatusMessage(
+                `Pulling Docker image: ${imageName}`
+              );
+
+              try {
+                const stream = await dockerClient.pull(imageName);
+                let lastProgressUpdate = 0;
+                let lastStatus = "";
+                let lastAggregatePercent = -1;
+                let lastAggregateProgress = "";
+                const layerStats = new Map<
+                  string,
+                  { current: number; total: number }
+                >();
+
+                await new Promise<void>((resolve, reject) => {
+                  const timeoutId = setTimeout(() => {
+                    reject(
+                      new Error(
+                        `Docker pull timed out after ${DOCKER_PULL_TIMEOUT_MS / 1000 / 60} minutes`
+                      )
+                    );
+                  }, DOCKER_PULL_TIMEOUT_MS);
+
+                  dockerClient.modem.followProgress(
+                    stream,
+                    (err: Error | null) => {
+                      clearTimeout(timeoutId);
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve();
+                      }
+                    },
+                    (event: DockerPullProgressEvent) => {
+                      if (!event.status) {
+                        return;
+                      }
+
+                      const now = Date.now();
+                      if (
+                        event.id &&
+                        typeof event.progressDetail?.current === "number" &&
+                        typeof event.progressDetail?.total === "number" &&
+                        event.progressDetail.total > 0
+                      ) {
+                        const previous = layerStats.get(event.id);
+                        const current = Math.max(
+                          previous?.current ?? 0,
+                          event.progressDetail.current
+                        );
+                        layerStats.set(event.id, {
+                          current,
+                          total: event.progressDetail.total,
+                        });
+                      }
+
+                      let aggregateCurrent = 0;
+                      let aggregateTotal = 0;
+                      for (const layer of layerStats.values()) {
+                        aggregateTotal += layer.total;
+                        aggregateCurrent += Math.min(layer.current, layer.total);
+                      }
+
+                      let percent =
+                        aggregateTotal > 0
+                          ? Math.round((aggregateCurrent / aggregateTotal) * 100)
+                          : undefined;
+                      if (percent !== undefined && percent >= 100) {
+                        percent = 99;
+                      }
+                      const safePercent =
+                        percent !== undefined
+                          ? Math.max(percent, lastAggregatePercent)
+                          : undefined;
+                      const aggregateProgress =
+                        aggregateTotal > 0
+                          ? `${formatBytes(aggregateCurrent)}/${formatBytes(
+                              aggregateTotal
+                            )}`
+                          : "";
+
+                      const shouldEmit =
+                        event.status !== lastStatus ||
+                        (safePercent !== undefined &&
+                          safePercent !== lastAggregatePercent) ||
+                        aggregateProgress !== lastAggregateProgress ||
+                        now - lastProgressUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS;
+
+                      if (shouldEmit) {
+                        lastStatus = event.status;
+                        lastProgressUpdate = now;
+                        if (safePercent !== undefined) {
+                          lastAggregatePercent = safePercent;
+                        }
+                        if (aggregateProgress) {
+                          lastAggregateProgress = aggregateProgress;
+                        }
+                        rt.emit("docker-pull-progress", {
+                          imageName,
+                          status: event.status,
+                          progress: aggregateProgress || event.progress,
+                          id: event.id,
+                          current:
+                            aggregateTotal > 0 ? aggregateCurrent : undefined,
+                          total: aggregateTotal > 0 ? aggregateTotal : undefined,
+                          percent: safePercent,
+                          phase: "pulling",
+                        });
+                        void updateTaskRunStatusMessage(
+                          `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
+                        );
+                      }
+                    }
+                  );
+                });
+
+                await updateTaskRunStatusMessage(undefined);
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: "Pull complete",
+                  percent: 100,
+                  phase: "complete",
+                });
+                serverLogger.info(
+                  `Successfully pulled Docker image: ${imageName}`
+                );
+              } catch (pullError) {
+                console.error("Error auto-pulling Docker image:", pullError);
+                serverLogger.error(
+                  "Error auto-pulling Docker image:",
+                  pullError
+                );
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: "Pull failed",
+                  phase: "error",
+                });
+                await updateTaskRunStatusMessage(undefined);
+                const errorMessage =
+                  pullError instanceof Error
+                    ? pullError.message
+                    : "Unknown error";
+                callback({
+                  taskId,
+                  error: `Failed to pull Docker image "${imageName}": ${errorMessage}`,
+                });
+                return;
+              }
+            } else if (imageAvailableAfterWait) {
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Pull complete",
+                percent: 100,
+                phase: "complete",
+              });
             }
           } catch (e) {
+            console.error(
+              "Failed to verify Docker status before start-task",
+              e
+            );
             serverLogger.warn(
               "Failed to verify Docker status before start-task",
               e
@@ -807,6 +1104,80 @@ export function setupSocketHandlers(
       }
     );
 
+    // Handler to check VS Code availability and optionally refresh detection
+    socket.on(
+      "check-vscode-availability",
+      async (
+        data: { refresh?: boolean } | undefined,
+        callback?: (response: {
+          available: boolean;
+          executablePath: string | null;
+          variant: string | null;
+          source: string | null;
+          suggestions: string[];
+          errors: string[];
+        }) => void
+      ) => {
+        if (!callback) {
+          return;
+        }
+
+        // In web mode, local VSCode is not used
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({
+            available: false,
+            executablePath: null,
+            variant: null,
+            source: null,
+            suggestions: ["Local workspaces are not available in the web version."],
+            errors: [],
+          });
+          return;
+        }
+
+        try {
+          let result = getLastVSCodeDetectionResult();
+
+          // If refresh requested or no cached result, re-detect
+          if (data?.refresh || !result) {
+            result = await refreshVSCodeDetection(serverLogger);
+          }
+
+          if (result?.found && result.installation) {
+            callback({
+              available: true,
+              executablePath: result.installation.executablePath,
+              variant: result.installation.variant,
+              source: result.installation.source,
+              suggestions: [],
+              errors: result.errors,
+            });
+          } else {
+            callback({
+              available: false,
+              executablePath: null,
+              variant: null,
+              source: null,
+              suggestions: result?.suggestions ?? [
+                "Install VS Code from https://code.visualstudio.com/",
+              ],
+              errors: result?.errors ?? [],
+            });
+          }
+        } catch (error) {
+          serverLogger.error("Failed to check VS Code availability:", error);
+          callback({
+            available: false,
+            executablePath: null,
+            variant: null,
+            source: null,
+            suggestions: ["An error occurred while checking VS Code availability."],
+            errors: [error instanceof Error ? error.message : "Unknown error"],
+          });
+        }
+      }
+    );
+
     socket.on(
       "create-local-workspace",
       async (
@@ -840,10 +1211,12 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          baseBranch: requestedBaseBranch,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
+          linkedFromCloudTaskRunId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
@@ -866,12 +1239,49 @@ export function setupSocketHandlers(
           return;
         }
 
+        // Early check: verify VS Code serve-web is available before doing expensive operations
+        const earlyServeWebCheck = getVSCodeServeWebBaseUrl();
+        if (!earlyServeWebCheck) {
+          // Give serve-web the full startup window to become ready (it might be starting up)
+          // Using the default timeout (~15s) to avoid premature failures on slower machines
+          const serveWebUrl = await waitForVSCodeServeWebBaseUrl();
+          if (!serveWebUrl) {
+            // Get detailed detection result for better error messaging
+            const detectionResult = getLastVSCodeDetectionResult();
+            const suggestions = detectionResult?.suggestions ?? [];
+
+            serverLogger.warn(
+              "[create-local-workspace] VS Code serve-web is not available. Local workspaces require VS Code CLI to be installed.",
+              detectionResult
+                ? {
+                    searchedLocations: detectionResult.searchedLocations.length,
+                    errors: detectionResult.errors,
+                  }
+                : {}
+            );
+
+            // Build user-friendly error message with suggestions
+            let errorMessage =
+              "VS Code is not available. Local workspaces require VS Code to be installed.";
+            if (suggestions.length > 0) {
+              errorMessage += "\n\nTo fix this:\n• " + suggestions.slice(0, 3).join("\n• ");
+            }
+
+            callback({
+              success: false,
+              error: errorMessage,
+            });
+            return;
+          }
+        }
+
         const repoUrl =
           explicitRepoUrl ??
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
         const branch = requestedBranch?.trim();
+        const baseBranch = requestedBaseBranch?.trim();
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {
@@ -918,6 +1328,7 @@ export function setupSocketHandlers(
                 projectFullName: projectFullName ?? undefined,
                 repoUrl,
                 branch,
+                linkedFromCloudTaskRunId,
               }
             );
             taskId = reservation.taskId;
@@ -1078,6 +1489,88 @@ export function setupSocketHandlers(
             })();
           };
 
+          const normalizeBranchName = (
+            value?: string | null
+          ): string | null => {
+            if (!value) {
+              return null;
+            }
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return null;
+            }
+            const withoutPrefix = trimmed
+              .replace(/^refs\/heads\//, "")
+              .replace(/^refs\/remotes\/origin\//, "")
+              .replace(/^origin\//, "");
+            const sanitized = withoutPrefix.replace(
+              /[^a-zA-Z0-9._/-]/g,
+              "-"
+            );
+            return sanitized || null;
+          };
+
+          const hasGitRef = (cwd: string, ref: string): Promise<boolean> =>
+            new Promise((resolve) => {
+              execFile(
+                "git",
+                ["rev-parse", "--verify", "--quiet", ref],
+                { cwd },
+                (error) => {
+                  resolve(!error);
+                }
+              );
+            });
+
+          const ensureBaseBranchRefs = async (
+            repoPath: string,
+            baseBranchName: string,
+            headBranchName?: string | null
+          ) => {
+            if (headBranchName && baseBranchName === headBranchName) {
+              return;
+            }
+            const remoteRef = `refs/remotes/origin/${baseBranchName}`;
+            const localRef = `refs/heads/${baseBranchName}`;
+
+            const hasRemoteRef = await hasGitRef(repoPath, remoteRef);
+            if (!hasRemoteRef) {
+              try {
+                await execFileAsync(
+                  "git",
+                  ["fetch", "origin", `${baseBranchName}:${remoteRef}`],
+                  { cwd: repoPath }
+                );
+              } catch (error) {
+                serverLogger.warn(
+                  `[create-local-workspace] Failed to fetch base branch ${baseBranchName}`,
+                  error
+                );
+                console.error(error);
+              }
+            }
+
+            const hasLocalRef = await hasGitRef(repoPath, localRef);
+            if (!hasLocalRef) {
+              const refreshedRemoteRef = await hasGitRef(repoPath, remoteRef);
+              if (refreshedRemoteRef) {
+                try {
+                  await execFileAsync(
+                    "git",
+                    ["branch", baseBranchName, `origin/${baseBranchName}`],
+                    { cwd: repoPath }
+                  );
+                } catch (error) {
+                  serverLogger.warn(
+                    `[create-local-workspace] Failed to create local base branch ${baseBranchName}`,
+                    error
+                  );
+                  console.error(error);
+                }
+              }
+            }
+          };
+
           const baseServeWebUrl =
             (await waitForVSCodeServeWebBaseUrl()) ??
             getVSCodeServeWebBaseUrl();
@@ -1174,6 +1667,30 @@ export function setupSocketHandlers(
                   : "Git clone failed to produce a checkout"
               );
             }
+
+            const normalizedHeadBranch = normalizeBranchName(branch);
+            let baseBranchName = normalizeBranchName(baseBranch);
+            if (!baseBranchName) {
+              try {
+                const repoMgr = RepositoryManager.getInstance();
+                baseBranchName = await repoMgr.getDefaultBranch(
+                  resolvedWorkspacePath
+                );
+              } catch (error) {
+                serverLogger.warn(
+                  "[create-local-workspace] Failed to detect default base branch",
+                  error
+                );
+                console.error(error);
+              }
+            }
+            if (baseBranchName) {
+              await ensureBaseBranchRefs(
+                resolvedWorkspacePath,
+                baseBranchName,
+                normalizedHeadBranch
+              );
+            }
           } else {
             try {
               await fs.mkdir(resolvedWorkspacePath, { recursive: false });
@@ -1234,6 +1751,63 @@ export function setupSocketHandlers(
               "Could not set up file watching for workspace:",
               error
             );
+          }
+
+          if (linkedFromCloudTaskRunId) {
+            // When creating a local workspace linked to a cloud task run,
+            // we need to first download all existing cloud changes before
+            // starting the local-to-cloud sync. Otherwise, the local-to-cloud
+            // sync would overwrite the cloud changes with the fresh git clone.
+            const cloudInstance = VSCodeInstance.getInstance(linkedFromCloudTaskRunId);
+            if (cloudInstance && cloudInstance.isWorkerConnected()) {
+              try {
+                const workerSocket = cloudInstance.getWorkerSocket();
+
+                // First, tell the cloud worker to start watching files and prepare for syncing
+                workerSocket.emit("worker:start-cloud-sync", {
+                  taskRunId: linkedFromCloudTaskRunId,
+                  workspacePath: "/workspace", // Default cloud workspace path
+                });
+
+                // Request a full sync of all existing cloud files
+                // Wait for the callback to ensure files are sent before starting local-to-cloud sync
+                await new Promise<void>((resolve) => {
+                  workerSocket.emit(
+                    "worker:request-full-cloud-sync",
+                    { taskRunId: linkedFromCloudTaskRunId },
+                    (result: { filesSent: number }) => {
+                      serverLogger.info(
+                        `[create-local-workspace] Full cloud sync completed: ${result.filesSent} files received from cloud`
+                      );
+                      resolve();
+                    }
+                  );
+
+                  // Timeout after 30 seconds in case of issues
+                  setTimeout(() => {
+                    serverLogger.warn(
+                      "[create-local-workspace] Full cloud sync timed out after 30s"
+                    );
+                    resolve();
+                  }, 30000);
+                });
+              } catch (error) {
+                serverLogger.warn(
+                  "[create-local-workspace] Failed to perform initial cloud sync, starting local-to-cloud sync anyway",
+                  error
+                );
+              }
+            } else {
+              serverLogger.info(
+                "[create-local-workspace] Cloud worker not connected, skipping initial cloud download"
+              );
+            }
+
+            // Now start the local-to-cloud sync
+            void localCloudSyncManager.startSync({
+              localWorkspacePath: resolvedWorkspacePath,
+              cloudTaskRunId: linkedFromCloudTaskRunId,
+            });
           }
         } catch (error) {
           serverLogger.error("Error creating local workspace:", error);
@@ -2508,10 +3082,31 @@ ${title}`;
 
         // Check if already pulling
         if (docker.workerImage?.isPulling) {
+          rt.emit("docker-pull-progress", {
+            imageName,
+            status: "Waiting for existing pull",
+            phase: "waiting",
+          });
+          const dockerClient = DockerVSCodeInstance.getDocker();
+          const deadline = Date.now() + DOCKER_PULL_TIMEOUT_MS;
+          while (Date.now() < deadline) {
+            try {
+              await dockerClient.getImage(imageName).inspect();
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Pull complete",
+                percent: 100,
+                phase: "complete",
+              });
+              callback({ success: true, imageName });
+              return;
+            } catch {
+              await sleep(2_000);
+            }
+          }
           callback({
             success: false,
-            imageName,
-            error: `Docker image "${imageName}" is already being pulled.`,
+            error: `Timed out waiting for Docker image "${imageName}" to finish pulling.`,
           });
           return;
         }
@@ -2526,11 +3121,20 @@ ${title}`;
         }
 
         serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        rt.emit("docker-pull-progress", {
+          imageName,
+          status: "Starting pull",
+          phase: "pulling",
+        });
 
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
-
         const stream = await dockerClient.pull(imageName);
+        let lastProgressUpdate = 0;
+        let lastStatus = "";
+        let lastAggregatePercent = -1;
+        let lastAggregateProgress = "";
+        const layerStats = new Map<string, { current: number; total: number }>();
 
         // Wait for the pull to complete
         await new Promise<void>((resolve, reject) => {
@@ -2543,23 +3147,102 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
-              if (event.status) {
-                serverLogger.info(
-                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+            (event: DockerPullProgressEvent) => {
+              if (!event.status) {
+                return;
+              }
+
+              const now = Date.now();
+              if (
+                event.id &&
+                typeof event.progressDetail?.current === "number" &&
+                typeof event.progressDetail?.total === "number" &&
+                event.progressDetail.total > 0
+              ) {
+                const previous = layerStats.get(event.id);
+                const current = Math.max(
+                  previous?.current ?? 0,
+                  event.progressDetail.current
                 );
+                layerStats.set(event.id, {
+                  current,
+                  total: event.progressDetail.total,
+                });
+              }
+
+              let aggregateCurrent = 0;
+              let aggregateTotal = 0;
+              for (const layer of layerStats.values()) {
+                aggregateTotal += layer.total;
+                aggregateCurrent += Math.min(layer.current, layer.total);
+              }
+
+              let percent =
+                aggregateTotal > 0
+                  ? Math.round((aggregateCurrent / aggregateTotal) * 100)
+                  : undefined;
+              if (percent !== undefined && percent >= 100) {
+                percent = 99;
+              }
+              const safePercent =
+                percent !== undefined
+                  ? Math.max(percent, lastAggregatePercent)
+                  : undefined;
+              const aggregateProgress =
+                aggregateTotal > 0
+                  ? `${formatBytes(aggregateCurrent)}/${formatBytes(
+                      aggregateTotal
+                    )}`
+                  : "";
+
+              const shouldEmit =
+                event.status !== lastStatus ||
+                (safePercent !== undefined &&
+                  safePercent !== lastAggregatePercent) ||
+                aggregateProgress !== lastAggregateProgress ||
+                now - lastProgressUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS;
+
+              if (shouldEmit) {
+                lastStatus = event.status;
+                lastProgressUpdate = now;
+                if (safePercent !== undefined) {
+                  lastAggregatePercent = safePercent;
+                }
+                if (aggregateProgress) {
+                  lastAggregateProgress = aggregateProgress;
+                }
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: event.status,
+                  progress: aggregateProgress || event.progress,
+                  id: event.id,
+                  current: aggregateTotal > 0 ? aggregateCurrent : undefined,
+                  total: aggregateTotal > 0 ? aggregateTotal : undefined,
+                  percent: safePercent,
+                  phase: "pulling",
+                });
               }
             }
           );
         });
 
         serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
-        callback({
-          success: true,
+        rt.emit("docker-pull-progress", {
           imageName,
+          status: "Pull complete",
+          percent: 100,
+          phase: "complete",
         });
+        callback({ success: true, imageName });
+        return;
       } catch (error) {
         serverLogger.error("Error pulling Docker image:", error);
+        rt.emit("docker-pull-progress", {
+          imageName:
+            process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest",
+          status: "Pull failed",
+          phase: "error",
+        });
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
 
@@ -2623,6 +3306,7 @@ ${title}`;
           if (worktreePaths.length > 0) {
             for (const worktreePath of worktreePaths) {
               gitDiffManager.unwatchWorkspace(worktreePath);
+              localCloudSyncManager.stopSync(worktreePath);
             }
             serverLogger.info(
               `Stopped git diff watchers for archived task ${taskId}: ${worktreePaths.join(", ")}`
@@ -2656,6 +3340,191 @@ ${title}`;
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+      }
+    });
+
+    socket.on("trigger-local-cloud-sync", async (data, callback) => {
+      serverLogger.info(
+        `[trigger-local-cloud-sync] RECEIVED event:`,
+        JSON.stringify(data)
+      );
+      try {
+        const parsed = TriggerLocalCloudSyncSchema.safeParse(data);
+        if (!parsed.success) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: `Invalid request: ${parsed.error.message}`,
+          };
+          callback(response);
+          return;
+        }
+
+        const { localWorkspacePath, cloudTaskRunId } = parsed.data;
+
+        // Basic path validation - must be absolute and not contain traversal
+        if (!path.isAbsolute(localWorkspacePath)) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Invalid workspace path: must be absolute",
+          };
+          callback(response);
+          return;
+        }
+
+        // Check for path traversal attempts (.. in the path after normalization)
+        const normalizedPath = path.resolve(localWorkspacePath);
+        if (normalizedPath.includes("/../") || normalizedPath.endsWith("/..")) {
+          serverLogger.warn(
+            `[trigger-local-cloud-sync] Path traversal attempt: ${localWorkspacePath}`
+          );
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Invalid workspace path",
+          };
+          callback(response);
+          return;
+        }
+
+        serverLogger.info(
+          `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
+        );
+        console.log(
+          `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
+        );
+
+        // Check if sync session exists (use original path for lookup)
+        const status = localCloudSyncManager.getStatus(localWorkspacePath);
+
+        // Always check if we need to reconnect to the cloud workspace
+        // This handles server restarts where VSCodeInstance is lost but cloud workspace is still running
+        const existingInstance = VSCodeInstance.getInstance(cloudTaskRunId);
+        console.log(
+          `[trigger-local-cloud-sync] Reconnect check: existingInstance=${!!existingInstance}, workerConnected=${existingInstance?.isWorkerConnected() ?? "N/A"}`
+        );
+        if (!existingInstance || !existingInstance.isWorkerConnected()) {
+          // Query task run to get worker URL for reconnection
+          const taskRun = await getConvex().query(api.taskRuns.get, {
+            teamSlugOrId: safeTeam,
+            id: cloudTaskRunId,
+          });
+
+          if (!taskRun) {
+            serverLogger.warn(
+              `[trigger-local-cloud-sync] Task run not found or unauthorized: ${cloudTaskRunId}`
+            );
+            const response: TriggerLocalCloudSyncResponse = {
+              success: false,
+              error: "Task run not found or unauthorized",
+            };
+            callback(response);
+            return;
+          }
+
+          let workerUrl = taskRun.vscode?.ports?.worker;
+          const vscodeStatus = taskRun.vscode?.status;
+          const vscodeUrl = taskRun.vscode?.url;
+
+          // For Morph instances, derive worker URL from VSCode URL if not stored
+          // VSCode is on port 39378, worker is on port 39377
+          if (
+            !workerUrl &&
+            vscodeUrl &&
+            taskRun.vscode?.provider === "morph"
+          ) {
+            workerUrl = vscodeUrl.replace("port-39378", "port-39377");
+            serverLogger.info(
+              `[trigger-local-cloud-sync] Derived worker URL from VSCode URL: ${workerUrl}`
+            );
+          }
+
+          if (
+            workerUrl &&
+            vscodeStatus === "running" &&
+            taskRun.vscode?.provider !== "docker"
+          ) {
+            serverLogger.info(
+              `[trigger-local-cloud-sync] No VSCodeInstance or worker disconnected, attempting to reconnect to worker at ${workerUrl}`
+            );
+            try {
+              const reconnectedInstance = await CmuxVSCodeInstance.reconnect({
+                config: {
+                  taskRunId: cloudTaskRunId,
+                  taskId: taskRun.taskId,
+                  teamSlugOrId: safeTeam,
+                },
+                workerUrl,
+                sandboxId: taskRun.vscode?.containerName,
+              });
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Successfully reconnected to cloud workspace`
+              );
+
+              // Start file watch and cloud sync after reconnecting
+              // This is critical - without this, the cloud-to-local sync won't work
+              reconnectedInstance.startFileWatch("/root/workspace");
+              reconnectedInstance.startCloudSync();
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Started file watch and cloud sync for reconnected instance`
+              );
+
+              // Set up sync-files event handler for cloud-to-local sync
+              reconnectedInstance.on(
+                "sync-files",
+                async (data: WorkerSyncFiles) => {
+                  serverLogger.info(
+                    `[trigger-local-cloud-sync] Sync files received after reconnect:`,
+                    { fileCount: data.files.length, taskRunId: data.taskRunId }
+                  );
+                  await localCloudSyncManager.handleCloudSync(data);
+                }
+              );
+            } catch (reconnectError) {
+              serverLogger.warn(
+                `[trigger-local-cloud-sync] Failed to reconnect to worker, will use lazy sync`,
+                reconnectError
+              );
+              // Continue anyway - lazy sync will handle it when worker becomes available
+            }
+          }
+        }
+
+        if (!status.found) {
+          // Start a new sync session if none exists
+          serverLogger.info(
+            `[trigger-local-cloud-sync] No existing session, starting new sync`
+          );
+          await localCloudSyncManager.startSync({
+            localWorkspacePath,
+            cloudTaskRunId,
+          });
+        }
+
+        // Trigger the sync (use original path for lookup)
+        const result =
+          await localCloudSyncManager.triggerSync(localWorkspacePath);
+
+        if (result.success) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: true,
+            message: `Queued ${result.filesQueued} files for sync`,
+            filesQueued: result.filesQueued,
+          };
+          callback(response);
+        } else {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: result.error,
+          };
+          callback(response);
+        }
+      } catch (error) {
+        serverLogger.error("[trigger-local-cloud-sync] Error:", error);
+        console.error("[trigger-local-cloud-sync] Error:", error);
+        const response: TriggerLocalCloudSyncResponse = {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        callback(response);
       }
     });
   });

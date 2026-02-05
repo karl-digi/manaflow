@@ -306,18 +306,22 @@ function estimateCollapsedLayout(
 
   if (!hasChange) {
     const totalLines = Math.max(originalLines.length, modifiedLines.length);
-    const visibleLineCount = Math.min(
-      totalLines,
-      Math.max(
-        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
-        MIN_EDITOR_LINE_FALLBACK,
-      ),
-    );
+    const { minimumLineCount } = HIDE_UNCHANGED_REGIONS_SETTINGS;
 
+    // If the file is too small to collapse, show all lines
+    if (totalLines < minimumLineCount) {
+      return {
+        visibleLineCount: Math.max(totalLines, MIN_EDITOR_LINE_FALLBACK),
+        collapsedRegionCount: 0,
+        hiddenLineCount: 0,
+      };
+    }
+
+    // File will be collapsed - show minimum lines with one collapsed region
     return {
-      visibleLineCount,
-      collapsedRegionCount: 0,
-      hiddenLineCount: 0,
+      visibleLineCount: Math.max(minimumLineCount, MIN_EDITOR_LINE_FALLBACK),
+      collapsedRegionCount: 1,
+      hiddenLineCount: totalLines - minimumLineCount,
     };
   }
 
@@ -344,29 +348,36 @@ function estimateCollapsedLayout(
     const hasNextChange =
       index < blocks.length - 1 && blocks[index + 1]?.kind === "changed";
 
-    let visibleBudget = 0;
+    // Monaco's minimumLineCount is the threshold for collapsing a region.
+    // If a region has fewer lines than minimumLineCount, it won't be collapsed.
+    // If it has more, it will be collapsed showing contextLineCount on each side.
+    const { contextLineCount, minimumLineCount } =
+      HIDE_UNCHANGED_REGIONS_SETTINGS;
+
+    // Check if this block is large enough to be collapsed by Monaco
+    if (blockLength < minimumLineCount) {
+      // Too small to collapse - show all lines
+      visibleLineCount += blockLength;
+      continue;
+    }
+
+    // Block will be collapsed by Monaco - calculate visible context lines
+    let visibleContext = 0;
 
     if (hasPreviousChange) {
-      visibleBudget += HIDE_UNCHANGED_REGIONS_SETTINGS.contextLineCount;
+      visibleContext += contextLineCount;
     }
 
     if (hasNextChange) {
-      visibleBudget += HIDE_UNCHANGED_REGIONS_SETTINGS.contextLineCount;
+      visibleContext += contextLineCount;
     }
 
+    // If no adjacent changes (isolated block), show minimum lines
     if (!hasPreviousChange && !hasNextChange) {
-      visibleBudget = Math.max(
-        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
-        MIN_EDITOR_LINE_FALLBACK,
-      );
-    } else {
-      visibleBudget = Math.max(
-        visibleBudget,
-        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
-      );
+      visibleContext = Math.max(minimumLineCount, MIN_EDITOR_LINE_FALLBACK);
     }
 
-    const displayedLines = Math.min(blockLength, visibleBudget);
+    const displayedLines = Math.min(blockLength, visibleContext);
     visibleLineCount += displayedLines;
 
     if (displayedLines < blockLength) {
@@ -494,6 +505,8 @@ function createDiffEditorMount({
     let collapsedState = false;
     let targetMinHeight = Math.max(editorMinHeight, DEFAULT_EDITOR_MIN_HEIGHT);
     let resolvedContentHeight: number | null = null;
+    let hasDiffBeenComputed = false;
+    let hasHiddenAreasBeenApplied = false;
 
     const hasResolvedHeight = () => resolvedContentHeight !== null;
 
@@ -587,7 +600,20 @@ function createDiffEditorMount({
         modifiedHeightInfo.height >= originalHeightInfo.height &&
         modifiedHeightInfo.measured;
 
-      if ((heightMatchesOriginal || heightMatchesModified) && height > 0) {
+      // Only trust the measured height after:
+      // 1. The diff has been computed AND hidden areas have been applied, OR
+      // 2. The diff has been computed AND height is less than estimated
+      //    (indicates collapsing happened synchronously with diff computation)
+      const heightIsLessThanEstimate = height < targetMinHeight * 0.9;
+      const canTrustMeasuredHeight =
+        hasDiffBeenComputed &&
+        (hasHiddenAreasBeenApplied || heightIsLessThanEstimate);
+
+      if (
+        (heightMatchesOriginal || heightMatchesModified) &&
+        height > 0 &&
+        canTrustMeasuredHeight
+      ) {
         updateResolvedContentHeight(height);
       }
 
@@ -829,17 +855,20 @@ function createDiffEditorMount({
 
     const onOriginalHiddenAreasChange = originalEditor.onDidChangeHiddenAreas(
       () => {
+        hasHiddenAreasBeenApplied = true;
         applyLayout();
       },
     );
 
     const onModifiedHiddenAreasChange = modifiedEditor.onDidChangeHiddenAreas(
       () => {
+        hasHiddenAreasBeenApplied = true;
         applyLayout();
       },
     );
 
     const onDidUpdateDiff = diffEditor.onDidUpdateDiff(() => {
+      hasDiffBeenComputed = true;
       applyLayout();
     });
 
@@ -949,7 +978,10 @@ function MonacoFileDiffRow({
   return (
     <div
       ref={rowContainerRef}
-      className={cn("bg-white dark:bg-neutral-900", classNames?.container)}
+      className={cn(
+        "bg-white dark:bg-neutral-900 border-b border-neutral-200/80 dark:border-neutral-800/70",
+        classNames?.container,
+      )}
     >
       <FileDiffHeader
         filePath={file.filePath}
@@ -963,7 +995,7 @@ function MonacoFileDiffRow({
       />
 
       <div
-        className="overflow-hidden border-b border-neutral-200 dark:border-neutral-800 flex flex-col"
+        className="overflow-hidden flex flex-col"
         style={
           isExpanded
             ? isHeightSettled
@@ -1176,7 +1208,7 @@ export function MonacoGitDiffViewer({
 
   return (
     <div className="grow bg-white dark:bg-neutral-900">
-      <div className="flex flex-col -space-y-[2px]">
+      <div className="flex flex-col">
         {fileGroups.map((file) => (
           <MemoMonacoFileDiffRow
             key={`monaco:${file.filePath}`}
@@ -1188,13 +1220,13 @@ export function MonacoGitDiffViewer({
             classNames={classNames?.fileDiffRow}
           />
         ))}
-        <hr className="border-neutral-200 dark:border-neutral-800" />
+        <hr className="border-neutral-200/80 dark:border-neutral-800/70" />
         <div className="px-3 py-6 text-center">
           <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
             You’ve reached the end of the diff!
           </span>
           <div className="grid place-content-center">
-            <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+            <pre className="mt-2 pb-12 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
               {kitty}
             </pre>
           </div>

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 
 function normalizeRepoFullName(value: string): string {
   const trimmed = value.trim();
@@ -173,5 +173,47 @@ export const getByInstallationAndRepo = internalQuery({
       )
       .first();
     return config ?? null;
+  },
+});
+
+/**
+ * Internal mutation to upsert a preview config for test/development purposes.
+ * Used by createTestPreviewTask HTTP action.
+ */
+export const upsertInternal = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    repoFullName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+    const now = Date.now();
+
+    const existing = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", args.teamId).eq("repoFullName", repoFullName),
+      )
+      .first();
+
+    if (existing) {
+      return existing._id;
+    }
+
+    const id = await ctx.db.insert("previewConfigs", {
+      teamId: args.teamId,
+      createdByUserId: args.userId,
+      repoFullName,
+      repoProvider: "github",
+      environmentId: undefined,
+      repoInstallationId: undefined,
+      repoDefaultBranch: undefined,
+      status: "active",
+      lastRunAt: undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return id;
   },
 });

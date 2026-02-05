@@ -270,6 +270,7 @@ interface ScreenshotCollectorOptions {
 interface ScreenshotCollectorResult {
   status: "completed" | "failed" | "skipped";
   screenshots?: Array<{ path: string; description?: string }>;
+  videos?: Array<{ path: string; description?: string }>;
   hasUiChanges?: boolean;
   error?: string;
   reason?: string;
@@ -464,8 +465,18 @@ function getMimeTypeFromPath(filePath: string): string {
       return "image/webp";
     case "gif":
       return "image/gif";
+    case "apng":
+      return "image/apng";
+    case "mp4":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "mov":
+      return "video/quicktime";
+    case "mkv":
+      return "video/x-matroska";
     default:
-      return "image/png";
+      return "application/octet-stream";
   }
 }
 
@@ -622,6 +633,18 @@ console.log(JSON.stringify(result));`;
 
   try {
     const result = JSON.parse(jsonLine) as ScreenshotCollectorResult;
+    // Log full stdout when no screenshots captured for debugging
+    if (!result.screenshots || result.screenshots.length === 0) {
+      console.log("[preview-jobs] Collector returned 0 screenshots, showing logs", {
+        previewRunId,
+        status: result.status,
+        hasUiChanges: result.hasUiChanges,
+        error: result.error,
+        reason: result.reason,
+        // Show last 50 lines of stdout for debugging
+        stdoutTail: stdoutLines.slice(-50).join("\n"),
+      });
+    }
     return result;
   } catch {
     console.error("[preview-jobs] Failed to parse collector JSON output", {
@@ -2009,6 +2032,7 @@ export async function runPreviewJob(
           previewRunId,
           status: collectorResult.status,
           screenshotCount: collectorResult.screenshots?.length ?? 0,
+          videoCount: collectorResult.videos?.length ?? 0,
           hasUiChanges: collectorResult.hasUiChanges,
           error: collectorResult.error,
         });
@@ -2019,6 +2043,13 @@ export async function runPreviewJob(
           mimeType: string;
           fileName?: string;
           commitSha?: string;
+          description?: string;
+        }> = [];
+
+        const uploadedVideos: Array<{
+          storageId: Id<"_storage">;
+          mimeType: string;
+          fileName?: string;
           description?: string;
         }> = [];
 
@@ -2078,12 +2109,69 @@ export async function runPreviewJob(
           }
         }
 
+        // Upload videos to Convex storage
+        if (collectorResult.status === "completed" && collectorResult.videos && collectorResult.videos.length > 0) {
+          console.log("[preview-jobs] Uploading videos to Convex storage", {
+            previewRunId,
+            videoCount: collectorResult.videos.length,
+          });
+
+          for (const video of collectorResult.videos) {
+            try {
+              // Read the video file from Morph VM
+              const fileData = await readFileFromMorph({
+                morphClient,
+                instanceId: instance.id,
+                filePath: video.path,
+              });
+
+              if (!fileData) {
+                console.warn("[preview-jobs] Failed to read video file", {
+                  previewRunId,
+                  path: video.path,
+                });
+                continue;
+              }
+
+              // Convert base64 to binary and upload to Convex storage
+              const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+              const mimeType = getMimeTypeFromPath(video.path);
+              const blob = new Blob([binaryData], { type: mimeType });
+              const storageId = await ctx.storage.store(blob);
+
+              // Extract filename from path
+              const fileName = video.path.split("/").pop() || "video.mp4";
+
+              uploadedVideos.push({
+                storageId,
+                mimeType,
+                fileName,
+                description: video.description,
+              });
+
+              console.log("[preview-jobs] Uploaded video", {
+                previewRunId,
+                path: video.path,
+                storageId,
+                size: fileData.size,
+              });
+            } catch (uploadError) {
+              console.error("[preview-jobs] Failed to upload video", {
+                previewRunId,
+                path: video.path,
+                error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+              });
+            }
+          }
+        }
+
         let finalStatus = collectorResult.status;
         let finalError = collectorResult.error || collectorResult.reason;
         if (
           collectorResult.status === "completed" &&
           collectorResult.hasUiChanges === false &&
-          uploadedImages.length === 0
+          uploadedImages.length === 0 &&
+          uploadedVideos.length === 0
         ) {
           finalStatus = "skipped";
           finalError = finalError || "No UI changes detected - screenshots skipped";
@@ -2094,6 +2182,7 @@ export async function runPreviewJob(
           status: finalStatus,
           originalStatus: collectorResult.status,
           imageCount: uploadedImages.length,
+          videoCount: uploadedVideos.length,
           hasUiChanges: collectorResult.hasUiChanges,
         });
 
@@ -2105,6 +2194,7 @@ export async function runPreviewJob(
             error: finalError,
             hasUiChanges: collectorResult.hasUiChanges,
             images: uploadedImages,
+            videos: uploadedVideos,
           });
 
           console.log("[preview-jobs] Screenshot set created, triggering GitHub comment update", {

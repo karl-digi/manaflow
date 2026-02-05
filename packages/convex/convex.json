@@ -9,7 +9,9 @@
       "@opentelemetry/context-async-hooks",
       "@opentelemetry/sdk-trace-node",
       "@sentry/node",
-      "@sentry/opentelemetry"
+      "@sentry/opentelemetry",
+      "@cmux/e2b-client",
+      "e2b"
     ],
     "nodeVersion": "22"
   }

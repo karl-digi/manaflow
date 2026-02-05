@@ -11,7 +11,9 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   ChevronLeft,
   ChevronRight,
+  Images,
   Maximize2,
+  Play,
   RotateCcw,
   X,
   ZoomIn,
@@ -22,13 +24,18 @@ import type { Id } from "@cmux/convex/dataModel";
 
 type ScreenshotStatus = "completed" | "failed" | "skipped";
 
-interface ScreenshotImage {
+interface ScreenshotMediaBase {
   storageId: Id<"_storage">;
   mimeType: string;
   fileName?: string | null;
   commitSha?: string | null;
+  description?: string | null;
   url?: string | null;
 }
+
+type ScreenshotImage = ScreenshotMediaBase;
+
+type ScreenshotVideo = ScreenshotMediaBase;
 
 interface RunScreenshotSet {
   _id: Id<"taskRunScreenshotSets">;
@@ -40,6 +47,7 @@ interface RunScreenshotSet {
   capturedAt: number;
   error?: string | null;
   images: ScreenshotImage[];
+  videos?: ScreenshotVideo[];
 }
 
 interface RunScreenshotGalleryProps {
@@ -50,43 +58,83 @@ interface RunScreenshotGalleryProps {
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 40;
 
-const STATUS_LABELS: Record<ScreenshotStatus, string> = {
-  completed: "Completed",
-  failed: "Failed",
-  skipped: "Skipped",
-};
-
-const STATUS_STYLES: Record<ScreenshotStatus, string> = {
-  completed:
-    "bg-emerald-100/70 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
-  failed: "bg-rose-100/70 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300",
-  skipped:
-    "bg-neutral-200/70 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
-};
-
-const NO_UI_CHANGES_MESSAGE =
-  "No UI changes detected - skipped screenshot workflow.";
-
 const NO_UI_CHANGES_ERROR_SNIPPETS = [
   "Claude collector reported success but returned no files",
   "returned no files in the git diff",
+  "no ui changes",
+  "no files to capture",
+  "No UI changes detected",
 ];
 
-function isNoUiChangesError(error?: string | null): boolean {
-  if (!error) {
-    return false;
+function detectEmptyReason(set: RunScreenshotSet): {
+  reason: "no-ui-changes" | "failed" | "skipped" | "empty";
+  message: string;
+} {
+  // Check explicit hasUiChanges flag
+  if (set.hasUiChanges === false) {
+    return {
+      reason: "no-ui-changes",
+      message: "No UI changes detected in this diff. Screenshot capture was skipped since there were no visual changes to verify.",
+    };
   }
-  const normalized = error.toLowerCase();
-  return NO_UI_CHANGES_ERROR_SNIPPETS.some((snippet) =>
-    normalized.includes(snippet.toLowerCase())
-  );
+
+  // Check for error messages indicating no UI changes
+  if (set.error) {
+    const normalizedError = set.error.toLowerCase();
+    const isNoUiChangesError = NO_UI_CHANGES_ERROR_SNIPPETS.some((snippet) =>
+      normalizedError.includes(snippet.toLowerCase())
+    );
+    if (isNoUiChangesError) {
+      return {
+        reason: "no-ui-changes",
+        message: "No UI changes detected in this diff. Screenshot capture was skipped since there were no visual changes to verify.",
+      };
+    }
+  }
+
+  // Check status
+  if (set.status === "failed") {
+    return {
+      reason: "failed",
+      message: set.error
+        ? `Screenshot capture failed: ${set.error}`
+        : "Screenshot capture failed before any media could be saved.",
+    };
+  }
+
+  if (set.status === "skipped") {
+    return {
+      reason: "skipped",
+      message: "Screenshot capture was skipped for this run.",
+    };
+  }
+
+  return {
+    reason: "empty",
+    message: "No screenshots or videos were captured for this run.",
+  };
 }
 
-const getImageKey = (
+type MediaKind = "image" | "video";
+
+type GalleryItem = {
+  set: RunScreenshotSet;
+  media: ScreenshotMediaBase;
+  kind: MediaKind;
+  indexInSet: number;
+  key: string;
+};
+
+type GalleryEntry = GalleryItem & {
+  globalIndex: number;
+};
+
+const getMediaKey = (
   setId: Id<"taskRunScreenshotSets">,
-  image: ScreenshotImage,
+  kind: MediaKind,
+  media: ScreenshotMediaBase,
   indexInSet: number,
-) => `${setId}:${image.storageId}:${indexInSet}`;
+) => `${setId}:${kind}:${media.storageId}:${indexInSet}`;
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const { screenshotSets } = props;
@@ -101,39 +149,57 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     })[screenshotSets.length - 1];
   }, [screenshotSets]);
 
-  const flattenedImages = useMemo(() => {
+  const mediaItems = useMemo<GalleryItem[]>(() => {
     if (!latestScreenshotSet) return [];
-    const entries: Array<{
-      set: RunScreenshotSet;
-      image: ScreenshotImage;
-      indexInSet: number;
-      key: string;
-      globalIndex: number;
-    }> = [];
+    const entries: GalleryItem[] = [];
     latestScreenshotSet.images.forEach((image, indexInSet) => {
-      if (!image.url) {
-        return;
-      }
       entries.push({
         set: latestScreenshotSet,
-        image,
+        media: image,
+        kind: "image",
         indexInSet,
-        key: getImageKey(latestScreenshotSet._id, image, indexInSet),
-        globalIndex: entries.length,
+        key: getMediaKey(latestScreenshotSet._id, "image", image, indexInSet),
+      });
+    });
+    // Filter out animated preview images (GIF/APNG) - they are only used for GitHub comment embedding, not gallery display
+    const displayableVideos = latestScreenshotSet.videos?.filter(
+      (video) => video.mimeType !== "image/apng" && video.mimeType !== "image/gif"
+    );
+    displayableVideos?.forEach((video, indexInSet) => {
+      entries.push({
+        set: latestScreenshotSet,
+        media: video,
+        kind: "video",
+        indexInSet,
+        key: getMediaKey(latestScreenshotSet._id, "video", video, indexInSet),
       });
     });
     return entries;
   }, [latestScreenshotSet]);
 
+  const flattenedMedia = useMemo<GalleryEntry[]>(() => {
+    const entries: GalleryEntry[] = [];
+    mediaItems.forEach((entry) => {
+      if (!entry.media.url) {
+        return;
+      }
+      entries.push({
+        ...entry,
+        globalIndex: entries.length,
+      });
+    });
+    return entries;
+  }, [mediaItems]);
+
   const globalIndexByKey = useMemo(() => {
     const indexMap = new Map<string, number>();
-    flattenedImages.forEach((entry) => {
+    flattenedMedia.forEach((entry) => {
       indexMap.set(entry.key, entry.globalIndex);
     });
     return indexMap;
-  }, [flattenedImages]);
+  }, [flattenedMedia]);
 
-  const [activeImageKey, setActiveImageKey] = useState<string | null>(null);
+  const [activeMediaKey, setActiveMediaKey] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -221,13 +287,13 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     resetZoomState({ zoom: clampedZoom, offset: initialOffset });
   };
 
-  const activeImageIndex =
-    activeImageKey !== null ? globalIndexByKey.get(activeImageKey) ?? null : null;
+  const activeMediaIndex =
+    activeMediaKey !== null ? globalIndexByKey.get(activeMediaKey) ?? null : null;
   const currentEntry =
-    activeImageIndex !== null &&
-      activeImageIndex >= 0 &&
-      activeImageIndex < flattenedImages.length
-      ? flattenedImages[activeImageIndex]
+    activeMediaIndex !== null &&
+      activeMediaIndex >= 0 &&
+      activeMediaIndex < flattenedMedia.length
+      ? flattenedMedia[activeMediaIndex]
       : null;
 
   const activeOverallIndex =
@@ -236,13 +302,13 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
       : null;
 
   useEffect(() => {
-    if (activeImageKey === null) {
+    if (activeMediaKey === null) {
       return;
     }
-    if (flattenedImages.length === 0 || !globalIndexByKey.has(activeImageKey)) {
-      setActiveImageKey(null);
+    if (flattenedMedia.length === 0 || !globalIndexByKey.has(activeMediaKey)) {
+      setActiveMediaKey(null);
     }
-  }, [activeImageKey, flattenedImages.length, globalIndexByKey]);
+  }, [activeMediaKey, flattenedMedia.length, globalIndexByKey]);
 
   useEffect(() => {
     defaultZoomRef.current = 1;
@@ -252,45 +318,47 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   }, [currentEntry?.key, resetZoomState]);
 
   const closeSlideshow = useCallback(() => {
-    setActiveImageKey(null);
+    setActiveMediaKey(null);
   }, []);
 
   const goNext = useCallback(() => {
-    if (activeImageIndex === null) {
+    if (activeMediaIndex === null) {
       return;
     }
-    const len = flattenedImages.length;
+    const len = flattenedMedia.length;
     if (len <= 1) {
       return;
     }
-    const nextIndex = (activeImageIndex + 1) % len;
-    setActiveImageKey(flattenedImages[nextIndex]?.key ?? null);
-  }, [activeImageIndex, flattenedImages]);
+    const nextIndex = (activeMediaIndex + 1) % len;
+    setActiveMediaKey(flattenedMedia[nextIndex]?.key ?? null);
+  }, [activeMediaIndex, flattenedMedia]);
 
   const goPrev = useCallback(() => {
-    if (activeImageIndex === null) {
+    if (activeMediaIndex === null) {
       return;
     }
-    const len = flattenedImages.length;
+    const len = flattenedMedia.length;
     if (len <= 1) {
       return;
     }
-    const prevIndex = (activeImageIndex - 1 + len) % len;
-    setActiveImageKey(flattenedImages[prevIndex]?.key ?? null);
-  }, [activeImageIndex, flattenedImages]);
+    const prevIndex = (activeMediaIndex - 1 + len) % len;
+    setActiveMediaKey(flattenedMedia[prevIndex]?.key ?? null);
+  }, [activeMediaIndex, flattenedMedia]);
 
   const isSlideshowOpen = Boolean(currentEntry);
-  const hasMultipleImages = flattenedImages.length > 1;
-  const showNavButtons = hasMultipleImages;
+  const hasMultipleMedia = flattenedMedia.length > 1;
+  const showNavButtons = hasMultipleMedia;
+  const isImageActive = currentEntry?.kind === "image";
   const effectiveScale = Math.max(0, zoom * baseImageScale);
   const zoomPercent = Math.round(effectiveScale * 100);
-  const canZoomIn = zoom < MAX_ZOOM - 0.001;
-  const canZoomOut = zoom > MIN_ZOOM + 0.001;
-  const canResetZoom = zoom !== 1 || offset.x !== 0 || offset.y !== 0;
+  const canZoomIn = isImageActive && zoom < MAX_ZOOM - 0.001;
+  const canZoomOut = isImageActive && zoom > MIN_ZOOM + 0.001;
+  const canResetZoom =
+    isImageActive && (zoom !== 1 || offset.x !== 0 || offset.y !== 0);
 
   const handleWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
-      if (!currentEntry || !viewportRef.current) {
+      if (!currentEntry || !viewportRef.current || currentEntry.kind !== "image") {
         return;
       }
       event.preventDefault();
@@ -319,7 +387,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
 
   const startPanning = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!currentEntry || event.button !== 0) {
+      if (!currentEntry || currentEntry.kind !== "image" || event.button !== 0) {
         return;
       }
       event.preventDefault();
@@ -434,21 +502,49 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
+  const openFirstMedia = useCallback(() => {
+    if (flattenedMedia.length > 0 && flattenedMedia[0]) {
+      setActiveMediaKey(flattenedMedia[0].key);
+    }
+  }, [flattenedMedia]);
+
   if (!latestScreenshotSet) {
     return null;
   }
 
+  const imageCount = latestScreenshotSet.images.length;
+  const videoCount = latestScreenshotSet.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0;
+  const totalMediaCount = imageCount + videoCount;
+
+  const emptyReason = totalMediaCount === 0 ? detectEmptyReason(latestScreenshotSet) : null;
+
   return (
-    <section className="border-b border-neutral-200 bg-neutral-50/60 dark:border-neutral-800 dark:bg-neutral-950/40">
-      <div className="px-3.5 pt-3 pb-2 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          Screenshots
-        </h2>
-        <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          Latest capture
+    <section>
+      <div className="px-2 py-1.5 flex items-center gap-2">
+        {totalMediaCount > 0 ? (
+          <button
+            type="button"
+            onClick={openFirstMedia}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[13px] font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            title="View previews"
+          >
+            <Images className="w-3.5 h-3.5" />
+            <span>Previews</span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 text-[13px] font-medium text-neutral-600 dark:text-neutral-400">
+            <Images className="w-3.5 h-3.5" />
+            <span>Previews</span>
+          </div>
+        )}
+        <span className="text-[11px] text-neutral-500 dark:text-neutral-500">
+          {imageCount > 0 && `${imageCount} ${imageCount === 1 ? "screenshot" : "screenshots"}`}
+          {imageCount > 0 && videoCount > 0 && " and "}
+          {videoCount > 0 && `${videoCount} ${videoCount === 1 ? "video" : "videos"}`}
+          {totalMediaCount === 0 && "0 items"}
         </span>
       </div>
-      <div className="px-3.5 pb-4 space-y-4">
+      <div className="px-3 pb-3">
         {currentEntry ? (
           <Dialog.Root
             open={isSlideshowOpen}
@@ -461,10 +557,15 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                   <div className="space-y-1">
                     <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                       {activeOverallIndex !== null ? `${activeOverallIndex}. ` : ""}
-                      {currentEntry.image.fileName ?? "Screenshot"}
+                      {currentEntry.media.fileName ??
+                        (currentEntry.kind === "video" ? "Video" : "Screenshot")}
                     </Dialog.Title>
                     <Dialog.Description className="text-xs text-neutral-600 dark:text-neutral-400">
-                      Image {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
+                      {currentEntry.kind === "video" ? "Video" : "Image"}{" "}
+                      {currentEntry.indexInSet + 1} of{" "}
+                      {currentEntry.kind === "video"
+                        ? currentEntry.set.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0
+                        : currentEntry.set.images.length}
                       <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
                       {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
                         addSuffix: true,
@@ -472,38 +573,44 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     </Dialog.Description>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
-                      <button
-                        type="button"
-                        onClick={handleZoomOut}
-                        disabled={!canZoomOut}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Zoom out"
-                      >
-                        <ZoomOut className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="min-w-[3rem] text-center tabular-nums">
-                        {zoomPercent}%
+                    {isImageActive ? (
+                      <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
+                        <button
+                          type="button"
+                          onClick={handleZoomOut}
+                          disabled={!canZoomOut}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Zoom out"
+                        >
+                          <ZoomOut className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="min-w-[3rem] text-center tabular-nums">
+                          {zoomPercent}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleZoomIn}
+                          disabled={!canZoomIn}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Zoom in"
+                        >
+                          <ZoomIn className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resetZoomState()}
+                          disabled={!canResetZoom}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Reset zoom"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
+                        Video
                       </span>
-                      <button
-                        type="button"
-                        onClick={handleZoomIn}
-                        disabled={!canZoomIn}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Zoom in"
-                      >
-                        <ZoomIn className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => resetZoomState()}
-                        disabled={!canResetZoom}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Reset zoom"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    )}
                     <Dialog.Close asChild>
                       <button
                         type="button"
@@ -531,11 +638,13 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     ref={viewportRef}
                     className={cn(
                       "relative flex h-[70vh] max-h-[calc(100vh-10rem)] min-h-[360px] w-full flex-1 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900",
-                      zoom > 1
-                        ? isPanning
-                          ? "cursor-grabbing"
-                          : "cursor-grab"
-                        : "cursor-zoom-in",
+                      isImageActive
+                        ? zoom > 1
+                          ? isPanning
+                            ? "cursor-grabbing"
+                            : "cursor-grab"
+                          : "cursor-zoom-in"
+                        : "cursor-default",
                     )}
                     onWheel={handleWheel}
                     onPointerDown={startPanning}
@@ -546,17 +655,27 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     onDoubleClick={() => resetZoomState()}
                     style={{ touchAction: "none" }}
                   >
-                    <img
-                      src={currentEntry.image.url ?? undefined}
-                      alt={currentEntry.image.fileName ?? "Screenshot"}
-                      className="select-none h-full w-full object-contain"
-                      draggable={false}
-                      onLoad={handleImageLoad}
-                      style={{
-                        transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
-                        transition: isPanning ? "none" : "transform 120ms ease-out",
-                      }}
-                    />
+                    {currentEntry.kind === "image" ? (
+                      <img
+                        src={currentEntry.media.url ?? undefined}
+                        alt={currentEntry.media.fileName ?? "Screenshot"}
+                        className="select-none h-full w-full object-contain"
+                        draggable={false}
+                        onLoad={handleImageLoad}
+                        style={{
+                          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+                          transition: isPanning ? "none" : "transform 120ms ease-out",
+                        }}
+                      />
+                    ) : (
+                      <video
+                        src={currentEntry.media.url ?? undefined}
+                        className="h-full w-full object-contain"
+                        controls
+                        preload="metadata"
+                        playsInline
+                      />
+                    )}
                   </div>
                   {showNavButtons ? (
                     <button
@@ -569,24 +688,26 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     </button>
                   ) : null}
                 </div>
-                {hasMultipleImages ? (
+                {hasMultipleMedia ? (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                      <span className="sr-only">All screenshots</span>
+                      <span className="sr-only">All captures</span>
                       <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
-                        {activeOverallIndex ?? "–"} / {flattenedImages.length}
+                        {activeOverallIndex ?? "–"} / {flattenedMedia.length}
                       </span>
                     </div>
                     <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                      {flattenedImages.map((entry) => {
+                      {flattenedMedia.map((entry) => {
                         const isActiveThumb = entry.key === currentEntry?.key;
                         const label = entry.globalIndex + 1;
-                        const displayName = entry.image.fileName ?? "Screenshot";
+                        const displayName =
+                          entry.media.fileName ??
+                          (entry.kind === "video" ? "Video" : "Screenshot");
                         return (
                           <button
                             key={entry.key}
                             type="button"
-                            onClick={() => setActiveImageKey(entry.key)}
+                            onClick={() => setActiveMediaKey(entry.key)}
                             className={cn(
                               "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
                             )}
@@ -594,13 +715,23 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                             aria-current={isActiveThumb ? "true" : undefined}
                             title={displayName}
                           >
-                            <img
-                              src={entry.image.url ?? undefined}
-                              alt={displayName}
-                              className="h-full w-full object-contain"
-                              loading="lazy"
-                              decoding="async"
-                            />
+                            {entry.kind === "image" ? (
+                              <img
+                                src={entry.media.url ?? undefined}
+                                alt={displayName}
+                                className="h-full w-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : (
+                              <video
+                                src={entry.media.url ?? undefined}
+                                className="h-full w-full object-contain"
+                                muted
+                                preload="metadata"
+                                playsInline
+                              />
+                            )}
                             <span className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-neutral-950/80 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-neutral-900/90">
                               {label}
                             </span>
@@ -614,122 +745,74 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             </Dialog.Portal>
           </Dialog.Root>
         ) : null}
-        {(() => {
-          const set = latestScreenshotSet;
-          const capturedAtDate = new Date(set.capturedAt);
-          const relativeCapturedAt = formatDistanceToNow(capturedAtDate, {
-            addSuffix: true,
-          });
-          const shortCommit = set.commitSha?.slice(0, 12);
-          const isNoUiChanges =
-            set.hasUiChanges === false || isNoUiChangesError(set.error);
-          const statusLabel = isNoUiChanges
-            ? STATUS_LABELS.skipped
-            : STATUS_LABELS[set.status];
-          const statusStyle = isNoUiChanges
-            ? STATUS_STYLES.skipped
-            : STATUS_STYLES[set.status];
-          const detailMessage = isNoUiChanges
-            ? NO_UI_CHANGES_MESSAGE
-            : set.error;
-          const detailClass = isNoUiChanges
-            ? "text-neutral-500 dark:text-neutral-400"
-            : "text-rose-600 dark:text-rose-400";
-          const showEmptyStateMessage = set.images.length === 0 && !isNoUiChanges;
+        {totalMediaCount > 0 ? (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {mediaItems.map((entry) => {
+              const displayLabel =
+                entry.media.description ??
+                entry.media.fileName ??
+                (entry.kind === "video" ? "Video" : "Screenshot");
+              const stableKey = entry.key;
+              if (!entry.media.url) {
+                return (
+                  <div
+                    key={stableKey}
+                    className="flex h-48 w-80 flex-shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-neutral-100 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800/50 dark:text-neutral-400"
+                  >
+                    URL expired
+                  </div>
+                );
+              }
+              const flatIndex = globalIndexByKey.get(stableKey) ?? null;
+              const humanIndex = flatIndex !== null ? flatIndex + 1 : null;
 
-          return (
-            <article
-              className={cn(
-                "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950/70 p-3 transition-shadow"
-              )}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "px-2 py-0.5 text-xs font-medium rounded-full",
-                    statusStyle
-                  )}
+              return (
+                <button
+                  key={stableKey}
+                  type="button"
+                  onClick={() => setActiveMediaKey(stableKey)}
+                  className="group relative flex flex-shrink-0 flex-col text-left"
+                  aria-label={`Open ${displayLabel} in slideshow`}
+                  title={displayLabel}
                 >
-                  {statusLabel}
-                </span>
-                <span
-                  className="text-xs text-neutral-600 dark:text-neutral-400"
-                  title={capturedAtDate.toLocaleString()}
-                >
-                  {relativeCapturedAt}
-                </span>
-                {shortCommit && (
-                  <span className="text-xs font-mono text-neutral-600 dark:text-neutral-400">
-                    {shortCommit.toLowerCase()}
+                  <div className="relative overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-700">
+                    {entry.kind === "image" ? (
+                      <img
+                        src={entry.media.url}
+                        alt={displayLabel}
+                        className="h-48 w-80 object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <video
+                        src={entry.media.url}
+                        className="h-48 w-80 object-cover"
+                        muted
+                        preload="metadata"
+                        playsInline
+                      />
+                    )}
+                    <div className="absolute top-1.5 right-1.5 rounded bg-neutral-900/70 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                      {entry.kind === "video" ? (
+                        <Play className="h-3.5 w-3.5" />
+                      ) : (
+                        <Maximize2 className="h-3.5 w-3.5" />
+                      )}
+                    </div>
+                  </div>
+                  <span className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 line-clamp-3 w-80">
+                    {humanIndex !== null ? `${humanIndex}. ` : ""}
+                    {displayLabel}
                   </span>
-                )}
-                {set.images.length > 0 && (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-500">
-                    {set.images.length}{" "}
-                    {set.images.length === 1 ? "image" : "images"}
-                  </span>
-                )}
-              </div>
-              {detailMessage && (
-                <p className={cn("mt-2 text-xs", detailClass)}>
-                  {detailMessage}
-                </p>
-              )}
-              {set.images.length > 0 ? (
-                <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
-                  {set.images.map((image, indexInSet) => {
-                    const displayName = image.fileName ?? "Screenshot";
-                    const stableKey = getImageKey(set._id, image, indexInSet);
-                    if (!image.url) {
-                      return (
-                        <div
-                          key={stableKey}
-                          className="flex h-48 min-w-[200px] items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-100 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
-                        >
-                          URL expired
-                        </div>
-                      );
-                    }
-                    const flatIndex = globalIndexByKey.get(stableKey) ?? null;
-                    const humanIndex = flatIndex !== null ? flatIndex + 1 : null;
-
-                    return (
-                      <button
-                        key={stableKey}
-                        type="button"
-                        onClick={() => setActiveImageKey(stableKey)}
-                        className={cn(
-                          "group relative flex w-[220px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500"
-                        )}
-                        aria-label={`Open ${displayName} in slideshow`}
-                      >
-                        <img
-                          src={image.url}
-                          alt={displayName}
-                          className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
-                          loading="lazy"
-                        />
-                        <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
-                          <Maximize2 className="h-3.5 w-3.5" />
-                        </div>
-                        <div className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-300 truncate">
-                          {humanIndex !== null ? `${humanIndex}. ` : ""}
-                          {displayName}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : showEmptyStateMessage ? (
-                <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                  {set.status === "failed"
-                    ? "Screenshot capture failed before any images were saved."
-                    : "No screenshots were captured for this attempt."}
-                </p>
-              ) : null}
-            </article>
-          );
-        })()}
+                </button>
+              );
+            })}
+          </div>
+        ) : emptyReason ? (
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
+            {emptyReason.message}
+          </p>
+        ) : null}
       </div>
     </section>
   );

@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
   Image as ImageIcon,
+  Video as VideoIcon,
   AlertCircle,
   CheckCircle2,
   Clock,
@@ -60,6 +61,14 @@ type ScreenshotImage = {
   url?: string | null;
 };
 
+type ScreenshotVideo = {
+  storageId: string;
+  mimeType: string;
+  fileName?: string | null;
+  description?: string | null;
+  url?: string | null;
+};
+
 type ScreenshotSet = {
   _id: string;
   status: "completed" | "failed" | "skipped";
@@ -67,6 +76,7 @@ type ScreenshotSet = {
   capturedAt: number;
   error?: string | null;
   images: ScreenshotImage[];
+  videos?: ScreenshotVideo[] | null;
 };
 
 type TestJob = {
@@ -762,7 +772,7 @@ function PreviewTestDashboardInner({
                       </div>
                     )}
 
-                    {/* Screenshots */}
+                    {/* Screenshots and Videos */}
                     {job.screenshotSet ? (
                       job.screenshotSet.hasUiChanges === false ? (
                         <div className="flex items-center gap-2 rounded-md bg-neutral-800/50 px-3 py-2 text-sm text-neutral-400">
@@ -770,63 +780,113 @@ function PreviewTestDashboardInner({
                           No UI changes detected - skipped screenshot workflow
                         </div>
                       ) : (
-                        <div>
-                          <h4 className="mb-3 text-sm font-medium text-white">
-                            Screenshots ({job.screenshotSet.images.length})
-                          </h4>
+                        <div className="space-y-6">
                           {job.screenshotSet.error && (
-                            <div className="mb-3 rounded-md bg-red-900/20 px-3 py-2 text-sm text-red-300">
+                            <div className="rounded-md bg-red-900/20 px-3 py-2 text-sm text-red-300">
                               Error: {job.screenshotSet.error}
                             </div>
                           )}
-                          {job.screenshotSet.images.length > 0 ? (
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                              {job.screenshotSet.images.map((image, index) => (
-                                <div
-                                  key={image.storageId}
-                                  className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800"
-                                >
-                                  {image.url ? (
-                                    <a
-                                      href={image.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external URL */}
-                                      <img
-                                        src={image.url}
-                                        alt={
-                                          image.description ??
-                                          `Screenshot ${index + 1}`
-                                        }
-                                        className="aspect-video w-full object-cover hover:opacity-90"
-                                      />
-                                    </a>
-                                  ) : (
-                                    <div className="flex aspect-video items-center justify-center bg-neutral-900">
-                                      <ImageIcon className="h-8 w-8 text-neutral-600" />
-                                    </div>
-                                  )}
-                                  {image.description && (
-                                    <div className="px-3 py-2">
-                                      <p className="text-sm text-neutral-300">
-                                        {image.description}
-                                      </p>
-                                      {image.fileName && (
-                                        <p className="mt-1 text-xs text-neutral-500">
-                                          {image.fileName}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+
+                          {/* Videos section */}
+                          {job.screenshotSet.videos && job.screenshotSet.videos.length > 0 && (
+                            <div>
+                              <h4 className="mb-3 text-sm font-medium text-white">
+                                Videos ({job.screenshotSet.videos.length})
+                              </h4>
+                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                {job.screenshotSet.videos.map((video) => (
+                                  <div
+                                    key={video.storageId}
+                                    className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800"
+                                  >
+                                    {video.url ? (
+                                      <video
+                                        src={video.url}
+                                        controls
+                                        className="aspect-video w-full object-cover"
+                                        preload="metadata"
+                                      >
+                                        Your browser does not support the video tag.
+                                      </video>
+                                    ) : (
+                                      <div className="flex aspect-video items-center justify-center bg-neutral-900">
+                                        <VideoIcon className="h-8 w-8 text-neutral-600" />
+                                      </div>
+                                    )}
+                                    {(video.description || video.fileName) && (
+                                      <div className="px-3 py-2">
+                                        {video.description && (
+                                          <p className="text-sm text-neutral-300">
+                                            {video.description}
+                                          </p>
+                                        )}
+                                        {video.fileName && (
+                                          <p className="mt-1 text-xs text-neutral-500">
+                                            {video.fileName}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          ) : (
-                            <p className="text-sm text-neutral-500">
-                              No screenshots captured
-                            </p>
                           )}
+
+                          {/* Screenshots section */}
+                          <div>
+                            <h4 className="mb-3 text-sm font-medium text-white">
+                              Screenshots ({job.screenshotSet.images.length})
+                            </h4>
+                            {job.screenshotSet.images.length > 0 ? (
+                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                {job.screenshotSet.images.map((image, index) => (
+                                  <div
+                                    key={image.storageId}
+                                    className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800"
+                                  >
+                                    {image.url ? (
+                                      <a
+                                        href={image.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external URL */}
+                                        <img
+                                          src={image.url}
+                                          alt={
+                                            image.description ??
+                                            `Screenshot ${index + 1}`
+                                          }
+                                          className="aspect-video w-full object-cover hover:opacity-90"
+                                        />
+                                      </a>
+                                    ) : (
+                                      <div className="flex aspect-video items-center justify-center bg-neutral-900">
+                                        <ImageIcon className="h-8 w-8 text-neutral-600" />
+                                      </div>
+                                    )}
+                                    {image.description && (
+                                      <div className="px-3 py-2">
+                                        <p className="text-sm text-neutral-300">
+                                          {image.description}
+                                        </p>
+                                        {image.fileName && (
+                                          <p className="mt-1 text-xs text-neutral-500">
+                                            {image.fileName}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-neutral-500">
+                                No screenshots captured
+                              </p>
+                            )}
+                          </div>
                         </div>
                       )
                     ) : job.status === "running" ? (

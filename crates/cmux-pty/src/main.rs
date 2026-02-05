@@ -216,6 +216,115 @@ fn default_rows() -> u16 {
     24
 }
 
+// =============================================================================
+// Security: Shell and CWD Validation
+// =============================================================================
+
+/// Allowed shells for PTY sessions (whitelist to prevent command injection)
+const ALLOWED_SHELLS: &[&str] = &[
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/zsh",
+    "/bin/fish",
+    "/bin/dash",
+    "/bin/ash",
+    "/usr/bin/sh",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/bin/fish",
+];
+
+/// Mapping from common shell names to their allowed absolute paths
+/// This allows clients to pass bare shell names like "bash" or "zsh"
+const SHELL_NAME_MAPPINGS: &[(&str, &str)] = &[
+    ("sh", "/bin/sh"),
+    ("bash", "/bin/bash"),
+    ("zsh", "/bin/zsh"),
+    ("fish", "/bin/fish"),
+    ("dash", "/bin/dash"),
+    ("ash", "/bin/ash"),
+];
+
+/// Allowed base directories for cwd (prevent path traversal)
+/// Note: Both with and without trailing slashes are checked
+const ALLOWED_CWD_PREFIXES: &[&str] = &[
+    "/home",
+    "/root",
+    "/tmp",
+    "/var/tmp",
+    "/workspace",
+    "/workspaces",
+    "/Users", // macOS home directories
+];
+
+/// Validate the shell path against whitelist
+fn validate_shell(shell: &str) -> Result<&'static str, &'static str> {
+    // First, check if the input is already an allowed absolute path
+    if ALLOWED_SHELLS.contains(&shell) {
+        // Return the matching static str from the whitelist
+        return Ok(ALLOWED_SHELLS.iter().find(|&&s| s == shell).unwrap());
+    }
+
+    // If not an absolute path, try to map common shell names to their paths
+    // This supports inputs like "bash", "zsh", "sh" without full paths
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(shell);
+
+    for (name, path) in SHELL_NAME_MAPPINGS {
+        if shell_name == *name {
+            return Ok(path);
+        }
+    }
+
+    warn!(
+        "[security] Rejected shell: {} (not in whitelist or known mappings)",
+        shell
+    );
+    Err("Shell not in allowed list")
+}
+
+/// Validate and canonicalize the cwd path
+fn validate_cwd(cwd: &str) -> Result<String, &'static str> {
+    use std::path::Path;
+
+    let path = Path::new(cwd);
+
+    // Check for path traversal attempts in the raw input
+    let cwd_normalized = cwd.replace("\\", "/");
+    if cwd_normalized.contains("..") {
+        warn!("[security] Path traversal attempt in cwd: {}", cwd);
+        return Err("Path traversal not allowed");
+    }
+
+    // Path must be absolute
+    if !path.is_absolute() {
+        warn!("[security] Relative cwd path rejected: {}", cwd);
+        return Err("cwd must be an absolute path");
+    }
+
+    // Check against allowed prefixes
+    // This handles both exact matches (e.g., "/root") and paths with children (e.g., "/root/workspace")
+    let path_str = path.to_str().ok_or("Invalid cwd path encoding")?;
+    let is_allowed = ALLOWED_CWD_PREFIXES.iter().any(|prefix| {
+        // Exact match (e.g., cwd="/root" matches prefix="/root")
+        path_str == *prefix
+            // Path is under the prefix (e.g., cwd="/root/foo" starts with "/root/")
+            || path_str.starts_with(&format!("{}/", prefix))
+    });
+
+    if !is_allowed {
+        warn!(
+            "[security] cwd outside allowed directories: {} (allowed: {:?})",
+            cwd, ALLOWED_CWD_PREFIXES
+        );
+        return Err("cwd must be within allowed directories");
+    }
+
+    Ok(path_str.to_string())
+}
+
 impl Default for CreateSessionRequest {
     fn default() -> Self {
         Self {
@@ -854,6 +963,14 @@ fn create_pty_session_inner(
     state: &AppState,
     request: &CreateSessionRequest,
 ) -> Result<(Arc<PtySession>, Box<dyn Read + Send>), ServerError> {
+    // Security: Validate shell against whitelist
+    let validated_shell = validate_shell(&request.shell)
+        .map_err(|e| ServerError::PtySpawnError(format!("Invalid shell: {}", e)))?;
+
+    // Security: Validate and sanitize cwd path
+    let validated_cwd = validate_cwd(&request.cwd)
+        .map_err(|e| ServerError::PtySpawnError(format!("Invalid cwd: {}", e)))?;
+
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -865,11 +982,11 @@ fn create_pty_session_inner(
         })
         .map_err(|e| ServerError::PtySpawnError(e.to_string()))?;
 
-    let mut cmd = CommandBuilder::new(&request.shell);
-    cmd.cwd(&request.cwd);
+    let mut cmd = CommandBuilder::new(validated_shell);
+    cmd.cwd(&validated_cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("SHELL", &request.shell);
+    cmd.env("SHELL", validated_shell);
 
     if let Some(env) = &request.env {
         for (key, value) in env {
@@ -898,7 +1015,7 @@ fn create_pty_session_inner(
     let name = request
         .name
         .clone()
-        .unwrap_or_else(|| state.get_next_terminal_name(&request.shell));
+        .unwrap_or_else(|| state.get_next_terminal_name(validated_shell));
 
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -921,8 +1038,8 @@ fn create_pty_session_inner(
             master: pair.master,
             child,
         }),
-        shell: request.shell.clone(),
-        cwd: request.cwd.clone(),
+        shell: validated_shell.to_string(),
+        cwd: validated_cwd,
         name: RwLock::new(name),
         index: RwLock::new(index),
         created_at,

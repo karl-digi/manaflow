@@ -31,6 +31,9 @@ export const get = authQuery({
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
+    // Exclude linked local workspaces (they're shown under their parent cloud run)
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
+
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
       q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
@@ -86,7 +89,9 @@ export const getArchivedPaginated = authQuery({
         idx.eq("teamId", teamId).eq("userId", userId),
       )
       .filter((qq) => qq.eq(qq.field("isArchived"), true))
-      .filter((qq) => qq.neq(qq.field("isPreview"), true));
+      .filter((qq) => qq.neq(qq.field("isPreview"), true))
+      // Exclude linked local workspaces (they're shown under their parent cloud run)
+      .filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
 
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
@@ -150,6 +155,9 @@ export const getWithNotificationOrder = authQuery({
     }
 
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude linked local workspaces (they're shown under their parent cloud run)
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
 
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
@@ -849,6 +857,16 @@ export const recordScreenshotResult = internalMutation({
         }),
       ),
     ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -864,6 +882,7 @@ export const recordScreenshotResult = internalMutation({
 
     const now = Date.now();
     const screenshots = args.screenshots ?? [];
+    const videos = args.videos ?? [];
 
     const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
       taskId: args.taskId,
@@ -879,9 +898,17 @@ export const recordScreenshotResult = internalMutation({
         fileName: screenshot.fileName,
         description: screenshot.description,
       })),
+      videos: videos.length > 0 ? videos.map((video) => ({
+        storageId: video.storageId,
+        mimeType: video.mimeType,
+        fileName: video.fileName,
+        description: video.description,
+      })) : undefined,
       createdAt: now,
       updatedAt: now,
     });
+
+    const hasMedia = screenshots.length > 0 || videos.length > 0;
 
     const patch: Record<string, unknown> = {
       screenshotStatus: args.status,
@@ -889,16 +916,25 @@ export const recordScreenshotResult = internalMutation({
       screenshotRequestedAt: now,
       updatedAt: now,
       latestScreenshotSetId:
-        args.status === "completed" && screenshots.length > 0
+        args.status === "completed" && hasMedia
           ? screenshotSetId
           : undefined,
     };
 
     if (args.status === "completed" && screenshots.length > 0) {
+      // Use first screenshot for primary thumbnail
       patch.screenshotStorageId = screenshots[0].storageId;
       patch.screenshotMimeType = screenshots[0].mimeType;
       patch.screenshotFileName = screenshots[0].fileName;
       patch.screenshotCommitSha = screenshots[0].commitSha;
+      patch.screenshotCompletedAt = now;
+      patch.screenshotError = undefined;
+    } else if (args.status === "completed" && videos.length > 0) {
+      // No screenshot thumbnail available, but still mark as completed
+      patch.screenshotStorageId = undefined;
+      patch.screenshotMimeType = undefined;
+      patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
       patch.screenshotCompletedAt = now;
       patch.screenshotError = undefined;
     } else {
@@ -1102,6 +1138,40 @@ export const createForPreview = internalMutation({
   },
 });
 
+/**
+ * Create a minimal test task for development/testing purposes.
+ * Used by the test preview task endpoint.
+ */
+export const createTestTask = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    name: v.string(),
+    repoUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: args.name,
+      description: "Test task for screenshot collection development",
+      projectFullName: args.repoUrl,
+      baseBranch: undefined,
+      worktreePath: undefined,
+      isCompleted: false,
+      isPreview: true,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      images: undefined,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: undefined,
+      isCloudWorkspace: true,
+    });
+    return taskId;
+  },
+});
+
 export const setCompletedInternal = internalMutation({
   args: {
     taskId: v.id("tasks"),
@@ -1123,5 +1193,49 @@ export const setCompletedInternal = internalMutation({
         crownEvaluationStatus: args.crownEvaluationStatus,
       }),
     });
+  },
+});
+
+/**
+ * Get local workspace task linked from a cloud task run.
+ * Used to show linked local VS Code entry in the sidebar under cloud task runs.
+ */
+export const getLinkedLocalWorkspace = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    cloudTaskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Find local workspace task linked from this cloud task run
+    const linkedTask = await ctx.db
+      .query("tasks")
+      .withIndex("by_linked_cloud_task_run", (q) =>
+        q.eq("linkedFromCloudTaskRunId", args.cloudTaskRunId),
+      )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .first();
+
+    if (!linkedTask) {
+      return null;
+    }
+
+    // Get the task run for the linked local workspace (we need its ID and vscode status)
+    const taskRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", linkedTask._id))
+      .first();
+
+    if (!taskRun) {
+      return null;
+    }
+
+    return {
+      task: linkedTask,
+      taskRun,
+    };
   },
 });

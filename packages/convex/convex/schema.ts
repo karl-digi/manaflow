@@ -84,6 +84,8 @@ const convexSchema = defineSchema({
     ),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
+    // Onboarding
+    onboardingCompletedAt: v.optional(v.number()), // Timestamp when user completed/skipped onboarding
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -99,6 +101,7 @@ const convexSchema = defineSchema({
     isPreview: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
+    linkedFromCloudTaskRunId: v.optional(v.id("taskRuns")), // For local workspaces created from a cloud task run's git diff viewer
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
@@ -167,7 +170,8 @@ const convexSchema = defineSchema({
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
-    .index("by_team_preview", ["teamId", "isPreview"]),
+    .index("by_team_preview", ["teamId", "isPreview"])
+    .index("by_linked_cloud_task_run", ["linkedFromCloudTaskRunId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -244,6 +248,23 @@ const convexSchema = defineSchema({
     screenshotFileName: v.optional(v.string()),
     screenshotCommitSha: v.optional(v.string()),
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+    // AI-generated claims about the run (for verification/review)
+    claims: v.optional(
+      v.array(
+        v.object({
+          claim: v.string(),
+          evidence: v.object({
+            type: v.string(),
+            screenshotIndex: v.optional(v.number()),
+            filePath: v.optional(v.string()),
+            startLine: v.optional(v.number()),
+            endLine: v.optional(v.number()),
+          }),
+          timestamp: v.number(),
+        })
+      )
+    ),
+    claimsGeneratedAt: v.optional(v.number()),
     // VSCode instance information
     vscode: v.optional(
       v.object({
@@ -342,6 +363,16 @@ const convexSchema = defineSchema({
         commitSha: v.optional(v.string()),
         description: v.optional(v.string()),
       }),
+    ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -570,6 +601,7 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    autoSyncEnabled: v.optional(v.boolean()), // Auto-sync local workspace to cloud (default: true)
     nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
     // Heatmap review settings
     heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2")
@@ -1174,6 +1206,7 @@ const convexSchema = defineSchema({
     type: v.union(
       v.literal("run_completed"),
       v.literal("run_failed"),
+      v.literal("run_needs_input"),
     ),
     message: v.optional(v.string()), // Optional summary message
     readAt: v.optional(v.number()), // Null/undefined means unread
@@ -1557,6 +1590,51 @@ const convexSchema = defineSchema({
     .index("by_phone_unread", ["phoneNumber", "isRead", "createdAt"])
     .index("by_phone", ["phoneNumber", "createdAt"])
     .index("by_conversation", ["conversationId"]),
+
+  // User-owned devbox instances (standalone sandboxes not tied to task runs)
+  devboxInstances: defineTable({
+    devboxId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
+    userId: v.string(), // Owner user ID
+    teamId: v.string(), // Team scope
+    name: v.optional(v.string()), // User-friendly name
+    source: v.optional(v.union(v.literal("cli"), v.literal("web"))), // Where instance was created
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("unknown")
+    ),
+    environmentId: v.optional(v.id("environments")), // Optional linked environment
+    metadata: v.optional(v.record(v.string(), v.string())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastAccessedAt: v.optional(v.number()), // When user last accessed the instance
+    stoppedAt: v.optional(v.number()), // When instance was stopped
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_team_user", ["teamId", "userId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_status", ["status", "updatedAt"]),
+
+  // Provider-specific info for devbox instances (maps our ID to provider details)
+  devboxInfo: defineTable({
+    devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
+    provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name (extensible for future providers)
+    providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
+    snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
+    createdAt: v.number(),
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_providerInstanceId", ["providerInstanceId"]),
+
+  // E2B instance activity tracking (for managing instance lifecycle)
+  e2bInstanceActivity: defineTable({
+    instanceId: v.string(), // E2B sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+  }).index("by_instanceId", ["instanceId"]),
 });
 
 export default convexSchema;

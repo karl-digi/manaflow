@@ -57,7 +57,20 @@ export function formatClaudeMessage(message: SDKMessage): string {
 ✅ Success (${baseInfo}, $${message.total_cost_usd.toFixed(4)})
    Result: ${message.result}`;
       }
-      return `❌ Error: ${message.subtype} (${baseInfo}, $${message.total_cost_usd.toFixed(4)})`;
+      // Log full error details for debugging
+      const errorDetails: string[] = [];
+      if (message.is_error) {
+        errorDetails.push(`is_error: true`);
+      }
+      if ("errors" in message && Array.isArray(message.errors)) {
+        errorDetails.push(`errors: ${JSON.stringify(message.errors)}`);
+      }
+      if ("result" in message && message.result) {
+        errorDetails.push(`result: ${message.result}`);
+      }
+      // Log the full message for debugging
+      errorDetails.push(`full_message: ${JSON.stringify(message, null, 2)}`);
+      return `❌ Error: ${message.subtype} (${baseInfo}, $${message.total_cost_usd.toFixed(4)})\n   ${errorDetails.join("\n   ")}`;
     }
 
     case "system": {
@@ -216,6 +229,16 @@ function formatToolInput(
       return ` ${selector}`;
     }
 
+    case "mcp___video__start_video": {
+      const name = input.name || "recording";
+      return ` 🎬 Starting "${name}"`;
+    }
+
+    case "mcp___video__end_video": {
+      const name = input.name || "recording";
+      return ` 🛑 Ending "${name}"`;
+    }
+
     case "TodoWrite": {
       const todos = input.todos as Array<{ content: string; status: string }>;
       if (!todos || todos.length === 0) {
@@ -259,7 +282,7 @@ function formatToolInput(
 }
 
 function getToolEmoji(toolName: string): string {
-  // MCP tools
+  // MCP tools - Playwright
   if (toolName.startsWith("mcp___playwright_mcp__browser_")) {
     const action = toolName.replace("mcp___playwright_mcp__browser_", "");
     switch (action) {
@@ -279,6 +302,19 @@ function getToolEmoji(toolName: string): string {
         return "❌";
       default:
         return "🎭";
+    }
+  }
+
+  // MCP tools - Video recording
+  if (toolName.startsWith("mcp___video__")) {
+    const action = toolName.replace("mcp___video__", "");
+    switch (action) {
+      case "start_video":
+        return "🎬";
+      case "end_video":
+        return "🛑";
+      default:
+        return "📹";
     }
   }
 
