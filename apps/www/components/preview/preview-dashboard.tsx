@@ -22,6 +22,7 @@ import {
   Github,
   Home,
   // Link2, // commented out: quick setup input is disabled
+  Lock,
   Loader2,
   Monitor,
   MoreVertical,
@@ -488,6 +489,299 @@ function VSCodeTabBar({ children }: VSCodeTabBarProps) {
   return (
     <div className="flex items-center bg-[#252526] border-b border-[#2d2d2d]">
       {children}
+    </div>
+  );
+}
+
+type MockNavItem = {
+  label: string;
+  icon: LucideIcon;
+  active?: boolean;
+};
+
+type MockSidebarItem = {
+  title: string;
+  subtitle: string;
+  status: "success" | "pending" | "neutral";
+};
+
+type MockWorkspaceItem = {
+  title: string;
+  items: string[];
+  active?: boolean;
+};
+
+type MockPinnedTask = {
+  text: string;
+  owner: string;
+};
+
+function MockCmuxStartRun() {
+  const navItems: MockNavItem[] = [
+    { label: "Home", icon: Home, active: true },
+    { label: "Environments", icon: Server },
+    { label: "Settings", icon: Settings },
+  ];
+
+  const pullRequests: MockSidebarItem[] = [
+    { title: "Devbox", subtitle: "cmux/devbox-v1", status: "success" },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260120...",
+      status: "success",
+    },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260119...",
+      status: "success",
+    },
+    {
+      title: "Add iOS app with Stack Au...",
+      subtitle: "swift-ios-clean",
+      status: "pending",
+    },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260118...",
+      status: "neutral",
+    },
+  ];
+
+  const workspaces: MockWorkspaceItem[] = [
+    {
+      title: "Refactor Mac downloa...",
+      items: ["VS Code", "Git diff"],
+    },
+    {
+      title: "claude/opus-4.5",
+      items: ["VS Code", "Git diff"],
+    },
+    {
+      title: "codex/gpt-5-high",
+      items: ["VS Code", "Git diff"],
+      active: true,
+    },
+  ];
+
+  const pinnedTasks: MockPinnedTask[] = [
+    {
+      text: "we need to implement rsync between the local vscode to the cloud vscode for th...",
+      owner: "cmux",
+    },
+    {
+      text: "our normal git diff viewer should have the sidebar thing where we can easily filter...",
+      owner: "cmux-helpers",
+    },
+    {
+      text: "i think the trimming feature in the hostScreenshotCollector is too much...",
+      owner: "cmux",
+    },
+    {
+      text: "for some reason the cmux terminal is still not showing up all of the time...",
+      owner: "cmux",
+    },
+    {
+      text: "the env picker dropdown should show recent repos first by default...",
+      owner: "cmux",
+    },
+  ];
+
+  return (
+    <div className="w-[960px] h-[600px] rounded-2xl border border-neutral-800/80 bg-neutral-950/95 shadow-[0_30px_80px_rgba(0,0,0,0.55)] overflow-hidden flex flex-col">
+      <div className="relative flex items-center justify-center h-10 bg-neutral-900/90 border-b border-neutral-800/80">
+        <div className="absolute left-4 flex items-center gap-2">
+          <div className="h-3 w-3 rounded-full bg-[#ff5f57] border border-[#e0443e]" />
+          <div className="h-3 w-3 rounded-full bg-[#febc2e] border border-[#d89e24]" />
+          <div className="h-3 w-3 rounded-full bg-[#28c840] border border-[#1aab29]" />
+        </div>
+        <div className="flex items-center gap-2 rounded-full bg-neutral-800/80 px-3 py-1 text-[11px] text-neutral-200">
+          <Lock className="h-3 w-3 text-neutral-400" />
+          <span>cmux - Start a Run</span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        <aside className="w-[230px] bg-neutral-950/80 border-r border-neutral-800 flex flex-col min-h-0">
+          <div className="px-4 pt-4 pb-3 flex items-center gap-2 text-neutral-100 text-sm font-semibold">
+            <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
+            cmux
+          </div>
+
+          <nav className="px-2 space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.label}
+                  className={clsx(
+                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+                    item.active
+                      ? "bg-neutral-900/70 text-neutral-100"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </nav>
+
+          <div className="mt-4 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+            Pull requests
+          </div>
+          <div className="mt-2 space-y-2 px-2">
+            {pullRequests.map((item) => (
+              <div
+                key={`${item.title}-${item.subtitle}`}
+                className="space-y-0.5"
+              >
+                <div className="flex items-center gap-2 text-xs text-neutral-200">
+                  <span
+                    className={clsx(
+                      "h-2 w-2 rounded-full",
+                      item.status === "success" && "bg-emerald-400",
+                      item.status === "pending" && "bg-purple-400",
+                      item.status === "neutral" && "bg-neutral-500"
+                    )}
+                  />
+                  <span className="truncate">{item.title}</span>
+                  <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-auto" />
+                </div>
+                <div className="pl-4 text-[10px] text-neutral-500">
+                  {item.subtitle}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+            Workspaces
+          </div>
+          <div className="mt-2 space-y-2 px-2 pb-3">
+            {workspaces.map((workspace) => (
+              <div
+                key={workspace.title}
+                className={clsx(
+                  "rounded-md px-2 py-1.5",
+                  workspace.active
+                    ? "bg-neutral-900/70 text-neutral-100"
+                    : "text-neutral-300"
+                )}
+              >
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="truncate">{workspace.title}</span>
+                  {workspace.active ? (
+                    <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-auto" />
+                  ) : null}
+                </div>
+                <div className="mt-1 space-y-1 pl-4 text-[10px] text-neutral-500">
+                  {workspace.items.map((item) => (
+                    <div key={item} className="flex items-center gap-1.5">
+                      {item === "VS Code" ? (
+                        <VSCodeIcon className="h-2.5 w-2.5 grayscale opacity-70" />
+                      ) : (
+                        <GitCompareIcon className="h-2.5 w-2.5" />
+                      )}
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <main className="flex-1 bg-neutral-950/35 flex flex-col min-h-0">
+          <div className="px-6 pt-5 pb-4">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+              cmux
+            </div>
+            <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
+              <div className="text-sm text-neutral-500">Describe a task</div>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <Github className="h-3 w-3" />
+                manaflow-ai/cmux
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <GitBranch className="h-3 w-3 text-emerald-400" />
+                main
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <span className="h-2 w-2 rounded-full bg-sky-400" />
+                codex/gpt-5.2-codex-xhigh
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Monitor className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 rounded-md bg-sky-500 px-3 text-[11px] font-semibold text-white"
+                >
+                  Start
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 px-6 pb-6">
+            <div className="flex items-center gap-4 text-xs text-neutral-400 border-b border-neutral-800 pb-2">
+              <button
+                type="button"
+                className="text-neutral-100 border-b border-sky-400 pb-2 -mb-2"
+              >
+                Tasks
+              </button>
+              <button type="button" className="hover:text-neutral-200">
+                Previews
+              </button>
+              <button type="button" className="hover:text-neutral-200">
+                Archived
+              </button>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Pinned 5
+            </div>
+            <div className="mt-3 space-y-2">
+              {pinnedTasks.map((task) => (
+                <div
+                  key={task.text}
+                  className="flex items-start gap-2 text-xs text-neutral-200"
+                >
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  <span className="flex-1 min-w-0 truncate">
+                    {task.text}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-neutral-500">
+                    {task.owner}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
@@ -2550,39 +2844,18 @@ function MockGitHubPRBrowser() {
                   >
                     {/* Browser Panel */}
                     <div
-                      className="bg-[#1e1e1e] flex flex-col"
+                      className="bg-[#0b0f14] flex flex-col"
                       style={{ height: `${topPanelHeight}%` }}
                     >
-                      {/* Panel header */}
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                        <Monitor className="h-4 w-4 text-[#858585]" />
-                        <span className="text-xs text-[#cccccc]">Browser</span>
-                      </div>
-                      {/* Browser inside with VS Code style tabs */}
-                      <div className="flex-1 flex flex-col bg-[#1e1e1e] overflow-hidden">
-                        {/* VS Code style tab bar */}
-                        <VSCodeTabBar>
-                          <VSCodeTab
-                            icon={<TabFavicon />}
-                            label="cmux.dev"
-                            isActive
-                          />
-                        </VSCodeTabBar>
-                        {/* Browser content - cmux.dev landing page */}
-                        <div className="flex-1 bg-[#030712] overflow-hidden">
-                          <iframe
-                            src="https://cmux.dev"
-                            className={clsx(
-                              "border-0 origin-top-left",
-                              isResizing && "pointer-events-none"
-                            )}
-                            style={{
-                              width: "200%",
-                              height: "200%",
-                              transform: "scale(0.5)",
-                            }}
-                            title="cmux landing page"
-                          />
+                      <div className="flex-1 bg-[#0b0f14] overflow-hidden">
+                        <div
+                          className={clsx(
+                            "origin-top-left w-[200%] h-[200%] flex items-center justify-center",
+                            isResizing && "pointer-events-none"
+                          )}
+                          style={{ transform: "scale(0.5)" }}
+                        >
+                          <MockCmuxStartRun />
                         </div>
                       </div>
                     </div>
@@ -3005,45 +3278,16 @@ function MockGitHubPRBrowser() {
 
               {/* Single panel: Browser */}
               {viewMode === "browser" && (
-                <div className="flex-1 bg-[#1e1e1e] flex flex-col">
-                  {/* Panel header */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                    <Monitor className="h-4 w-4 text-[#858585]" />
-                    <span className="text-xs text-[#cccccc]">Browser</span>
-                    <div className="ml-auto flex items-center gap-1">
-                      <button
-                        onClick={() => setViewMode("all")}
-                        className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded text-[10px]"
-                      >
-                        Back to all
-                      </button>
-                    </div>
-                  </div>
-                  {/* Browser inside with VS Code style tabs */}
-                  <div className="flex-1 flex flex-col bg-[#1e1e1e] overflow-hidden">
-                    {/* VS Code style tab bar */}
-                    <VSCodeTabBar>
-                      <VSCodeTab
-                        icon={<TabFavicon />}
-                        label="cmux.dev"
-                        isActive
-                      />
-                    </VSCodeTabBar>
-                    {/* Browser content - cmux.dev landing page */}
-                    <div className="flex-1 bg-[#030712] overflow-hidden">
-                      <iframe
-                        src="https://cmux.dev"
-                        className={clsx(
-                          "border-0 origin-top-left",
-                          isResizing && "pointer-events-none"
-                        )}
-                        style={{
-                          width: "200%",
-                          height: "200%",
-                          transform: "scale(0.5)",
-                        }}
-                        title="cmux landing page"
-                      />
+                <div className="flex-1 bg-[#0b0f14] flex flex-col">
+                  <div className="flex-1 bg-[#0b0f14] overflow-hidden">
+                    <div
+                      className={clsx(
+                        "origin-top-left w-[200%] h-[200%] flex items-center justify-center",
+                        isResizing && "pointer-events-none"
+                      )}
+                      style={{ transform: "scale(0.5)" }}
+                    >
+                      <MockCmuxStartRun />
                     </div>
                   </div>
                 </div>

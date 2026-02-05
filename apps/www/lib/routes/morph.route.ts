@@ -1006,3 +1006,8 @@ morphRouter.openapi(
     }
   }
 );
+
+// NOTE: CLI Credentials endpoint was removed for security reasons.
+// The shared Morph API key should NEVER be exposed to clients.
+// All Morph operations must be proxied through the backend which enforces
+// proper team/user access controls.

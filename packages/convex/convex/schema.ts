@@ -1185,6 +1185,52 @@ const convexSchema = defineSchema({
     lastResumedAt: v.optional(v.number()), // When instance was last resumed via UI
     stoppedAt: v.optional(v.number()), // When instance was permanently stopped
   }).index("by_instanceId", ["instanceId"]),
+
+  // User-owned devbox instances (standalone sandboxes not tied to task runs)
+  devboxInstances: defineTable({
+    devboxId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
+    userId: v.string(), // Owner user ID
+    teamId: v.string(), // Team scope
+    name: v.optional(v.string()), // User-friendly name
+    source: v.optional(v.union(v.literal("cli"), v.literal("web"))), // Where instance was created
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("unknown")
+    ),
+    environmentId: v.optional(v.id("environments")), // Optional linked environment
+    metadata: v.optional(v.record(v.string(), v.string())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastAccessedAt: v.optional(v.number()), // When user last accessed the instance
+    stoppedAt: v.optional(v.number()), // When instance was stopped
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_team_user", ["teamId", "userId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_status", ["status", "updatedAt"]),
+
+  // Provider-specific info for devbox instances (maps our ID to provider details)
+  devboxInfo: defineTable({
+    devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
+    provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name (extensible for future providers)
+    providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
+    snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
+    createdAt: v.number(),
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_providerInstanceId", ["providerInstanceId"]),
+
+  // E2B instance activity tracking (for managing instance lifecycle)
+  e2bInstanceActivity: defineTable({
+    instanceId: v.string(), // E2B sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+  }).index("by_instanceId", ["instanceId"]),
+
 });
 
 export default convexSchema;

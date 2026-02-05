@@ -78,6 +78,32 @@ export const recordResume = authMutation({
 });
 
 /**
+ * Record that a Morph instance was resumed (internal, for cmux devbox CLI and cron jobs).
+ */
+export const recordResumeInternal = internalMutation({
+  args: {
+    instanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("morphInstanceActivity")
+      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        lastResumedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("morphInstanceActivity", {
+        instanceId: args.instanceId,
+        lastResumedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
  * Record that a Morph instance was paused (internal, for cron jobs).
  */
 export const recordPauseInternal = internalMutation({
