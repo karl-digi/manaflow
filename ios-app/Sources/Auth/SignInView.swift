@@ -195,20 +195,20 @@ struct SignInView: View {
 
     private var appleSignInView: some View {
         ZStack {
-            GlassSurface(cornerRadius: 14, isPressed: isAppleSigningIn)
-
             AppleSignInButton(isLoading: authManager.isLoading || isAppleSigningIn) {
                 Task { await signInWithApple() }
             }
+            .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .padding(2)
-            .accessibilityIdentifier("signin.apple")
 
             if isAppleSigningIn {
                 ProgressView()
                     .tint(appleProgressColor)
             }
         }
+        .background(GlassSurface(cornerRadius: 14, isPressed: isAppleSigningIn, shadowOpacity: 0))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityIdentifier("signin.apple")
     }
 
     private func signInWithApple() async {
@@ -245,6 +245,10 @@ struct SignInView: View {
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .fill(Color(.secondarySystemBackground))
+                    .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .onTapGesture {
+                        dismissKeyboard()
+                    }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -315,11 +319,18 @@ struct SignInView: View {
 private struct GlassSurface: View {
     let cornerRadius: CGFloat
     let isPressed: Bool
+    let shadowOpacity: Double
     @SwiftUI.Environment(\.colorScheme) private var colorScheme
+
+    init(cornerRadius: CGFloat, isPressed: Bool, shadowOpacity: Double = 0.6) {
+        self.cornerRadius = cornerRadius
+        self.isPressed = isPressed
+        self.shadowOpacity = shadowOpacity
+    }
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.ultraThinMaterial)
+            .fill(.regularMaterial)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(glassTint)
@@ -340,17 +351,17 @@ private struct GlassSurface: View {
                     )
                     .blendMode(.screen)
             )
-            .shadow(color: glassShadow, radius: 10, x: 0, y: 6)
+            .shadow(color: glassShadow, radius: 8, x: 0, y: 4)
     }
 
     private var glassTint: Color {
-        let base = colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.28)
-        let pressed = colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.38)
+        let base = colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.36)
+        let pressed = colorScheme == .dark ? Color.white.opacity(0.24) : Color.white.opacity(0.5)
         return isPressed ? pressed : base
     }
 
     private var glassBorder: Color {
-        colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.08)
+        colorScheme == .dark ? Color.white.opacity(0.24) : Color.black.opacity(0.12)
     }
 
     private var glassHighlight: Color {
@@ -358,7 +369,8 @@ private struct GlassSurface: View {
     }
 
     private var glassShadow: Color {
-        colorScheme == .dark ? Color.black.opacity(0.35) : Color.black.opacity(0.12)
+        let base = colorScheme == .dark ? Color.black.opacity(0.35) : Color.black.opacity(0.12)
+        return base.opacity(shadowOpacity)
     }
 }
 
@@ -385,7 +397,7 @@ private struct AppleSignInButton: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-        let style: ASAuthorizationAppleIDButton.Style = colorScheme == .dark ? .white : .black
+        let style: ASAuthorizationAppleIDButton.Style = .whiteOutline
         let button = ASAuthorizationAppleIDButton(type: .signIn, style: style)
         button.cornerRadius = 12
         button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)

@@ -18,13 +18,13 @@ final class AuthPresentationContextProvider: NSObject, ASWebAuthenticationPresen
 
     private func resolveAnchor() -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let activeScene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-        if let window = activeScene?.windows.first(where: { $0.isKeyWindow }) ?? activeScene?.windows.first {
+        let activeScene = scenes.first { $0.activationState == .foregroundActive }
+        guard let anchorScene = activeScene ?? scenes.first else {
+            fatalError("AuthPresentationContextProvider: no window scene available")
+        }
+        if let window = anchorScene.windows.first(where: { $0.isKeyWindow }) ?? anchorScene.windows.first {
             return window
         }
-        if let activeScene {
-            return UIWindow(windowScene: activeScene)
-        }
-        return UIWindow(frame: .zero)
+        return UIWindow(windowScene: anchorScene)
     }
 }

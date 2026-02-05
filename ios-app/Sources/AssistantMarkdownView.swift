@@ -1162,9 +1162,13 @@ private struct SelectableTextView: UIViewRepresentable {
             primaryActionFor textItem: UITextItem,
             defaultAction: UIAction
         ) -> UIAction? {
-            guard let url = textItem.link else { return defaultAction }
-            return UIAction { [weak self] _ in
-                self?.onOpenURL(url)
+            switch textItem.content {
+            case .link(let url):
+                return UIAction { [weak self] _ in
+                    self?.onOpenURL(url)
+                }
+            default:
+                return defaultAction
             }
         }
     }

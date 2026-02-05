@@ -22,7 +22,11 @@ struct ContentView: View {
                 ChatFix1MainView(conversationId: uiTestConversationId, providerId: uiTestProviderId)
                     .ignoresSafeArea()
             } else if uiTestDirectChat {
+                #if DEBUG
                 InputBarUITestHarnessView()
+                #else
+                SignInView()
+                #endif
             } else if authManager.isRestoringSession {
                 SessionRestoreView()
             } else if authManager.isAuthenticated {

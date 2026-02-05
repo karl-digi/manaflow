@@ -3998,7 +3998,7 @@ private final class TopFadeView: UIView {
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
         updateColors()
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] _, previousTraitCollection in
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: TopFadeView, previousTraitCollection: UITraitCollection) in
             guard let self else { return }
             if previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle {
                 self.updateColors()
@@ -4045,7 +4045,7 @@ private final class BottomFadeView: UIView {
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
         updateColors()
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] _, previousTraitCollection in
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: BottomFadeView, previousTraitCollection: UITraitCollection) in
             guard let self else { return }
             if previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle {
                 self.updateColors()
