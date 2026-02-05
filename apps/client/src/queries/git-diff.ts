@@ -80,6 +80,7 @@ export function gitDiffQueryOptions({
       });
     },
     staleTime: 10_000,
+    refetchOnMount: "always",
     enabled: Boolean(canonicalHeadRef) && Boolean(repoKey.trim()),
   });
 }
