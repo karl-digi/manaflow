@@ -471,6 +471,42 @@ export type PveLxcResumeTaskRunBody = {
     teamSlugOrId: string;
 };
 
+export type PveLxcPreviewInstanceStartResponse = {
+    instanceId: string;
+    vmid: number;
+    status: string;
+    networking: {
+        httpServices: Array<{
+            name: string;
+            port: number;
+            url: string;
+        }>;
+        hostname?: string;
+        fqdn?: string;
+    };
+};
+
+export type PveLxcPreviewInstanceStartBody = {
+    snapshotId: string;
+    templateVmid?: number;
+    metadata?: {
+        [key: string]: string;
+    };
+    ttlSeconds?: number;
+    ttlAction?: 'pause' | 'stop';
+};
+
+export type PveLxcPreviewInstanceExecResponse = {
+    exit_code: number;
+    stdout: string;
+    stderr: string;
+};
+
+export type PveLxcPreviewInstanceExecBody = {
+    command: string;
+    timeoutMs?: number;
+};
+
 export type PveLxcCheckTaskRunStoppedResponse = {
     stopped: boolean;
     deleted?: boolean;
@@ -2210,6 +2246,155 @@ export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponses = {
 };
 
 export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponse = PostApiPveLxcTaskRunsByTaskRunIdResumeResponses[keyof PostApiPveLxcTaskRunsByTaskRunIdResumeResponses];
+
+export type PostApiPveLxcPreviewInstancesStartData = {
+    body: PveLxcPreviewInstanceStartBody;
+    path?: never;
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/start';
+};
+
+export type PostApiPveLxcPreviewInstancesStartErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Failed to start instance
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesStartResponses = {
+    /**
+     * PVE LXC instance started
+     */
+    200: PveLxcPreviewInstanceStartResponse;
+};
+
+export type PostApiPveLxcPreviewInstancesStartResponse = PostApiPveLxcPreviewInstancesStartResponses[keyof PostApiPveLxcPreviewInstancesStartResponses];
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecData = {
+    body: PveLxcPreviewInstanceExecBody;
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}/exec';
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to execute command
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecResponses = {
+    /**
+     * Command executed
+     */
+    200: PveLxcPreviewInstanceExecResponse;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecResponse = PostApiPveLxcPreviewInstancesByInstanceIdExecResponses[keyof PostApiPveLxcPreviewInstancesByInstanceIdExecResponses];
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdData = {
+    body?: never;
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}';
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to stop instance
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdResponses = {
+    /**
+     * PVE LXC instance stopped
+     */
+    200: {
+        stopped: true;
+    };
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdResponse = DeleteApiPveLxcPreviewInstancesByInstanceIdResponses[keyof DeleteApiPveLxcPreviewInstancesByInstanceIdResponses];
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileData = {
+    body: {
+        filePath: string;
+    };
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}/read-file';
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance or file not found
+     */
+    404: unknown;
+    /**
+     * Failed to read file
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses = {
+    /**
+     * File content returned
+     */
+    200: {
+        base64: string;
+        size: number;
+    };
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponse = PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses[keyof PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses];
 
 export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedData = {
     body: PveLxcCheckTaskRunStoppedBody;
