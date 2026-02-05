@@ -75,10 +75,13 @@ export function getSandboxProvider(name: SandboxProviderName): SandboxProvider {
 /**
  * Get the default sandbox provider.
  *
- * Defaults to Morph, falls back to Freestyle.
+ * Defaults to E2B, falls back to Morph, then Freestyle.
  */
 export function getDefaultSandboxProvider(): SandboxProvider {
   // Try providers in order of preference
+  if (env.E2B_API_KEY) {
+    return new E2BSandboxProvider(env.E2B_API_KEY);
+  }
   if (env.MORPH_API_KEY) {
     return new MorphSandboxProvider(env.MORPH_API_KEY);
   }

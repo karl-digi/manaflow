@@ -330,8 +330,8 @@ export function getProvisioningCommands(): BuildCommand[] {
     // ==========================================================================
     {
       type: "run",
-      args: ["mkdir -p /etc/cmux /var/log/cmux /workspace"],
-      description: "Create cmux directories",
+      args: ["mkdir -p /etc/cmux /var/log/cmux /workspace && chmod 777 /workspace"],
+      description: "Create cmux directories (workspace is world-writable for non-root users on E2B)",
     },
 
     // ==========================================================================
@@ -374,23 +374,32 @@ CLAUDEEOF`,
       args: [
         `cat > /root/.claude.json << 'CLAUDEJSONEOF'
 {
-      "projects": {
-        "/root": {
-          "allowedTools": [],
-          "history": [],
-          "mcpContextUris": [],
-          "hasTrustDialogAccepted": true,
-          "projectOnboardingSeenCount": 0,
-          "hasClaudeMdExternalIncludesApproved": false,
-          "hasClaudeMdExternalIncludesWarningShown": false
-        },
-        "/root/workspace": {
-          "allowedTools": [],
-          "history": [],
-          "mcpContextUris": [],
-          "hasTrustDialogAccepted": true,
-          "projectOnboardingSeenCount": 0,
-          "hasClaudeMdExternalIncludesApproved": false,
+  "projects": {
+    "/root": {
+      "allowedTools": [],
+      "history": [],
+      "mcpContextUris": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false
+    },
+    "/root/workspace": {
+      "allowedTools": [],
+      "history": [],
+      "mcpContextUris": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false
+    },
+    "/workspace": {
+      "allowedTools": [],
+      "history": [],
+      "mcpContextUris": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0,
+      "hasClaudeMdExternalIncludesApproved": false,
       "hasClaudeMdExternalIncludesWarningShown": false
     }
   },

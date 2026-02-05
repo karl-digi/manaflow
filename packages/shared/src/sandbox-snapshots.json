@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-02-02T06:35:44.283Z",
+  "updatedAt": "2026-02-04T04:33:16.041Z",
   "providers": {
     "morph": {
       "presets": {
@@ -34,8 +34,8 @@
       "presets": {
         "standard": {
           "label": "standard",
-          "snapshotId": "b0xadrvvi0bne4qex2y3",
-          "capturedAt": "2026-02-02T06:35:44.283Z",
+          "snapshotId": "h5i3d1s8ht74u9aw986f",
+          "capturedAt": "2026-02-04T04:33:16.041Z",
           "strategy": "dockerfile"
         }
       }
