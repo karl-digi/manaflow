@@ -40,6 +40,12 @@ import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { localCloudSyncManager } from "./localCloudSync";
 import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
+import {
+  buildPromptImagePath,
+  collapseRepeatedPromptImageRoots,
+  replacePromptImageReference,
+  sanitizePromptImageFileName,
+} from "./utils/promptImages";
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
@@ -138,7 +144,9 @@ export async function spawnAgent(
     });
 
     // Process prompt to handle images
-    let processedTaskDescription = options.taskDescription;
+    let processedTaskDescription = collapseRepeatedPromptImageRoots(
+      options.taskDescription
+    );
     const imageFiles: Array<{ path: string; base64: string }> = [];
 
     // Handle images from either the options (for backward compatibility) or from the task
@@ -187,64 +195,56 @@ export async function spawnAgent(
 
       // Create image files and update prompt
       imagesToProcess.forEach((image, index) => {
-        // Sanitize filename to remove special characters
-        let fileName = image.fileName || `image_${index + 1}.png`;
-        serverLogger.info(`[AgentSpawner] Original filename: ${fileName}`);
-        // Replace non-ASCII characters and spaces with underscores
-        fileName = fileName.replace(/[^\x20-\x7E]/g, "_").replace(/\s+/g, "_");
-        serverLogger.info(`[AgentSpawner] Sanitized filename: ${fileName}`);
+        const fallbackFileName = `image_${index + 1}.png`;
+        const safeFileName = sanitizePromptImageFileName(
+          image.fileName,
+          fallbackFileName
+        );
+        serverLogger.info(
+          `[AgentSpawner] Original filename: ${image.fileName ?? fallbackFileName}`
+        );
+        serverLogger.info(`[AgentSpawner] Sanitized filename: ${safeFileName}`);
 
-        const imagePath = `/root/prompt/${fileName}`;
+        const imagePath = buildPromptImagePath(safeFileName);
         imageFiles.push({
           path: imagePath,
           base64: image.src.split(",")[1] || image.src, // Remove data URL prefix if present
         });
 
-        // Replace image reference in prompt with file path
-        // First try to replace the original filename (exact match, no word boundaries)
+        const referencesToReplace = new Set<string>();
         if (image.fileName) {
-          const beforeReplace = processedTaskDescription;
-          // Escape special regex characters in the filename
-          const escapedFileName = image.fileName.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
+          referencesToReplace.add(image.fileName);
+          const normalizedSeparators = image.fileName.replace(/\\/g, "/");
+          const baseName =
+            normalizedSeparators.split("/").filter(Boolean).pop() ?? null;
+          if (baseName && baseName !== image.fileName) {
+            referencesToReplace.add(baseName);
+          }
+          const nameWithoutExt = (baseName ?? image.fileName).replace(
+            /\.[^/.]+$/,
+            ""
           );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedFileName, "g"),
+          if (nameWithoutExt.length > 0) {
+            referencesToReplace.add(nameWithoutExt);
+          }
+        }
+
+        for (const reference of referencesToReplace) {
+          const beforeReplace = processedTaskDescription;
+          processedTaskDescription = replacePromptImageReference(
+            processedTaskDescription,
+            reference,
             imagePath
           );
           if (beforeReplace !== processedTaskDescription) {
             serverLogger.info(
-              `[AgentSpawner] Replaced "${image.fileName}" with "${imagePath}"`
-            );
-          } else {
-            serverLogger.warn(
-              `[AgentSpawner] Failed to find "${image.fileName}" in prompt text`
+              `[AgentSpawner] Replaced "${reference}" with "${imagePath}"`
             );
           }
         }
 
-        // Also replace just the filename without extension in case it appears that way
-        const nameWithoutExt = image.fileName?.replace(/\.[^/.]+$/, "");
-        if (
-          nameWithoutExt &&
-          processedTaskDescription.includes(nameWithoutExt)
-        ) {
-          const beforeReplace = processedTaskDescription;
-          const escapedName = nameWithoutExt.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedName, "g"),
-            imagePath
-          );
-          if (beforeReplace !== processedTaskDescription) {
-            serverLogger.info(
-              `[AgentSpawner] Replaced "${nameWithoutExt}" with "${imagePath}"`
-            );
-          }
-        }
+        processedTaskDescription =
+          collapseRepeatedPromptImageRoots(processedTaskDescription);
       });
 
       serverLogger.info(
