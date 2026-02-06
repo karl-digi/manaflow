@@ -36,8 +36,9 @@ COPY packages/host-screenshot-collector/package.json ./packages/host-screenshot-
 COPY scripts/package.json ./scripts/
 
 # Install production dependencies
-# --no-save prevents lockfile updates, avoiding frozen lockfile errors
-RUN bun install --production --ignore-scripts --no-save
+# Explicitly disable frozen lockfile to avoid version mismatch errors
+ENV BUN_FROZEN_LOCKFILE=false
+RUN rm -f bun.lock && bun install --production --ignore-scripts
 
 # Extract all non-workspace dependencies from server and convex packages
 # These need to be hoisted for proper module resolution
