@@ -1,12 +1,5 @@
 import { ensureIframeFocusGuard } from "./iframeFocusGuard";
 
-// Extend the Element interface to include moveBefore
-declare global {
-  interface Element {
-    moveBefore?(node: Node, child: Node | null): void;
-  }
-}
-
 type IframeEntry = {
   iframe: HTMLIFrameElement;
   wrapper: HTMLDivElement;

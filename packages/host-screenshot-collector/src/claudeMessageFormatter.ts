@@ -86,14 +86,21 @@ export function formatClaudeMessage(message: SDKMessage): string {
           return `📦 Compacted (${message.compact_metadata.trigger}, ${message.compact_metadata.pre_tokens} tokens)`;
         case "hook_response":
           return `🪝 Hook: ${message.hook_name} (${message.hook_event}) - exit ${message.exit_code ?? "N/A"}`;
+        case "hook_progress":
+          return `🪝 Hook progress: ${message.hook_name} (${message.hook_event})`;
+        case "hook_started":
+          return `🪝 Hook started: ${message.hook_name} (${message.hook_event})`;
         case "status": {
           const status = message.status ?? "idle";
           return `🔄 Status: ${status}`;
         }
+        case "task_notification":
+          return `📋 Task ${message.task_id}: ${message.status} - ${message.summary}`;
+        case "files_persisted":
+          return `💾 Files persisted: ${message.files.length} files`;
         default: {
-          // Type assertion for exhaustiveness check
-          const _exhaustive: never = message;
-          return `🔧 System: unknown`;
+          // Handle unknown subtypes gracefully
+          return `🔧 System: ${(message as { subtype?: string }).subtype ?? "unknown"}`;
         }
       }
     }
