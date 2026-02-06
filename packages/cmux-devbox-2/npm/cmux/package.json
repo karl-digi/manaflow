@@ -1,7 +1,7 @@
 {
   "name": "cmux",
-  "version": "0.6.0",
-  "description": "Cloud sandboxes for development - spawn isolated dev environments instantly",
+  "version": "0.7.13",
+  "description": "CLI tool to instantly spin up cloud VMs preloaded with Chrome, VNC, SSH, and rsync",
   "keywords": [
     "cli",
     "devbox",
@@ -31,11 +31,11 @@
     "postinstall": "node lib/postinstall.js"
   },
   "optionalDependencies": {
-    "cmux-darwin-arm64": "0.5.0",
-    "cmux-darwin-x64": "0.5.0",
-    "cmux-linux-arm64": "0.5.0",
-    "cmux-linux-x64": "0.5.0",
-    "cmux-win32-x64": "0.5.0"
+    "cmux-darwin-arm64": "0.7.13",
+    "cmux-darwin-x64": "0.7.13",
+    "cmux-linux-arm64": "0.7.13",
+    "cmux-linux-x64": "0.7.13",
+    "cmux-win32-x64": "0.7.13"
   },
   "engines": {
     "node": ">=16"

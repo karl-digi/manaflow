@@ -101,14 +101,27 @@ build-npm:
 	@if [ -z "$(STACK_PUBLISHABLE_CLIENT_KEY)" ]; then echo "Error: STACK_PUBLISHABLE_CLIENT_KEY is required"; exit 1; fi
 	@if [ -z "$(CMUX_API_URL)" ]; then echo "Error: CMUX_API_URL is required"; exit 1; fi
 	@if [ -z "$(CONVEX_SITE_URL)" ]; then echo "Error: CONVEX_SITE_URL is required"; exit 1; fi
-	@mkdir -p npm/darwin-arm64/bin npm/darwin-x64/bin npm/linux-arm64/bin npm/linux-x64/bin npm/win32-x64/bin
+	@mkdir -p npm/darwin-arm64/bin npm/darwin-x64/bin npm/linux-arm64/bin npm/linux-x64/bin npm/win32-x64/bin npm/cmux/lib
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/darwin-arm64/bin/cmux ./cmd/cmux
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/darwin-x64/bin/cmux ./cmd/cmux
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/linux-arm64/bin/cmux ./cmd/cmux
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/linux-x64/bin/cmux ./cmd/cmux
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/win32-x64/bin/cmux.exe ./cmd/cmux
-	@chmod +x npm/cmux/bin/cmux 2>/dev/null || true
+	@# Copy darwin-arm64 binary to lib/cmux as fallback for bunx/npx
+	@cp npm/darwin-arm64/bin/cmux npm/cmux/lib/cmux
+	@chmod +x npm/cmux/lib/cmux npm/cmux/bin/cmux 2>/dev/null || true
 	@echo "Done! Binaries built in npm/*/bin/"
+	@# Verify all binaries report same version
+	@echo "Verifying binary versions..."
+	@EXPECTED="cmux version $(VERSION)"; \
+	for bin in npm/darwin-arm64/bin/cmux npm/darwin-x64/bin/cmux npm/cmux/lib/cmux; do \
+		ACTUAL=$$($$bin --version 2>/dev/null || echo "failed"); \
+		if [ "$$ACTUAL" != "$$EXPECTED" ]; then \
+			echo "ERROR: $$bin reports '$$ACTUAL' but expected '$$EXPECTED'"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "All binaries verified at version $(VERSION)"
 
 # Update version in all npm package.json files
 npm-version:
@@ -157,7 +170,7 @@ npm-publish-dry: build-npm
 
 clean:
 	rm -rf bin/
-	rm -rf npm/*/bin/cmux npm/*/bin/cmux.exe
+	rm -rf npm/*/bin/cmux npm/*/bin/cmux.exe npm/cmux/lib/cmux
 
 test:
 	go test -v ./...

@@ -26,7 +26,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Check for sshpass
+  // Check for sshpass (used for SSH password authentication)
   try {
     execSync("which sshpass", { stdio: "pipe" });
   } catch {
@@ -264,7 +264,7 @@ async function testLargeSync(workerHost, authToken) {
 }
 
 /**
- * Run rsync with WebSocket proxy - pure binary tunnel
+ * Run rsync with WebSocket proxy using sshpass for authentication
  */
 async function runRsyncWithProxy(workerHost, authToken, localPath, remotePath) {
   return new Promise((resolve) => {
@@ -318,7 +318,7 @@ async function runRsyncWithProxy(workerHost, authToken, localPath, remotePath) {
       const port = server.address().port;
       console.log("   Local proxy listening on port", port);
 
-      // Build rsync command
+      // Build rsync command with sshpass for password auth
       const rsyncArgs = [
         "-az",
         "--progress",

@@ -9,6 +9,7 @@
  * - Authentication via Bearer token
  * - Command execution
  * - PTY sessions via WebSocket
+ * - SSH server with token-as-username auth (like Morph)
  * - Browser agent control via Chrome CDP
  * - File operations
  */
@@ -18,8 +19,10 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
+const { Server: SSHServer, utils: sshUtils } = require("ssh2");
 
 const PORT = process.env.PORT || 39377;
+const SSH_PORT = process.env.SSH_PORT || 10000;
 const CDP_PORT = process.env.CDP_PORT || 9222;
 const VSCODE_PORT = 39378;
 const VNC_PORT = 39380;
@@ -280,18 +283,29 @@ function sendJson(res, data, status = 200) {
 }
 
 /**
- * Get Chrome CDP WebSocket URL
+ * Get Chrome CDP WebSocket URL with timeout
  */
-async function getCdpWebSocketUrl() {
+async function getCdpWebSocketUrl(timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(`http://localhost:${CDP_PORT}/json/version`);
+    const response = await fetch(`http://localhost:${CDP_PORT}/json/version`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error(`CDP version endpoint returned ${response.status}`);
     }
     const data = await response.json();
     return data.webSocketDebuggerUrl;
   } catch (e) {
-    console.error("[worker-daemon] Failed to get CDP WebSocket URL:", e.message);
+    clearTimeout(timeoutId);
+    if (e.name === "AbortError") {
+      console.error("[worker-daemon] CDP WebSocket URL request timed out");
+    } else {
+      console.error("[worker-daemon] Failed to get CDP WebSocket URL:", e.message);
+    }
     return null;
   }
 }
@@ -301,7 +315,7 @@ async function getCdpWebSocketUrl() {
  */
 let browserInstance = null;
 
-async function getBrowser() {
+async function getBrowser(timeoutMs = 10000) {
   if (browserInstance && browserInstance.isConnected()) {
     return browserInstance;
   }
@@ -313,10 +327,17 @@ async function getBrowser() {
       throw new Error("Chrome CDP not available");
     }
 
-    browserInstance = await puppeteer.connect({
+    // Add timeout to puppeteer.connect
+    const connectPromise = puppeteer.connect({
       browserWSEndpoint: cdpUrl,
       defaultViewport: null,
     });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Browser connection timed out")), timeoutMs)
+    );
+
+    browserInstance = await Promise.race([connectPromise, timeoutPromise]);
 
     return browserInstance;
   } catch (e) {
@@ -899,12 +920,23 @@ async function handleRequest(req, res) {
 
       case "/screenshot": {
         // Take a screenshot using puppeteer (of the actual active page)
+        // Wrap in timeout to prevent hanging forever
+        const screenshotTimeoutMs = body.timeout || 15000;
         try {
-          const page = await getActivePage();
-          const screenshotBuffer = await page.screenshot({
-            type: "png",
-            fullPage: false,
-          });
+          const screenshotPromise = (async () => {
+            const page = await getActivePage();
+            const screenshotBuffer = await page.screenshot({
+              type: "png",
+              fullPage: false,
+            });
+            return screenshotBuffer;
+          })();
+
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Screenshot timed out")), screenshotTimeoutMs)
+          );
+
+          const screenshotBuffer = await Promise.race([screenshotPromise, timeoutPromise]);
           const imageData = screenshotBuffer.toString("base64");
 
           // Optionally save to file
@@ -1067,6 +1099,22 @@ async function handleRequest(req, res) {
         break;
       }
 
+      case "/pty-sessions": {
+        // List all active PTY sessions
+        const sessions = [];
+        for (const [id, session] of ptySessions) {
+          sessions.push({
+            id,
+            createdAt: session.createdAt || Date.now(),
+            shell: session.shell || "/bin/bash",
+            cwd: session.cwd || "/home/user/workspace",
+            connected: session.ws && session.ws.readyState === 1, // WebSocket.OPEN
+          });
+        }
+        sendJson(res, { success: true, sessions });
+        break;
+      }
+
       default:
         sendJson(res, { error: "Not found" }, 404);
     }
@@ -1089,6 +1137,7 @@ const wss = new WebSocketServer({
 const net = require("net");
 
 // Track active PTY sessions
+// Each session: { pty, ws, createdAt, shell, cwd }
 const ptySessions = new Map();
 
 // Handle HTTP upgrade requests for WebSocket
@@ -1217,7 +1266,7 @@ function handlePtyConnection(ws, url) {
   }
 
   const sessionId = crypto.randomBytes(8).toString("hex");
-  ptySessions.set(sessionId, { pty, ws });
+  ptySessions.set(sessionId, { pty, ws, createdAt: Date.now(), shell, cwd });
 
   ws.send(JSON.stringify({ type: "session", id: sessionId }));
 
@@ -1289,11 +1338,219 @@ function handlePtyConnection(ws, url) {
   });
 }
 
+// ============================================================
+// SSH Server with token-as-username authentication
+// This eliminates the need for sshpass on the client side
+// ============================================================
+
+const SSH_HOST_KEY_PATH = "/home/user/.ssh/host_key";
+
+/**
+ * Generate or load SSH host key
+ */
+function getHostKey() {
+  try {
+    // Try to load existing key
+    if (fs.existsSync(SSH_HOST_KEY_PATH)) {
+      return fs.readFileSync(SSH_HOST_KEY_PATH);
+    }
+  } catch (e) {
+    console.log("[worker-daemon] Generating new SSH host key...");
+  }
+
+  // Generate new key using ssh-keygen
+  try {
+    const { execSync } = require("child_process");
+    fs.mkdirSync("/home/user/.ssh", { recursive: true, mode: 0o700 });
+    execSync(`ssh-keygen -t ed25519 -f ${SSH_HOST_KEY_PATH} -N "" -q`, {
+      stdio: "pipe",
+    });
+    fs.chmodSync(SSH_HOST_KEY_PATH, 0o600);
+    return fs.readFileSync(SSH_HOST_KEY_PATH);
+  } catch (e) {
+    console.error("[worker-daemon] Failed to generate SSH host key:", e.message);
+    // Generate a key in memory using ssh2's utility
+    const keyPair = sshUtils.generateKeyPairSync("ed25519");
+    return keyPair.private;
+  }
+}
+
+/**
+ * Start SSH server with token-as-username authentication
+ * Client connects as: ssh <token>@<host> -p 10000
+ * The token IS the username, no password needed.
+ * This eliminates the need for sshpass on the client side.
+ */
+function startSSHServer() {
+  const hostKey = getHostKey();
+
+  const sshServer = new SSHServer(
+    {
+      hostKeys: [hostKey],
+    },
+    (client) => {
+      console.log("[ssh-server] Client connected");
+
+      let authenticatedUser = null;
+
+      client.on("authentication", (ctx) => {
+        // The username IS the auth token (like Morph's approach)
+        const providedToken = ctx.username;
+
+        // Ensure we have the current valid token
+        ensureValidToken();
+
+        if (providedToken === AUTH_TOKEN) {
+          authenticatedUser = "user"; // Run as 'user' account
+          console.log(`[ssh-server] Token auth successful (method: ${ctx.method})`);
+          ctx.accept();
+        } else {
+          console.log(`[ssh-server] Token auth failed: invalid token`);
+          ctx.reject(["none", "password", "publickey"]); // Accept any method, we just check the username
+        }
+      });
+
+      client.on("ready", () => {
+        console.log("[ssh-server] Client authenticated");
+
+        client.on("session", (accept, reject) => {
+          const session = accept();
+
+          session.on("pty", (accept, reject, info) => {
+            console.log(`[ssh-server] PTY requested: ${info.cols}x${info.rows}`);
+            accept();
+          });
+
+          session.on("shell", (accept, reject) => {
+            console.log("[ssh-server] Shell requested");
+            const channel = accept();
+
+            // Spawn shell as the authenticated user
+            const shell = spawn("sudo", ["-u", authenticatedUser, "-i"], {
+              env: {
+                ...process.env,
+                TERM: "xterm-256color",
+                HOME: `/home/${authenticatedUser}`,
+                USER: authenticatedUser,
+                SHELL: "/bin/bash",
+              },
+              cwd: `/home/${authenticatedUser}/workspace`,
+            });
+
+            // Pipe data between channel and shell
+            channel.pipe(shell.stdin);
+            shell.stdout.pipe(channel);
+            shell.stderr.pipe(channel.stderr);
+
+            shell.on("close", (code) => {
+              console.log(`[ssh-server] Shell exited with code ${code}`);
+              channel.exit(code || 0);
+              channel.close();
+            });
+
+            channel.on("close", () => {
+              shell.kill();
+            });
+          });
+
+          session.on("exec", (accept, reject, info) => {
+            console.log(`[ssh-server] Exec: ${info.command}`);
+            const channel = accept();
+
+            // Execute command as the authenticated user
+            const proc = spawn("sudo", ["-u", authenticatedUser, "-i", "bash", "-c", info.command], {
+              env: {
+                ...process.env,
+                HOME: `/home/${authenticatedUser}`,
+                USER: authenticatedUser,
+              },
+              cwd: `/home/${authenticatedUser}/workspace`,
+            });
+
+            // Pipe stdin from channel to process (required for rsync data transfer)
+            channel.pipe(proc.stdin);
+            proc.stdout.pipe(channel);
+            proc.stderr.pipe(channel.stderr);
+
+            // Handle process close - must send exit status before closing channel
+            proc.on("close", (code, signal) => {
+              const exitCode = code !== null ? code : (signal ? 128 : 0);
+              console.log(`[ssh-server] Exec finished with code ${exitCode}`);
+              channel.exit(exitCode);
+              channel.end();
+            });
+
+            // Handle channel close - cleanup process
+            channel.on("close", () => {
+              if (!proc.killed) {
+                proc.kill();
+              }
+            });
+
+            // Handle channel EOF (client finished sending)
+            channel.on("end", () => {
+              proc.stdin.end();
+            });
+          });
+
+          session.on("subsystem", (accept, reject, info) => {
+            if (info.name === "sftp") {
+              console.log("[ssh-server] SFTP subsystem requested");
+              const channel = accept();
+
+              // Use sftp-server for SFTP support
+              const sftp = spawn("sudo", ["-u", authenticatedUser, "/usr/lib/openssh/sftp-server"], {
+                env: {
+                  ...process.env,
+                  HOME: `/home/${authenticatedUser}`,
+                  USER: authenticatedUser,
+                },
+              });
+
+              channel.pipe(sftp.stdin);
+              sftp.stdout.pipe(channel);
+
+              sftp.on("close", () => {
+                channel.close();
+              });
+
+              channel.on("close", () => {
+                sftp.kill();
+              });
+            } else {
+              reject();
+            }
+          });
+        });
+      });
+
+      client.on("close", () => {
+        console.log("[ssh-server] Client disconnected");
+      });
+
+      client.on("error", (err) => {
+        console.error("[ssh-server] Client error:", err.message);
+      });
+    }
+  );
+
+  sshServer.listen(SSH_PORT, "0.0.0.0", () => {
+    console.log(`[ssh-server] SSH server listening on port ${SSH_PORT}`);
+    console.log(`[ssh-server] Connect with: ssh <token>@<host> -p ${SSH_PORT}`);
+  });
+
+  return sshServer;
+}
+
+// Start the SSH server
+const sshServer = startSSHServer();
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[worker-daemon] Listening on port ${PORT}`);
   console.log(`[worker-daemon] Auth token: ${AUTH_TOKEN.substring(0, 8)}...`);
   console.log(`[worker-daemon] PTY WebSocket available at ws://localhost:${PORT}/pty`);
   console.log(`[worker-daemon] SSH WebSocket available at ws://localhost:${PORT}/ssh`);
+  console.log(`[worker-daemon] SSH direct: ssh ${AUTH_TOKEN.substring(0, 8)}...@localhost -p ${SSH_PORT}`);
 });
 
 // Graceful shutdown
@@ -1308,10 +1565,12 @@ process.on("SIGTERM", () => {
       session.ws.close();
     }
   }
+  sshServer.close();
   server.close(() => process.exit(0));
 });
 
 process.on("SIGINT", () => {
   console.log("[worker-daemon] Shutting down...");
+  sshServer.close();
   server.close(() => process.exit(0));
 });

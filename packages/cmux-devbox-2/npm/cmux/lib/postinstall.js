@@ -29,18 +29,30 @@ function getPlatformPackage() {
 }
 
 function findBinary(packageName) {
+  const binName = process.platform === 'win32' ? 'cmux.exe' : 'cmux';
+
   // Try to find the binary in node_modules
   const possiblePaths = [
-    // Hoisted to top-level node_modules
+    // Hoisted to top-level node_modules (local install)
     path.join(__dirname, '..', '..', packageName, 'bin'),
     // In our own node_modules
     path.join(__dirname, '..', 'node_modules', packageName, 'bin'),
-    // Global install
+    // Global install - sibling package
     path.join(__dirname, '..', '..', '..', packageName, 'bin'),
+    // pnpm global
+    path.join(__dirname, '..', '..', '.pnpm', 'node_modules', packageName, 'bin'),
   ];
 
+  // Also try require.resolve to find the package
+  try {
+    const pkgPath = require.resolve(`${packageName}/package.json`, { paths: [path.join(__dirname, '..')] });
+    const pkgBinPath = path.join(path.dirname(pkgPath), 'bin', binName);
+    possiblePaths.unshift(path.dirname(pkgBinPath));
+  } catch (e) {
+    // Package not resolvable, continue with other paths
+  }
+
   for (const p of possiblePaths) {
-    const binName = process.platform === 'win32' ? 'cmux.exe' : 'cmux';
     const binPath = path.join(p, binName);
     if (fs.existsSync(binPath)) {
       return binPath;
@@ -62,10 +74,11 @@ function main() {
   const sourceBinary = findBinary(platformPackage);
 
   if (!sourceBinary) {
-    // Binary not found - this is OK if we're in development or the optional dep wasn't installed
-    console.log(`Platform package ${platformPackage} not found, skipping binary copy`);
-    console.log('If you need the binary, install the platform-specific package manually:');
-    console.log(`  npm install ${platformPackage}`);
+    // Binary not found - try to install the platform package
+    console.error(`cmux: Platform package ${platformPackage} not found`);
+    console.error(`cmux: Please ensure the package installed correctly.`);
+    console.error(`cmux: You can try: npm install -g ${platformPackage}`);
+    // Don't exit with error - npm might still be installing optional deps
     return;
   }
 
