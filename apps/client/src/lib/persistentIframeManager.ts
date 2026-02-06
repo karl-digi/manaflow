@@ -16,6 +16,7 @@ type IframeEntry = {
   pinned: boolean;
   allow?: string;
   sandbox?: string;
+  loaded: boolean;
 };
 
 interface MountOptions {
@@ -153,6 +154,13 @@ class PersistentIframeManager {
         existing.sandbox = options.sandbox;
       }
       if (existing.url !== url) {
+        existing.loaded = false;
+        // Re-attach load listener for new URL
+        const handleLoad = () => {
+          existing.loaded = true;
+          existing.iframe.removeEventListener("load", handleLoad);
+        };
+        existing.iframe.addEventListener("load", handleLoad);
         existing.iframe.src = url;
         existing.url = url;
       }
@@ -198,8 +206,6 @@ class PersistentIframeManager {
       iframe.setAttribute("sandbox", options.sandbox);
     }
 
-    iframe.src = url;
-
     wrapper.appendChild(iframe);
 
     // Add to container
@@ -216,7 +222,18 @@ class PersistentIframeManager {
       pinned: false,
       allow: options?.allow,
       sandbox: options?.sandbox,
+      loaded: false,
     };
+
+    // Track load state
+    const handleLoad = () => {
+      entry.loaded = true;
+      iframe.removeEventListener("load", handleLoad);
+    };
+    iframe.addEventListener("load", handleLoad);
+
+    // Set src after adding listener to avoid race condition
+    iframe.src = url;
 
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
@@ -584,6 +601,14 @@ class PersistentIframeManager {
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
   }
 
+  /**
+   * Check if an iframe has loaded (its load event has fired)
+   */
+  isIframeLoaded(key: string): boolean {
+    const entry = this.iframes.get(key);
+    return entry?.loaded ?? false;
+  }
+
   isIframeFocused(key: string): boolean {
     if (typeof document === "undefined") {
       return false;
@@ -622,6 +647,13 @@ class PersistentIframeManager {
     if (!entry) return false;
 
     try {
+      entry.loaded = false;
+      // Re-attach load listener for reload
+      const handleLoad = () => {
+        entry.loaded = true;
+        entry.iframe.removeEventListener("load", handleLoad);
+      };
+      entry.iframe.addEventListener("load", handleLoad);
       entry.iframe.src = entry.url;
       return true;
     } catch (error) {

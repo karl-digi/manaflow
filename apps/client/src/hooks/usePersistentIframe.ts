@@ -99,8 +99,11 @@ export function usePersistentIframe({
         sandbox: mountOptions.sandbox,
       });
 
+      // Check if iframe is already loaded using the manager's tracked state
+      const isAlreadyLoaded = persistentIframeManager.isIframeLoaded(key);
+
       // Set up load handlers if not already loaded
-      if (!iframe.contentWindow || iframe.src !== url) {
+      if (!isAlreadyLoaded) {
         loadHandler = () => {
           if (iframe) {
             iframe.removeEventListener("load", loadHandler!);
@@ -157,13 +160,8 @@ export function usePersistentIframe({
   }, [key]);
 
   const handleIsLoaded = useCallback(() => {
-    try {
-      const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
-      return iframe.contentWindow !== null && iframe.src === url;
-    } catch {
-      return false;
-    }
-  }, [key, url, allow, sandbox]);
+    return persistentIframeManager.isIframeLoaded(key);
+  }, [key]);
 
   return {
     containerRef,
