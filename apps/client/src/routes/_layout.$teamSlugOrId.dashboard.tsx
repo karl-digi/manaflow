@@ -462,6 +462,15 @@ function DashboardComponent() {
     return null;
   }, [branchPages]);
 
+  const branchesResponseError = useMemo(() => {
+    for (const page of branchPages) {
+      if (page.error) {
+        return page.error;
+      }
+    }
+    return null;
+  }, [branchPages]);
+
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
@@ -476,6 +485,22 @@ function DashboardComponent() {
       toast.error("Failed to load branches", { description: message });
     }
   }, [branchesQuery.isError, branchesQuery.error]);
+
+  const lastBranchesResponseErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!branchesResponseError) {
+      lastBranchesResponseErrorRef.current = null;
+      return;
+    }
+
+    const key = `${currentRepo}:${branchesResponseError}`;
+    if (lastBranchesResponseErrorRef.current === key) return;
+    lastBranchesResponseErrorRef.current = key;
+
+    toast.error("Unable to load branches", {
+      description: branchesResponseError,
+    });
+  }, [branchesResponseError, currentRepo]);
 
   // Callback for project selection changes
   const handleProjectChange = useCallback(

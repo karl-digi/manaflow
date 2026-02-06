@@ -4,6 +4,27 @@ import { Octokit } from "octokit";
 
 export const githubBranchesRouter = new OpenAPIHono();
 
+function getErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  if (!("status" in error)) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function getErrorMessage(error: unknown): string | null {
+  if (error instanceof Error && error.message) return error.message;
+  if (!error || typeof error !== "object") return null;
+  if (!("message" in error)) return null;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && message.trim().length > 0 ? message : null;
+}
+
+function isUnauthenticatedRateLimit(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  const message = getErrorMessage(error)?.toLowerCase() ?? "";
+  return status === 403 && message.includes("api rate limit exceeded");
+}
+
 // Schema for branch data
 const GithubBranch = z
   .object({
@@ -55,29 +76,58 @@ githubBranchesRouter.openapi(
     }
 
     const { repo } = c.req.valid("query");
+    const [owner, repoName] = repo.split("/");
+    if (!owner || !repoName) {
+      return c.json({ defaultBranch: null, error: "Invalid repository format" }, 200);
+    }
 
+    let accessToken: string | null = null;
+    let missingAuthErrorMessage = "GitHub account not connected";
     try {
       const githubAccount = await user.getConnectedAccount("github");
-      if (!githubAccount) {
-        return c.json({ defaultBranch: null, error: "GitHub account not connected" }, 200);
+      if (githubAccount) {
+        const tokenResult = await githubAccount.getAccessToken();
+        const trimmed = (tokenResult.accessToken ?? "").trim();
+        if (trimmed.length > 0) {
+          accessToken = trimmed;
+        } else {
+          missingAuthErrorMessage = "GitHub access token not found";
+        }
       }
+    } catch (error) {
+      missingAuthErrorMessage = "GitHub access token not found";
+      console.error("[github.branches] Failed to fetch GitHub access token:", error);
+    }
 
-      const { accessToken } = await githubAccount.getAccessToken();
-      if (!accessToken || accessToken.trim().length === 0) {
-        return c.json({ defaultBranch: null, error: "GitHub access token not found" }, 200);
-      }
+    const octokit = accessToken ? new Octokit({ auth: accessToken }) : new Octokit();
 
-      const octokit = new Octokit({ auth: accessToken.trim() });
-      const [owner, repoName] = repo.split("/");
-
+    try {
       const { data } = await octokit.request("GET /repos/{owner}/{repo}", {
-        owner: owner!,
-        repo: repoName!,
+        owner,
+        repo: repoName,
       });
 
       return c.json({ defaultBranch: data.default_branch, error: null }, 200);
     } catch (error) {
       console.error("[github.branches] Error getting default branch:", error);
+      if (getErrorStatus(error) === 404) {
+        return c.json(
+          {
+            defaultBranch: null,
+            error: accessToken ? "Repository not found" : missingAuthErrorMessage,
+          },
+          200
+        );
+      }
+      if (!accessToken && isUnauthenticatedRateLimit(error)) {
+        return c.json(
+          {
+            defaultBranch: null,
+            error: "GitHub API rate limit exceeded. Connect GitHub for higher limits.",
+          },
+          200
+        );
+      }
       return c.json({
         defaultBranch: null,
         error: error instanceof Error ? error.message : "Failed to get default branch",
@@ -159,24 +209,139 @@ githubBranchesRouter.openapi(
     const { repo, search, limit = 30, offset = 0 } = c.req.valid("query");
 
     try {
-      const githubAccount = await user.getConnectedAccount("github");
-      if (!githubAccount) {
-        return c.json(branchesErrorResponse("GitHub account not connected"), 200);
-      }
-
-      const { accessToken } = await githubAccount.getAccessToken();
-      if (!accessToken || accessToken.trim().length === 0) {
-        return c.json(branchesErrorResponse("GitHub access token not found"), 200);
-      }
-
-      const octokit = new Octokit({ auth: accessToken.trim() });
       const [owner, repoName] = repo.split("/");
       if (!owner || !repoName) {
         return c.json(branchesErrorResponse("Invalid repository format"), 200);
       }
 
+      let accessToken: string | null = null;
+      let missingAuthErrorMessage = "GitHub account not connected";
+      try {
+        const githubAccount = await user.getConnectedAccount("github");
+        if (githubAccount) {
+          const tokenResult = await githubAccount.getAccessToken();
+          const trimmed = (tokenResult.accessToken ?? "").trim();
+          if (trimmed.length > 0) {
+            accessToken = trimmed;
+          } else {
+            missingAuthErrorMessage = "GitHub access token not found";
+          }
+        }
+      } catch (error) {
+        missingAuthErrorMessage = "GitHub access token not found";
+        console.error("[github.branches] Failed to fetch GitHub access token:", error);
+      }
+
       const normalizedSearch = search?.trim().toLowerCase() ?? "";
       const shouldFilter = normalizedSearch.length > 0;
+
+      if (!accessToken) {
+        // GitHub GraphQL API requires authentication; fall back to REST for public repos.
+        const unauthOctokit = new Octokit();
+        let defaultBranchName: string | null = null;
+        if (offset === 0) {
+          try {
+            const repoInfo = await unauthOctokit.request("GET /repos/{owner}/{repo}", {
+              owner,
+              repo: repoName,
+            });
+            defaultBranchName = repoInfo.data.default_branch;
+          } catch (error) {
+            if (getErrorStatus(error) === 404) {
+              return c.json(branchesErrorResponse(missingAuthErrorMessage), 200);
+            }
+            if (isUnauthenticatedRateLimit(error)) {
+              return c.json(
+                branchesErrorResponse(
+                  "GitHub API rate limit exceeded. Connect GitHub for higher limits."
+                ),
+                200
+              );
+            }
+          }
+        }
+
+        const targetCount = offset + limit;
+        const GITHUB_REST_MAX_PER_PAGE = 100;
+        const maxBranchesToFetch = shouldFilter ? 500 : Math.max(targetCount, 100);
+
+        const allBranches: Array<z.infer<typeof GithubBranch>> = [];
+        let page = 1;
+        let totalFetched = 0;
+        let githubHasMore = true;
+
+        const restBranchesSchema = z.array(
+          z.object({
+            name: z.string(),
+            commit: z.object({
+              sha: z.string(),
+            }),
+          })
+        );
+
+        while (allBranches.length < targetCount && githubHasMore && totalFetched < maxBranchesToFetch) {
+          const remaining = maxBranchesToFetch - totalFetched;
+          const fetchSize = Math.min(remaining, GITHUB_REST_MAX_PER_PAGE);
+
+          let rawResponse: { data: unknown };
+          try {
+            rawResponse = await unauthOctokit.request("GET /repos/{owner}/{repo}/branches", {
+              owner,
+              repo: repoName,
+              per_page: fetchSize,
+              page,
+            });
+          } catch (error) {
+            if (getErrorStatus(error) === 404) {
+              return c.json(branchesErrorResponse(missingAuthErrorMessage), 200);
+            }
+            if (isUnauthenticatedRateLimit(error)) {
+              return c.json(
+                branchesErrorResponse(
+                  "GitHub API rate limit exceeded. Connect GitHub for higher limits."
+                ),
+                200
+              );
+            }
+            throw error;
+          }
+
+          const parsed = restBranchesSchema.parse(rawResponse.data);
+          for (const branch of parsed) {
+            const name = branch.name;
+            if (shouldFilter && !name.toLowerCase().includes(normalizedSearch)) {
+              continue;
+            }
+            allBranches.push({
+              name,
+              lastCommitSha: branch.commit.sha,
+              isDefault: defaultBranchName ? name === defaultBranchName : undefined,
+            });
+          }
+
+          totalFetched += parsed.length;
+          githubHasMore = parsed.length === fetchSize;
+          if (parsed.length === 0) break;
+          page += 1;
+        }
+
+        const branches = allBranches.slice(offset, offset + limit);
+        const hasMore = allBranches.length > offset + limit || githubHasMore;
+        const nextOffset = hasMore ? offset + limit : undefined;
+
+        return c.json(
+          {
+            branches,
+            defaultBranch: defaultBranchName,
+            error: null,
+            nextOffset,
+            hasMore,
+          },
+          200
+        );
+      }
+
+      const octokit = new Octokit({ auth: accessToken });
 
       const graphqlResponse = z.object({
         repository: z
