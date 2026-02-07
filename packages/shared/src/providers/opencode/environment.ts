@@ -45,6 +45,8 @@ async function buildOpencodeEnvironment(
     }
   }
   // Install OpenCode lifecycle completion hook script
+  // Note: crown/complete is called by the worker after the completion detector resolves,
+  // NOT here. This hook only writes marker files for the filesystem watcher.
   const completionHook = `#!/bin/bash
 set -euo pipefail
 
@@ -103,7 +105,7 @@ export const NotificationPlugin = async ({ project: _project, client, $, directo
             const content = fs.readFileSync(path.join(sessionPath, msgFile), "utf-8");
             messages.push(JSON.parse(content));
           } catch (e) {
-            // Skip invalid files
+            log("Failed to parse message file " + msgFile + ": " + e);
           }
         }
       }

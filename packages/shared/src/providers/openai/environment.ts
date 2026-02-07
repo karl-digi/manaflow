@@ -119,6 +119,8 @@ export async function getOpenAIEnvironment(
   );
 
   // Add a small notify handler script that appends the payload to JSONL and marks completion
+  // Note: crown/complete is called by the worker after the completion detector resolves,
+  // NOT here. The notify hook fires on every turn, not just task completion.
   const notifyScript = `#!/usr/bin/env sh
 set -eu
 echo "$1" >> /root/lifecycle/codex-turns.jsonl
