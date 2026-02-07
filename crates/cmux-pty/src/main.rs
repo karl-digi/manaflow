@@ -738,10 +738,22 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
-                // Process through virtual terminal emulator for state tracking only.
-                // Responses (OSC 10/11/12 color queries, CPR cursor reports, etc.) are
-                // discarded - xterm.js on the client handles these directly.
-                let _ = session.process_terminal(&buf[..n]);
+                // Process through virtual terminal emulator and collect responses.
+                // Write back CSI responses (CPR cursor reports, DSR status) to PTY
+                // so the requesting application gets them locally without WebSocket
+                // round-trip. Discard OSC responses (color queries) - those would be
+                // echoed by the shell since it doesn't understand them.
+                let responses = session.process_terminal(&buf[..n]);
+                for response in responses {
+                    if response.starts_with(b"\x1b[") {
+                        if let Err(e) = session.write_input_bytes(response) {
+                            warn!(
+                                "[reader:{}] Failed to write terminal response: {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
 
                 // Apply DaFilter to raw bytes to remove DA query/response sequences
                 let filtered_bytes = {

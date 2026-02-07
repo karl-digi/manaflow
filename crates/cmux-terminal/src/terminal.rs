@@ -2117,8 +2117,11 @@ impl Perform for VirtualTerminal {
             'm' if intermediates.is_empty() => {
                 self.apply_sgr(params);
             }
-            // Device Status Report (DSR)
-            'n' => {
+            // Device Status Report (DSR) - only handle standard (non-private) DSR.
+            // Private DSR (ESC [ ? 6 n) has intermediates=[b'?'] and should not
+            // generate a response here to avoid duplicate CPR replies when xterm.js
+            // also responds.
+            'n' if intermediates.is_empty() => {
                 let mode = params_vec.first().copied().unwrap_or(0);
                 match mode {
                     5 => {
