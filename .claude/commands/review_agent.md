@@ -1,69 +1,61 @@
-- Read the project review guidelines from `REVIEW.md` at the project root.
-- Run a local review and an upstream-gap scan against `manaflow-ai/cmux:main`.
-- Inspect all commits in `main..upstream/main` (currently about 112 behind if unchanged) and check whether upstream already fixed any issue found by review.
+---
+description: Codex-backed review with upstream gap analysis against manaflow-ai/cmux:main
+argument-hint: [optional focus]
+allowed-tools: Bash, Read, Grep
+---
 
-```bash
-cd "$CLAUDE_PROJECT_DIR"
+Run a mandatory Codex-backed review for the current branch.
+Do not replace Codex output with manual-only review.
 
-TMPFILE=$(mktemp)
-UPSTREAM_ALL=$(mktemp)
-UPSTREAM_RELEVANT=$(mktemp)
-trap 'rm -f "$TMPFILE" "$UPSTREAM_ALL" "$UPSTREAM_RELEVANT"' EXIT
+Read review policy first: @REVIEW.md
+User focus (optional): $ARGUMENTS
 
-# Keep refs fresh for accurate ahead/behind and commit lookup.
-git fetch origin --prune
-git fetch upstream --prune
+## Auto-collected context
 
-COUNTS=$(git rev-list --left-right --count main...upstream/main)
-AHEAD=$(echo "$COUNTS" | awk '{print $1}')
-BEHIND=$(echo "$COUNTS" | awk '{print $2}')
+### Codex review output (mandatory)
+!`cd "$CLAUDE_PROJECT_DIR" && codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.2 -c model_reasoning_effort="high" review --base main 2>&1 || true`
 
-git log --no-merges --date=short --pretty=format:'%h %ad %s' \
-  main..upstream/main > "$UPSTREAM_ALL"
+### Divergence vs upstream/main
+!`cd "$CLAUDE_PROJECT_DIR" && git fetch origin --prune >/dev/null 2>&1 && git fetch upstream --prune >/dev/null 2>&1 && git rev-list --left-right --count main...upstream/main | awk '{print "ahead=" $1 " behind=" $2}'`
 
-CHANGED_FILES=$(git diff --name-only main...HEAD)
-if [ -n "$CHANGED_FILES" ]; then
-  # shellcheck disable=SC2086
-  git log --no-merges --date=short --pretty=format:'%h %ad %s' \
-    main..upstream/main -- $CHANGED_FILES > "$UPSTREAM_RELEVANT" || true
-else
-  : > "$UPSTREAM_RELEVANT"
-fi
+### Upstream commits behind (latest 120)
+!`cd "$CLAUDE_PROJECT_DIR" && git log --no-merges --date=short --pretty=format:'%h %ad %s' main..upstream/main | head -120`
 
-codex \
-  --dangerously-bypass-approvals-and-sandbox \
-  --model gpt-5.2 \
-  -c model_reasoning_effort="high" \
-  review --base main 2>&1 | tee "$TMPFILE" || true
+### Current branch changed files
+!`cd "$CLAUDE_PROJECT_DIR" && git diff --name-only main...HEAD`
 
-# Extract findings from captured output (TTY-independent).
-FINDINGS=$(sed 's/\x1b\[[0-9;]*m//g' "$TMPFILE" | sed '/^$/d')
+### Upstream commits touching changed files (latest 120)
+!`cd "$CLAUDE_PROJECT_DIR" && CHANGED_FILES=$(git diff --name-only main...HEAD); if [ -n "$CHANGED_FILES" ]; then git log --no-merges --date=short --pretty=format:'%h %ad %s' main..upstream/main -- $CHANGED_FILES | head -120; else echo "(none)"; fi`
 
-echo "## Codex Review Findings"
-echo "$FINDINGS"
-echo
-echo "## Upstream Divergence (main vs upstream/main)"
-echo "ahead=$AHEAD behind=$BEHIND"
-echo
-echo "## Upstream Commits Behind (latest 120)"
-head -120 "$UPSTREAM_ALL"
-echo
-echo "## Upstream Commits Touching Current Diff Files"
-if [ -s "$UPSTREAM_RELEVANT" ]; then
-  head -120 "$UPSTREAM_RELEVANT"
-else
-  echo "(none)"
-fi
-```
+## Output requirements
 
-Then produce a final review report with these sections:
-1. `Findings`: issues from codex review (severity + file/line + fix recommendation).
-2. `Already Fixed Upstream?`: for each finding, identify matching commits from `main..upstream/main` if any; include commit hash and rationale.
-3. `Best Recommendation`: choose one per finding:
-   - `cherry-pick upstream commit`
-   - `manual backport`
-   - `fix locally first`
-4. `Gap Reduction Plan`: concrete steps to reduce drift vs `manaflow-ai/cmux:main`:
-   - quick wins (safe cherry-picks now)
-   - medium-risk updates
-   - full sync branch plan (`sync/upstream-main-YYYYMMDD`) targeting `karlorz/cmux:main`
+1. First line must be exactly one of:
+- `Codex review executed: yes`
+- `Codex review executed: no`
+
+2. If Codex output is missing/empty or clearly failed (for example timeout, command-not-found, permission denied):
+- set first line to `Codex review executed: no`
+- output only a short `Blocker` section with the exact failed command and reason
+- stop; do not produce findings from manual review
+
+3. If Codex output exists:
+- set first line to `Codex review executed: yes`
+- produce this report:
+
+### Findings
+- Prioritize Codex findings by severity with file/line and fix recommendation.
+
+### Already Fixed Upstream?
+- For each finding, map to matching commit(s) from `main..upstream/main` when applicable.
+- Include commit hash and rationale for each mapping.
+
+### Best Recommendation
+- Choose one for each finding:
+  - `cherry-pick upstream commit`
+  - `manual backport`
+  - `fix locally first`
+
+### Gap Reduction Plan
+- Provide concrete steps to reduce drift vs `manaflow-ai/cmux:main`:
+  - quick wins (safe cherry-picks now)
+
