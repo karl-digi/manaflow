@@ -33,7 +33,6 @@ export const CrownWorkerCheckResponseSchema = z.object({
   ok: z.literal(true),
   taskId: z.string(),
   allRunsFinished: z.boolean(),
-  allWorkersReported: z.boolean(),
   shouldEvaluate: z.boolean(),
   singleRunWinnerId: z.string().nullable(),
   existingEvaluation: z

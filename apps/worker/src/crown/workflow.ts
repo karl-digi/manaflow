@@ -460,28 +460,15 @@ async function startCrownEvaluation({
   const completedRuns = crownData.runs.filter(
     (run) => run.status === "completed"
   );
-  const totalRuns = crownData.runs.length;
-  const allRunsCompleted = totalRuns > 0 && completedRuns.length === totalRuns;
 
   log("INFO", "Crown readiness status", {
     taskRunId,
     taskId: currentTaskId,
-    totalRuns,
+    totalRuns: crownData.runs.length,
     completedRuns: completedRuns.length,
-    allRunsCompleted,
+    shouldEvaluate: crownData.shouldEvaluate,
+    singleRunWinnerId: crownData.singleRunWinnerId,
   });
-
-  if (!allRunsCompleted) {
-    log("INFO", "Not all task runs completed; deferring crown evaluation", {
-      taskRunId,
-      taskId: currentTaskId,
-      runStatuses: crownData.runs.map((run) => ({
-        id: run.id,
-        status: run.status,
-      })),
-    });
-    return;
-  }
 
   // Pass undefined to let collectDiffForRun auto-detect the default branch
   const baseBranch = crownData.task.baseBranch || undefined;
