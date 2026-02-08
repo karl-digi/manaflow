@@ -455,6 +455,7 @@ function RunDiffPage() {
   });
 
   const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotConfig = runDiffContextQuery.data?.screenshotConfig;
   const screenshotSetsLoading =
     runDiffContextQuery.isLoading && screenshotSets.length === 0;
 
@@ -1209,7 +1210,7 @@ function RunDiffPage() {
             ) : (
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
-                screenshotConfig={runDiffContextQuery.data?.screenshotConfig}
+                screenshotConfig={screenshotConfig}
               />
             )}
             <div

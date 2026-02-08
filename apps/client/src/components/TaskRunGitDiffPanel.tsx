@@ -117,6 +117,7 @@ export function TaskRunGitDiffPanel({ task, taskRuns, selectedRun, teamSlugOrId,
   );
 
   const screenshotSets = runDiffContext?.screenshotSets ?? [];
+  const screenshotConfig = runDiffContext?.screenshotConfig;
   const screenshotSetsLoading = runDiffContext === undefined && screenshotSets.length === 0;
 
   // Skip git diff for cloud/local workspaces (no GitHub repo to diff against)
@@ -169,7 +170,7 @@ export function TaskRunGitDiffPanel({ task, taskRuns, selectedRun, teamSlugOrId,
       ) : (
         <RunScreenshotGallery
           screenshotSets={screenshotSets}
-          screenshotConfig={runDiffContext?.screenshotConfig}
+          screenshotConfig={screenshotConfig}
         />
       )}
       <MonacoGitDiffViewer diffs={allDiffs} />
