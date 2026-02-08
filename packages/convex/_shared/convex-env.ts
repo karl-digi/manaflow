@@ -29,8 +29,9 @@ export const env = createEnv({
     MODAL_TOKEN_ID: z.string().min(1).optional(),
     MODAL_TOKEN_SECRET: z.string().min(1).optional(),
     MODAL_SNAPSHOT_IMAGE_ID: z.string().min(1).optional(),
-    // preview_jobs_worker.ts hardcodes CMUX_IS_STAGING="false" for screenshot jobs.
-    // Keep this optional env var for compatibility with existing deployments/tools.
+    // Controls which screenshot collector release is downloaded by screenshotCollectorLoader.ts:
+    // - "true": Downloads staging/development releases (for testing new collector versions)
+    // - "false" or unset: Downloads production releases (default, used by preview_jobs_worker.ts)
     CMUX_IS_STAGING: z.string().optional(),
     CONVEX_IS_PRODUCTION: z.string().optional(),
     // Opt-in flag for screenshot workflow (disabled by default)
