@@ -43,4 +43,11 @@ crons.interval(
   internal.crown.autoRefreshEmptyDiffEvaluations
 );
 
+// Clean up stale warm pool entries daily at 11:30 UTC
+crons.daily(
+  "cleanup warm pool",
+  { hourUTC: 11, minuteUTC: 30 },
+  internal.warmPoolMaintenance.cleanupWarmPool
+);
+
 export default crons;

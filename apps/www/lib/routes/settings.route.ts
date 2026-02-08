@@ -33,7 +33,7 @@ function isAllowedBaseUrl(urlString: string): { allowed: boolean; reason?: strin
     return { allowed: false, reason: "Metadata endpoints are not allowed" };
   }
 
-  // Check for private IP ranges
+  // Check for private IP ranges (IPv4)
   const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
     const octets = ipv4Match.slice(1).map(Number);
@@ -58,6 +58,40 @@ function isAllowedBaseUrl(urlString: string): { allowed: boolean; reason?: strin
     // 127.0.0.0/8 (loopback)
     if (first === 127) {
       return { allowed: false, reason: "Loopback addresses are not allowed" };
+    }
+  }
+
+  // Check for private IPv6 ranges
+  // URL.hostname includes brackets for IPv6, e.g., "[::1]" or "[fd00::1]"
+  const ipv6Match = hostname.match(/^\[([^\]]+)\]$/);
+  if (ipv6Match) {
+    const ipv6 = ipv6Match[1].toLowerCase();
+
+    // Loopback (::1) - already checked above but double-check without brackets
+    if (ipv6 === "::1") {
+      return { allowed: false, reason: "Loopback addresses are not allowed" };
+    }
+
+    // fc00::/7 - Unique Local Addresses (ULA), equivalent to IPv4 private ranges
+    // This includes fc00::/8 and fd00::/8
+    if (ipv6.startsWith("fc") || ipv6.startsWith("fd")) {
+      return { allowed: false, reason: "Private IPv6 addresses are not allowed" };
+    }
+
+    // fe80::/10 - Link-local addresses
+    if (ipv6.startsWith("fe8") || ipv6.startsWith("fe9") || ipv6.startsWith("fea") || ipv6.startsWith("feb")) {
+      return { allowed: false, reason: "Link-local IPv6 addresses are not allowed" };
+    }
+
+    // :: (unspecified address)
+    if (ipv6 === "::") {
+      return { allowed: false, reason: "Unspecified address is not allowed" };
+    }
+
+    // ::ffff:0:0/96 - IPv4-mapped IPv6 addresses (could be used to bypass IPv4 checks)
+    // These look like ::ffff:192.168.1.1 or ::ffff:7f00:1
+    if (ipv6.startsWith("::ffff:")) {
+      return { allowed: false, reason: "IPv4-mapped IPv6 addresses are not allowed" };
     }
   }
 

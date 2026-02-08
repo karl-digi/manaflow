@@ -10,6 +10,7 @@ import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -480,8 +481,11 @@ sandboxesRouter.openapi(
       );
 
       // Start the sandbox using the appropriate provider
-      let instance: SandboxInstance;
+      let instance: SandboxInstance | null = null;
       let rawPveLxcInstance: PveLxcInstance | null = null;
+      let usedWarmPool = false;
+      let warmPoolRepoUrl: string | undefined;
+      let warmPoolBranch: string | undefined;
 
       if (provider === "pve-lxc") {
         // Proxmox VE LXC provider
@@ -506,21 +510,79 @@ sandboxesRouter.openapi(
         // Morph provider (default)
         const client = getMorphClient();
 
-        const morphInstance = await client.instances.start({
-          snapshotId: resolvedSnapshotId,
-          ttlSeconds: body.ttlSeconds ?? 60 * 60,
-          ttlAction: "pause",
-          metadata: {
-            app: "cmux",
-            teamId: team.uuid,
-            ...(body.environmentId ? { environmentId: body.environmentId } : {}),
-            ...(body.metadata || {}),
-          },
-        });
-        instance = wrapMorphInstance(morphInstance);
-        void (async () => {
-          await instance.setWakeOn(true, true);
-        })();
+        if (!body.environmentId) {
+          try {
+            const claimed = await convex.mutation(api.warmPool.claimInstance, {
+              teamId: team.uuid,
+              repoUrl: repoUrl ?? undefined,
+              branch: body.branch ?? undefined,
+              taskRunId: body.taskRunId || "",
+            });
+
+            if (claimed) {
+              console.log(
+                `[sandboxes.start] Claimed warm pool instance ${claimed.instanceId}`,
+              );
+              let claimedMorphInstance = await client.instances.get({
+                instanceId: claimed.instanceId,
+              });
+              if (claimedMorphInstance.networking.httpServices.length === 0) {
+                claimedMorphInstance = await client.instances.get({
+                  instanceId: claimed.instanceId,
+                });
+              }
+
+              const claimedWrapped = wrapMorphInstance(claimedMorphInstance);
+              const claimedExposed = claimedWrapped.networking.httpServices;
+              const claimedVscodeService = claimedExposed.find(
+                (service) => service.port === 39378,
+              );
+              const claimedWorkerService = claimedExposed.find(
+                (service) => service.port === 39377,
+              );
+              if (claimedVscodeService && claimedWorkerService) {
+                instance = claimedWrapped;
+                usedWarmPool = true;
+                warmPoolRepoUrl = claimed.repoUrl;
+                warmPoolBranch = claimed.branch;
+                void (async () => {
+                  await instance.setWakeOn(true, true);
+                })();
+              } else {
+                console.warn(
+                  `[sandboxes.start] Warm pool instance ${claimed.instanceId} missing services, falling back to on-demand start`,
+                );
+              }
+            }
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Warm pool claim failed, falling back to on-demand start",
+              error,
+            );
+          }
+        }
+
+        if (!usedWarmPool) {
+          const morphInstance = await client.instances.start({
+            snapshotId: resolvedSnapshotId,
+            ttlSeconds: body.ttlSeconds ?? 60 * 60,
+            ttlAction: "pause",
+            metadata: {
+              app: "cmux",
+              teamId: team.uuid,
+              ...(body.environmentId ? { environmentId: body.environmentId } : {}),
+              ...(body.metadata || {}),
+            },
+          });
+          instance = wrapMorphInstance(morphInstance);
+          void (async () => {
+            await instance.setWakeOn(true, true);
+          })();
+        }
+      }
+
+      if (!instance) {
+        return c.text("Failed to start sandbox instance", 500);
       }
 
       // Record sandbox creation in Convex for activity tracking
@@ -771,43 +833,58 @@ sandboxesRouter.openapi(
 
       await configureGithubAccess(instance, gitAuthToken);
 
-      let repoConfig: HydrateRepoConfig | undefined;
-      if (repoUrl) {
-        console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
-        if (!parsedRepoUrl) {
-          return c.text("Unsupported repo URL; expected GitHub URL", 400);
+      // Only skip hydration if both repo URL and branch match the warm pool instance
+      // This ensures we don't use wrong branch when user prewarmed with different branch
+      const requestedBranch = body.branch ?? undefined;
+      const skipHydration =
+        usedWarmPool &&
+        typeof repoUrl === "string" &&
+        repoUrl.length > 0 &&
+        warmPoolRepoUrl === repoUrl &&
+        warmPoolBranch === requestedBranch;
+      if (skipHydration) {
+        console.log(
+          `[sandboxes.start] Skipping hydration - repo and branch already cloned in warm pool instance ${instance.id}`,
+        );
+      } else {
+        let repoConfig: HydrateRepoConfig | undefined;
+        if (repoUrl) {
+          console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
+          if (!parsedRepoUrl) {
+            return c.text("Unsupported repo URL; expected GitHub URL", 400);
+          }
+          console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
+
+          // Use authenticated URL for cloning when token available (required for private repos)
+          const authenticatedGitUrl = gitAuthToken
+            ? `https://x-access-token:${gitAuthToken}@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+            : parsedRepoUrl.gitUrl;
+          const maskedGitUrl = gitAuthToken
+            ? `https://x-access-token:***@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+            : parsedRepoUrl.gitUrl;
+
+          repoConfig = {
+            owner: parsedRepoUrl.owner,
+            name: parsedRepoUrl.repo,
+            repoFull: parsedRepoUrl.fullName,
+            cloneUrl: authenticatedGitUrl,
+            maskedCloneUrl: maskedGitUrl,
+            depth: Math.max(1, Math.floor(body.depth ?? 1)),
+            baseBranch: body.branch || "main",
+            newBranch: body.newBranch ?? "",
+          };
         }
-        console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
-        // Use authenticated URL for cloning when token available (required for private repos)
-        const authenticatedGitUrl = gitAuthToken
-          ? `https://x-access-token:${gitAuthToken}@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
-          : parsedRepoUrl.gitUrl;
-        const maskedGitUrl = gitAuthToken
-          ? `https://x-access-token:***@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
-          : parsedRepoUrl.gitUrl;
-
-        repoConfig = {
-          owner: parsedRepoUrl.owner,
-          name: parsedRepoUrl.repo,
-          repoFull: parsedRepoUrl.fullName,
-          cloneUrl: authenticatedGitUrl,
-          maskedCloneUrl: maskedGitUrl,
-          depth: Math.max(1, Math.floor(body.depth ?? 1)),
-          baseBranch: body.branch || "main",
-          newBranch: body.newBranch ?? "",
-        };
-      }
-
-      try {
-        await hydrateWorkspace({
-          instance,
-          repo: repoConfig,
-        });
-      } catch (error) {
-        console.error(`[sandboxes.start] Hydration failed:`, error);
-        await instance.stop().catch(() => { });
-        return c.text("Failed to hydrate sandbox", 500);
+        try {
+          await hydrateWorkspace({
+            instance,
+            repo: repoConfig,
+          });
+        } catch (error) {
+          console.error(`[sandboxes.start] Hydration failed:`, error);
+          await instance.stop().catch(() => { });
+          return c.text("Failed to hydrate sandbox", 500);
+        }
       }
 
       // Capture starting commit SHA for diff baseline (after hydration, before agent runs)
@@ -917,6 +994,185 @@ sandboxesRouter.openapi(
       // Provide a more descriptive error message without leaking sensitive details
       const errorMessage = getSandboxStartErrorMessage(error);
       return c.text(errorMessage, 500);
+    }
+  },
+);
+
+// Prewarm a Morph sandbox instance for faster task startup.
+const PrewarmSandboxBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    repoUrl: z.string().optional(),
+    branch: z.string().optional(),
+  })
+  .openapi("PrewarmSandboxBody");
+
+const PrewarmSandboxResponse = z
+  .object({
+    id: z.string(),
+    alreadyExists: z.boolean(),
+  })
+  .openapi("PrewarmSandboxResponse");
+
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/prewarm",
+    tags: ["Sandboxes"],
+    summary: "Prewarm a sandbox instance for a repo",
+    description:
+      "Creates a Morph instance in the background with the repo already cloned. " +
+      "Call this when the user starts typing a task description for faster startup.",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: PrewarmSandboxBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: PrewarmSandboxResponse,
+          },
+        },
+        description: "Prewarm entry created (provisioning in background)",
+      },
+      401: { description: "Unauthorized" },
+      500: { description: "Failed to create prewarm entry" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const body = c.req.valid("json");
+
+    try {
+      const convex = getConvex({ accessToken });
+
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      const snapshotId = DEFAULT_MORPH_SNAPSHOT_ID;
+      const result = await convex.mutation(api.warmPool.createPrewarmEntry, {
+        teamId: team.uuid,
+        userId: user.id,
+        snapshotId,
+        repoUrl: body.repoUrl,
+        branch: body.branch,
+      });
+
+      if (result.alreadyExists) {
+        return c.json({ id: result.id, alreadyExists: true });
+      }
+
+      const githubAccountPromise = user.getConnectedAccount("github");
+      const prewarmEntryId = result.id;
+      void (async () => {
+        try {
+          const client = getMorphClient();
+
+          let morphInstance = await client.instances.start({
+            snapshotId,
+            ttlSeconds: 3600,
+            ttlAction: "pause",
+            metadata: {
+              app: "cmux-warm-pool",
+              teamId: team.uuid,
+              userId: user.id,
+            },
+          });
+
+          if (morphInstance.networking.httpServices.length === 0) {
+            morphInstance = await client.instances.get({
+              instanceId: morphInstance.id,
+            });
+          }
+
+          const instance = wrapMorphInstance(morphInstance);
+          void (async () => {
+            await instance.setWakeOn(true, true);
+          })();
+
+          const exposed = instance.networking.httpServices;
+          const vscodeService = exposed.find((service) => service.port === 39378);
+          const workerService = exposed.find((service) => service.port === 39377);
+          if (!vscodeService || !workerService) {
+            throw new Error(
+              `VSCode or worker service not found on instance ${instance.id}`,
+            );
+          }
+
+          await waitForVSCodeReady(vscodeService.url, { timeoutMs: 30_000 });
+
+          const githubAccount = await githubAccountPromise;
+          if (githubAccount) {
+            const { accessToken: githubAccessToken } =
+              await githubAccount.getAccessToken();
+            if (githubAccessToken) {
+              await configureGithubAccess(instance, githubAccessToken);
+            }
+          }
+
+          if (body.repoUrl) {
+            const parsedRepo = parseGithubRepoUrl(body.repoUrl);
+            if (parsedRepo) {
+              await hydrateWorkspace({
+                instance,
+                repo: {
+                  owner: parsedRepo.owner,
+                  name: parsedRepo.repo,
+                  repoFull: parsedRepo.fullName,
+                  cloneUrl: parsedRepo.gitUrl,
+                  maskedCloneUrl: parsedRepo.gitUrl,
+                  depth: 1,
+                  baseBranch: body.branch || "main",
+                  newBranch: "",
+                },
+              });
+            }
+          }
+
+          await convex.mutation(api.warmPool.markInstanceReady, {
+            id: prewarmEntryId,
+            instanceId: instance.id,
+            vscodeUrl: vscodeService.url,
+            workerUrl: workerService.url,
+          });
+        } catch (error) {
+          console.error("[sandboxes.prewarm] Background provisioning failed:", error);
+          try {
+            await convex.mutation(api.warmPool.markInstanceFailed, {
+              id: prewarmEntryId,
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+            });
+          } catch (markError) {
+            console.error(
+              "[sandboxes.prewarm] Failed to mark entry as failed:",
+              markError,
+            );
+          }
+        }
+      })();
+
+      return c.json({ id: result.id, alreadyExists: false });
+    } catch (error) {
+      console.error("[sandboxes.prewarm] Failed:", error);
+      return c.text("Failed to create prewarm entry", 500);
     }
   },
 );
