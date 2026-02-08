@@ -72,6 +72,7 @@ export const claimInstance = mutation({
   args: {
     teamId: v.string(),
     repoUrl: v.optional(v.string()),
+    branch: v.optional(v.string()),
     taskRunId: v.string(),
   },
   handler: async (ctx, args) => {
@@ -83,9 +84,10 @@ export const claimInstance = mutation({
       )
       .collect();
 
-    // Find the best match: same repo URL
+    // Find the best match: same repo URL AND same branch
+    // Both must match to ensure the warm pool instance has the correct code checked out
     const match = readyInstances.find(
-      (entry) => entry.repoUrl === args.repoUrl
+      (entry) => entry.repoUrl === args.repoUrl && entry.branch === args.branch
     );
 
     if (!match) {

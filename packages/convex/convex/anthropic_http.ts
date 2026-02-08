@@ -495,11 +495,11 @@ export const anthropicProxy = httpAction(async (ctx, req) => {
       return handleResponse(response, isStreaming);
     }
 
-    // Platform credits path: use AI Gateway, then Bedrock fallback.
-    // NOTE: Do NOT use userCustomBaseUrl here - platform credits use placeholder key
-    // which won't authenticate with user's custom endpoint.
+    // Platform credits path: use user's custom base URL if set, otherwise AI Gateway, then Bedrock fallback.
+    // User's custom base URL takes precedence even with platform credits - this allows users
+    // to route platform-credit requests through their own proxy (e.g., for logging/monitoring).
     // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis.
-    const effectiveGatewayBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
+    const effectiveGatewayBaseUrl = userCustomBaseUrl || process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
     const effectiveGatewayRawBaseUrl = effectiveGatewayBaseUrl
       ? normalizeAnthropicBaseUrl(effectiveGatewayBaseUrl).forRawFetch
       : undefined;
@@ -519,7 +519,8 @@ export const anthropicProxy = httpAction(async (ctx, req) => {
 
       console.log("[anthropic-proxy] Gateway request summary:", {
         requestedModel,
-        usingAiGateway: true,
+        usingCustomBaseUrl: !!userCustomBaseUrl,
+        usingAiGateway: !userCustomBaseUrl && !!process.env.AIGATEWAY_ANTHROPIC_BASE_URL,
         stream: payloadSummary.stream ?? false,
         maxTokens: payloadSummary.maxTokens ?? null,
         messageCount: payloadSummary.messages.count,

@@ -485,6 +485,7 @@ sandboxesRouter.openapi(
       let rawPveLxcInstance: PveLxcInstance | null = null;
       let usedWarmPool = false;
       let warmPoolRepoUrl: string | undefined;
+      let warmPoolBranch: string | undefined;
 
       if (provider === "pve-lxc") {
         // Proxmox VE LXC provider
@@ -514,6 +515,7 @@ sandboxesRouter.openapi(
             const claimed = await convex.mutation(api.warmPool.claimInstance, {
               teamId: team.uuid,
               repoUrl: repoUrl ?? undefined,
+              branch: body.branch ?? undefined,
               taskRunId: body.taskRunId || "",
             });
 
@@ -542,6 +544,7 @@ sandboxesRouter.openapi(
                 instance = claimedWrapped;
                 usedWarmPool = true;
                 warmPoolRepoUrl = claimed.repoUrl;
+                warmPoolBranch = claimed.branch;
                 void (async () => {
                   await instance.setWakeOn(true, true);
                 })();
@@ -830,14 +833,18 @@ sandboxesRouter.openapi(
 
       await configureGithubAccess(instance, gitAuthToken);
 
+      // Only skip hydration if both repo URL and branch match the warm pool instance
+      // This ensures we don't use wrong branch when user prewarmed with different branch
+      const requestedBranch = body.branch ?? undefined;
       const skipHydration =
         usedWarmPool &&
         typeof repoUrl === "string" &&
         repoUrl.length > 0 &&
-        warmPoolRepoUrl === repoUrl;
+        warmPoolRepoUrl === repoUrl &&
+        warmPoolBranch === requestedBranch;
       if (skipHydration) {
         console.log(
-          `[sandboxes.start] Skipping hydration - repo already cloned in warm pool instance ${instance.id}`,
+          `[sandboxes.start] Skipping hydration - repo and branch already cloned in warm pool instance ${instance.id}`,
         );
       } else {
         let repoConfig: HydrateRepoConfig | undefined;

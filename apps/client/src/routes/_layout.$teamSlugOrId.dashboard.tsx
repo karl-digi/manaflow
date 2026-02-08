@@ -753,7 +753,7 @@ function DashboardComponent() {
         const user = await stackClientApp.getUser();
         if (!user) return;
         const authHeaders = await user.getAuthHeaders();
-        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+        const response = await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
           method: "POST",
           headers: { ...authHeaders, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -762,8 +762,11 @@ function DashboardComponent() {
             branch: branch || undefined,
           }),
         });
+        if (!response.ok) {
+          console.error("[prewarm] Failed:", response.status, response.statusText);
+        }
       } catch (error) {
-        console.error("[prewarm] Failed to trigger prewarm:", error);
+        console.error("[prewarm] Network error:", error);
       }
     })();
   }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
