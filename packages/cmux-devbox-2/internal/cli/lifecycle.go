@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +16,10 @@ var stopCmd = &cobra.Command{
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		if err := client.StopInstance(teamSlug, args[0]); err != nil {
 			return err
 		}
@@ -37,8 +39,11 @@ var deleteCmd = &cobra.Command{
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
-		if err := client.StopInstance(teamSlug, args[0]); err != nil {
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
+		if err := client.DeleteInstance(teamSlug, args[0]); err != nil {
 			return err
 		}
 		fmt.Printf("Deleted: %s\n", args[0])
@@ -60,7 +65,10 @@ var extendCmd = &cobra.Command{
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		if err := client.ExtendTimeout(teamSlug, args[0], extendFlagTimeout*1000); err != nil {
 			return err
 		}

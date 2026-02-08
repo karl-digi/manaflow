@@ -59,6 +59,15 @@ import {
   instanceActionRouter as devboxV2InstanceActionRouter,
   instanceGetRouter as devboxV2InstanceGetRouter,
 } from "./devbox_v2_http";
+import {
+  createInstance as daytonaCreateInstance,
+  listInstances as daytonaListInstances,
+  getMe as daytonaGetMe,
+  instanceActionRouter as daytonaInstanceActionRouter,
+  instanceGetRouter as daytonaInstanceGetRouter,
+  instanceDeleteRouter as daytonaInstanceDeleteRouter,
+  previewRedirect as daytonaPreviewRedirect,
+} from "./daytona_http";
 
 const http = httpRouter();
 
@@ -348,6 +357,54 @@ http.route({
   pathPrefix: "/api/v2/devbox/instances/",
   method: "POST",
   handler: devboxV2InstanceActionRouter,
+});
+
+// =============================================================================
+// v3/devbox API - Daytona sandbox management for cmux-devbox CLI
+// =============================================================================
+
+http.route({
+  path: "/api/v3/devbox/instances",
+  method: "POST",
+  handler: daytonaCreateInstance,
+});
+
+http.route({
+  path: "/api/v3/devbox/instances",
+  method: "GET",
+  handler: daytonaListInstances,
+});
+
+http.route({
+  path: "/api/v3/devbox/me",
+  method: "GET",
+  handler: daytonaGetMe,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v3/devbox/instances/",
+  method: "GET",
+  handler: daytonaInstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v3/devbox/instances/",
+  method: "POST",
+  handler: daytonaInstanceActionRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v3/devbox/instances/",
+  method: "DELETE",
+  handler: daytonaInstanceDeleteRouter,
+});
+
+// Preview redirect - serves secure URLs without exposing Daytona tokens
+http.route({
+  pathPrefix: "/api/v3/devbox/preview/",
+  method: "GET",
+  handler: daytonaPreviewRedirect,
 });
 
 export default http;

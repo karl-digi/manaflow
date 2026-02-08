@@ -570,6 +570,39 @@ async fn port_head_request_passes_validation() {
 }
 
 #[tokio::test]
+async fn daytona_port_route_forwards_skip_preview_warning_header() {
+    let header_seen = Arc::new(Mutex::new(None::<String>));
+    let header_seen_backend = header_seen.clone();
+
+    let backend = TestHttpBackend::serve(Arc::new(move |req| {
+        let header_value = req
+            .headers()
+            .get("X-Daytona-Skip-Preview-Warning")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+        *header_seen_backend.lock().expect("lock") = header_value;
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("ok"))
+            .unwrap()
+    }))
+    .await;
+
+    let proxy = TestProxy::spawn().await;
+    let host = format!("port-{}-daytona-test.cmux.sh", backend.port());
+
+    let response = proxy.request(Method::GET, &host, "/", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.text().await.expect("text"), "ok");
+
+    let observed = header_seen.lock().expect("lock").clone();
+    assert_eq!(observed.as_deref(), Some("true"));
+
+    proxy.shutdown().await;
+    backend.shutdown().await;
+}
+
+#[tokio::test]
 async fn cmux_subdomain_validation() {
     let proxy = TestProxy::spawn().await;
 
@@ -1035,6 +1068,62 @@ async fn port_39378_strips_cors_and_applies_csp() {
             .headers()
             .get("content-security-policy")
             .is_none()
+    );
+
+    proxy.shutdown().await;
+    backend.shutdown().await;
+}
+
+#[tokio::test]
+async fn port_39380_strips_secure_cookie_for_http_clients() {
+    let handler = Arc::new(|_req: Request<Body>| {
+        Response::builder()
+            .status(StatusCode::FOUND)
+            .header(
+                "set-cookie",
+                "vnc_session=abc; Path=/; HttpOnly; SameSite=None; Secure",
+            )
+            .header("location", "/")
+            .body(Body::empty())
+            .unwrap()
+    });
+
+    let backend = TestHttpBackend::serve_on_port(39_380, handler).await;
+    let proxy = TestProxy::spawn().await;
+
+    let response = proxy
+        .request(Method::GET, "port-39380-test.cmux.localhost", "/", &[])
+        .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        !cookie.to_ascii_lowercase().contains("secure"),
+        "expected Secure attribute to be stripped, got: {}",
+        cookie
+    );
+
+    let https_response = proxy
+        .request(
+            Method::GET,
+            "port-39380-test.cmux.localhost",
+            "/",
+            &[("x-forwarded-proto", "https")],
+        )
+        .await;
+    assert_eq!(https_response.status(), StatusCode::FOUND);
+    let https_cookie = https_response
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        https_cookie.to_ascii_lowercase().contains("secure"),
+        "expected Secure attribute to remain when x-forwarded-proto=https, got: {}",
+        https_cookie
     );
 
     proxy.shutdown().await;

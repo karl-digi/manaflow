@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +49,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 
 		// Get sandbox info
 		inst, err := client.GetInstance(teamSlug, sandboxID)

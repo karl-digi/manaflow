@@ -33,7 +33,10 @@ func execComputerCommand(sandboxID, endpoint string, body map[string]interface{}
 		return nil, fmt.Errorf("failed to get team: %w", err)
 	}
 
-	client := api.NewClient()
+	client, err := newAPIClient()
+	if err != nil {
+		return nil, err
+	}
 	inst, err := client.GetInstance(teamSlug, sandboxID)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox not found: %w", err)

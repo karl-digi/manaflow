@@ -27,6 +27,8 @@ function getPlatformPaths() {
   const arch = process.arch;
   const pkgName = `cmux-${platform}-${arch}`;
   return [
+    // Local repo layout (packages/cmux-devbox-2/npm/<platform>-<arch>/bin)
+    path.join(__dirname, "..", "..", `${platform}-${arch}`, "bin", binName),
     path.join(__dirname, "..", "..", pkgName, "bin", binName),
     path.join(__dirname, "..", "node_modules", pkgName, "bin", binName),
   ];

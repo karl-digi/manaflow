@@ -122,11 +122,19 @@ Examples:
 			}
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 
 		// Determine which template to use
 		templateID := startFlagTemplate
-		if templateID == "" {
+		if templateID == "" && resolvedProvider == api.ProviderDaytona {
+			// Daytona uses a prebuilt snapshot as the "template".
+			// Keep the default stable so `cmux start` works without flags.
+			templateID = "cmux-devbox-full"
+		}
+		if templateID == "" && resolvedProvider != api.ProviderDaytona {
 			templates, err := client.ListTemplates(teamSlug)
 			if err == nil {
 				presetID := defaultTemplatePresetID

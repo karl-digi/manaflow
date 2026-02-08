@@ -39,6 +39,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workspace_domain_suffix = std::env::var("GLOBAL_PROXY_WORKSPACE_DOMAIN_SUFFIX")
         .ok()
         .and_then(normalize_suffix);
+    let daytona_domain_suffix = std::env::var("GLOBAL_PROXY_DAYTONA_DOMAIN_SUFFIX")
+        .ok()
+        .and_then(normalize_suffix)
+        // Default to Daytona's hosted preview proxy domain.
+        .or_else(|| Some(".proxy.daytona.works".to_string()));
 
     let handle = spawn_proxy(ProxyConfig {
         bind_addr,
@@ -46,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         backend_scheme,
         morph_domain_suffix,
         workspace_domain_suffix,
+        daytona_domain_suffix,
     })
     .await?;
 

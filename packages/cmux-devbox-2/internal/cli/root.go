@@ -1,17 +1,21 @@
 package cli
 
 import (
+	"fmt"
+	"os"
 	"time"
 
+	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/cmux-cli/cmux-devbox-2/internal/auth"
 	"github.com/cmux-cli/cmux-devbox-2/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var (
-	flagJSON    bool
-	flagVerbose bool
-	flagTeam    string
+	flagJSON     bool
+	flagVerbose  bool
+	flagTeam     string
+	flagProvider string
 )
 
 // versionCheckDone signals when version check is complete
@@ -19,6 +23,8 @@ var versionCheckDone chan struct{}
 
 // versionCheckResult stores the version check result for post-run hook
 var versionCheckResult *version.CheckResult
+
+var resolvedProvider api.Provider = api.ProviderE2B
 
 var rootCmd = &cobra.Command{
 	Use:   "cmux",
@@ -38,8 +44,18 @@ Quick start:
   cmux ls                         # List all sandboxes`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		auth.SetConfigOverrides("", "", "", "")
+
+		providerRaw := flagProvider
+		if providerRaw == "" {
+			providerRaw = os.Getenv("CMUX_DEVBOX_PROVIDER")
+		}
+		provider, err := api.ParseProvider(providerRaw)
+		if err != nil {
+			return fmt.Errorf("invalid provider: %w", err)
+		}
+		resolvedProvider = provider
 
 		// Start version check in background for long-running commands
 		cmdName := cmd.Name()
@@ -50,6 +66,7 @@ Quick start:
 				versionCheckResult = version.CheckForUpdates()
 			}()
 		}
+		return nil
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Show version update warning after long-running commands complete
@@ -78,6 +95,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output as JSON")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().StringVarP(&flagTeam, "team", "t", "", "Team slug (overrides default)")
+	rootCmd.PersistentFlags().StringVar(&flagProvider, "provider", "", "Sandbox provider (e2b or daytona) (env: CMUX_DEVBOX_PROVIDER)")
 
 	// Version command
 	rootCmd.AddCommand(versionCmd)
@@ -153,4 +171,8 @@ func getTeamSlug() (string, error) {
 		return flagTeam, nil
 	}
 	return auth.GetTeamSlug()
+}
+
+func newAPIClient() (*api.Client, error) {
+	return api.NewClient(resolvedProvider)
 }

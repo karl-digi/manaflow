@@ -687,15 +687,28 @@ export default {
         if (parts.length >= 3) {
           // Insert "morphvm" after the port number
           const morphId = parts.slice(2).join("-");
-          const morphSubdomain = `${parts[0]}-${parts[1]}-morphvm-${morphId}`;
-          const target = new URL(
-            url.pathname + url.search,
-            `https://${morphSubdomain}.http.cloud.morph.so`
-          );
 
           // Add header to prevent loops
           const headers = new Headers(request.headers);
           headers.set("X-Cmux-Proxied", "true");
+
+          let target: URL;
+          if (morphId.startsWith("daytona-")) {
+            // Daytona previews are served under: <port>-<sandbox_id>.proxy.daytona.works
+            const daytonaId = morphId.slice("daytona-".length);
+            const daytonaHost = `${parts[1]}-${daytonaId}.proxy.daytona.works`;
+            target = new URL(
+              url.pathname + url.search,
+              `https://${daytonaHost}`
+            );
+            headers.set("X-Daytona-Skip-Preview-Warning", "true");
+          } else {
+            const morphSubdomain = `${parts[0]}-${parts[1]}-morphvm-${morphId}`;
+            target = new URL(
+              url.pathname + url.search,
+              `https://${morphSubdomain}.http.cloud.morph.so`
+            );
+          }
 
           const outbound = new Request(target, {
             method: request.method,

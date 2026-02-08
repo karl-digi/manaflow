@@ -1,9 +1,15 @@
+//go:build e2e
+// +build e2e
+
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,36 +18,67 @@ import (
 	"time"
 )
 
-// E2E tests for cmux CLI
+// E2E tests for cmux CLI.
+//
 // These tests require:
 // - Valid authentication (cmux login)
-// - E2B API access
 // - Network connectivity
+// - For Daytona provider: a running proxy (apps/global-proxy) so worker URLs are reachable in dev.
 //
-// Run with: go test -v -timeout 10m ./...
+// Run with:
+//   go test -tags e2e -v -timeout 30m ./...
 
-var (
-	// Sandbox ID created during tests - cleaned up at the end
-	testSandboxID string
-)
-
-func TestMain(m *testing.M) {
-	// Run tests
-	code := m.Run()
-
-	// Cleanup: delete sandbox if it was created
-	if testSandboxID != "" {
-		fmt.Printf("Cleaning up sandbox: %s\n", testSandboxID)
-		runCmux("delete", testSandboxID)
+func defaultDaytonaProxyOrigin() string {
+	if origin := os.Getenv("CMUX_DAYTONA_PROXY_ORIGIN"); origin != "" {
+		return origin
 	}
-
-	os.Exit(code)
+	return "http://cmux.localhost:8080"
 }
 
-// runCmux executes a cmux command and returns stdout, stderr, and error
-func runCmux(args ...string) (string, string, error) {
-	cmd := exec.Command("go", append([]string{"run", "./cmd/cmux"}, args...)...)
+func assertDaytonaProxyReachable(t *testing.T) {
+	t.Helper()
+
+	origin := defaultDaytonaProxyOrigin()
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		t.Fatalf("invalid CMUX_DAYTONA_PROXY_ORIGIN %q: %v", origin, err)
+	}
+
+	hostPort := parsed.Host
+	if !strings.Contains(hostPort, ":") {
+		if parsed.Scheme == "https" {
+			hostPort = hostPort + ":443"
+		} else {
+			hostPort = hostPort + ":80"
+		}
+	}
+
+	conn, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
+	if err != nil {
+		t.Fatalf(
+			"Daytona proxy not reachable at %s (dial %s): %v\nStart it with: cd apps/global-proxy && GLOBAL_PROXY_BIND=127.0.0.1:8080 cargo run",
+			origin,
+			hostPort,
+			err,
+		)
+	}
+	_ = conn.Close()
+}
+
+// runCmux executes a cmux command and returns stdout, stderr, and error.
+func runCmux(provider string, args ...string) (string, string, error) {
+	cmdArgs := []string{"run", "./cmd/cmux"}
+	if provider != "" {
+		cmdArgs = append(cmdArgs, "--provider", provider)
+	}
+	cmdArgs = append(cmdArgs, args...)
+
+	cmd := exec.Command("go", cmdArgs...)
 	cmd.Dir = getProjectRoot()
+	cmd.Env = os.Environ()
+	if provider == "daytona" {
+		cmd.Env = append(cmd.Env, "CMUX_DAYTONA_PROXY_ORIGIN="+defaultDaytonaProxyOrigin())
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -51,31 +88,36 @@ func runCmux(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-// runCmuxWithTimeout executes a cmux command with a timeout
-func runCmuxWithTimeout(timeout time.Duration, args ...string) (string, string, error) {
-	cmd := exec.Command("go", append([]string{"run", "./cmd/cmux"}, args...)...)
+// runCmuxWithTimeout executes a cmux command with a timeout.
+func runCmuxWithTimeout(timeout time.Duration, provider string, args ...string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmdArgs := []string{"run", "./cmd/cmux"}
+	if provider != "" {
+		cmdArgs = append(cmdArgs, "--provider", provider)
+	}
+	cmdArgs = append(cmdArgs, args...)
+
+	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = getProjectRoot()
+	cmd.Env = os.Environ()
+	if provider == "daytona" {
+		cmd.Env = append(cmd.Env, "CMUX_DAYTONA_PROXY_ORIGIN="+defaultDaytonaProxyOrigin())
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	select {
-	case err := <-done:
-		return stdout.String(), stderr.String(), err
-	case <-time.After(timeout):
-		cmd.Process.Kill()
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
 		return stdout.String(), stderr.String(), fmt.Errorf("command timed out after %v", timeout)
 	}
+	return stdout.String(), stderr.String(), err
 }
 
 func getProjectRoot() string {
-	// Get the directory containing this test file
 	_, err := os.Getwd()
 	if err != nil {
 		return "."
@@ -88,7 +130,7 @@ func getProjectRoot() string {
 // ===========================================================================
 
 func TestVersion(t *testing.T) {
-	stdout, _, err := runCmux("version")
+	stdout, _, err := runCmux("", "version")
 	if err != nil {
 		t.Fatalf("version command failed: %v", err)
 	}
@@ -99,7 +141,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestWhoami(t *testing.T) {
-	stdout, _, err := runCmux("whoami")
+	stdout, _, err := runCmux("", "whoami")
 	if err != nil {
 		t.Fatalf("whoami command failed: %v", err)
 	}
@@ -113,7 +155,7 @@ func TestWhoami(t *testing.T) {
 }
 
 func TestTemplates(t *testing.T) {
-	stdout, _, err := runCmux("templates")
+	stdout, _, err := runCmux("e2b", "templates")
 	if err != nil {
 		t.Fatalf("templates command failed: %v", err)
 	}
@@ -124,12 +166,12 @@ func TestTemplates(t *testing.T) {
 }
 
 func TestHelp(t *testing.T) {
-	stdout, _, err := runCmux("--help")
+	stdout, _, err := runCmux("", "--help")
 	if err != nil {
 		t.Fatalf("help command failed: %v", err)
 	}
 
-	expectedCommands := []string{"start", "stop", "delete", "exec", "status", "sync", "upload"}
+	expectedCommands := []string{"start", "stop", "delete", "exec", "status", "upload", "download", "pty", "computer"}
 	for _, cmd := range expectedCommands {
 		if !strings.Contains(stdout, cmd) {
 			t.Errorf("help output should contain '%s', got: %s", cmd, stdout)
@@ -142,251 +184,270 @@ func TestHelp(t *testing.T) {
 // ===========================================================================
 
 func TestSandboxLifecycle(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping sandbox lifecycle test in short mode")
-	}
+	providers := []string{"e2b", "daytona"}
 
-	// Test: Create sandbox
-	t.Run("Start", func(t *testing.T) {
-		stdout, stderr, err := runCmuxWithTimeout(2*time.Minute, "start", "--template", "cmux-devbox", "--name", "E2E Test")
-		if err != nil {
-			t.Fatalf("start command failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
+	for _, provider := range providers {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			if provider == "daytona" {
+				assertDaytonaProxyReachable(t)
+			}
 
-		// Extract sandbox ID from output
-		lines := strings.Split(stdout, "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "Created sandbox:") {
-				parts := strings.Fields(line)
-				if len(parts) >= 3 {
-					testSandboxID = parts[2]
+			startTimeout := 2 * time.Minute
+			if provider == "daytona" {
+				startTimeout = 15 * time.Minute
+			}
+
+			stdout, stderr, err := runCmuxWithTimeout(startTimeout, provider, "start", "--name", "E2E Test "+provider)
+			if err != nil {
+				t.Fatalf("start command failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+			}
+
+			sandboxID := ""
+			for _, line := range strings.Split(stdout, "\n") {
+				if strings.HasPrefix(line, "Created sandbox:") {
+					parts := strings.Fields(line)
+					if len(parts) >= 3 {
+						sandboxID = parts[2]
+					}
 				}
 			}
-		}
+			if sandboxID == "" {
+				t.Fatalf("failed to extract sandbox ID from output: %s", stdout)
+			}
 
-		if testSandboxID == "" {
-			t.Fatalf("failed to extract sandbox ID from output: %s", stdout)
-		}
-		t.Logf("Created sandbox: %s", testSandboxID)
-	})
+			t.Cleanup(func() {
+				_, _, _ = runCmuxWithTimeout(2*time.Minute, provider, "delete", sandboxID)
+			})
 
-	if testSandboxID == "" {
-		t.Fatal("no sandbox ID, cannot continue tests")
+			// Status
+			t.Run("Status", func(t *testing.T) {
+				out, _, err := runCmux(provider, "status", sandboxID)
+				if err != nil {
+					t.Fatalf("status command failed: %v", err)
+				}
+				if !strings.Contains(strings.ToLower(out), "running") {
+					t.Errorf("status should show 'running', got: %s", out)
+				}
+				if !strings.Contains(out, sandboxID) {
+					t.Errorf("status should contain sandbox ID, got: %s", out)
+				}
+			})
+
+			// Status JSON
+			t.Run("StatusJSON", func(t *testing.T) {
+				out, _, err := runCmux(provider, "status", sandboxID, "--json")
+				if err != nil {
+					t.Fatalf("status --json command failed: %v", err)
+				}
+
+				var status struct {
+					ID     string `json:"id"`
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal([]byte(out), &status); err != nil {
+					t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, out)
+				}
+				if status.Status != "running" {
+					t.Errorf("status should be 'running', got: %q", status.Status)
+				}
+				if status.ID != sandboxID {
+					t.Errorf("status id mismatch: expected %q, got %q", sandboxID, status.ID)
+				}
+			})
+
+			// Exec
+			t.Run("Exec", func(t *testing.T) {
+				// Pass command and args as separate CLI args to match real shell behavior.
+				out, _, err := runCmux(provider, "exec", sandboxID, "echo", "Hello from E2E test")
+				if err != nil {
+					t.Fatalf("exec command failed: %v", err)
+				}
+				if !strings.Contains(out, "Hello from E2E test") {
+					t.Errorf("exec output should contain echo result, got: %s", out)
+				}
+			})
+
+			// PTY List
+			t.Run("PTYList", func(t *testing.T) {
+				out, _, err := runCmux(provider, "pty-list", sandboxID)
+				if err != nil {
+					t.Fatalf("pty-list command failed: %v", err)
+				}
+				if !strings.Contains(out, "No active PTY sessions") && !strings.Contains(out, "SESSION ID") {
+					t.Errorf("pty-list output unexpected: %s", out)
+				}
+			})
+
+			// Upload single file
+			var uploadedBasename string
+			var uploadedContent string
+			t.Run("UploadFile", func(t *testing.T) {
+				tmpFile, err := os.CreateTemp("", "cmux-e2e-*.txt")
+				if err != nil {
+					t.Fatalf("failed to create temp file: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
+
+				uploadedBasename = filepath.Base(tmpFile.Name())
+				uploadedContent = fmt.Sprintf("E2E test content %d", time.Now().Unix())
+				if _, err := tmpFile.WriteString(uploadedContent); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				_ = tmpFile.Close()
+
+				out, errOut, err := runCmuxWithTimeout(60*time.Second, provider, "upload", sandboxID, tmpFile.Name(), "-r", "/home/user/workspace")
+				if err != nil {
+					t.Fatalf("upload command failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+				}
+				if !strings.Contains(out, "Uploaded") {
+					t.Errorf("upload output should confirm upload, got: %s", out)
+				}
+
+				verifyStdout, _, err := runCmux(provider, "exec", sandboxID, "cat /home/user/workspace/"+uploadedBasename)
+				if err != nil {
+					t.Fatalf("failed to verify uploaded file: %v", err)
+				}
+				if !strings.Contains(verifyStdout, uploadedContent) {
+					t.Errorf("uploaded file content mismatch, expected %q, got: %s", uploadedContent, verifyStdout)
+				}
+			})
+
+			// Upload directory (rsync)
+			t.Run("UploadDir", func(t *testing.T) {
+				tmpDir, err := os.MkdirTemp("", "cmux-e2e-upload-dir-*")
+				if err != nil {
+					t.Fatalf("failed to create temp dir: %v", err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+				for i := 1; i <= 3; i++ {
+					content := fmt.Sprintf("file %d content", i)
+					if err := os.WriteFile(filepath.Join(tmpDir, fmt.Sprintf("file%d.txt", i)), []byte(content), 0644); err != nil {
+						t.Fatalf("failed to create test file: %v", err)
+					}
+				}
+
+				out, errOut, err := runCmuxWithTimeout(2*time.Minute, provider, "upload", sandboxID, tmpDir, "-r", "/home/user/e2e-sync")
+				if err != nil {
+					t.Fatalf("upload dir command failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+				}
+				if !strings.Contains(out, "Synced") && !strings.Contains(out, "Sync") {
+					t.Errorf("upload dir output unexpected: %s", out)
+				}
+
+				verifyStdout, _, err := runCmux(provider, "exec", sandboxID, "ls -la /home/user/e2e-sync/")
+				if err != nil {
+					t.Fatalf("failed to verify synced files: %v", err)
+				}
+				for i := 1; i <= 3; i++ {
+					if !strings.Contains(verifyStdout, fmt.Sprintf("file%d.txt", i)) {
+						t.Errorf("synced directory should contain file%d.txt, got: %s", i, verifyStdout)
+					}
+				}
+			})
+
+			// Download workspace
+			t.Run("Download", func(t *testing.T) {
+				tmpOutDir, err := os.MkdirTemp("", "cmux-e2e-download-*")
+				if err != nil {
+					t.Fatalf("failed to create temp dir: %v", err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(tmpOutDir) })
+
+				out, errOut, err := runCmuxWithTimeout(2*time.Minute, provider, "download", sandboxID, tmpOutDir, "-r", "/home/user/workspace")
+				if err != nil {
+					t.Fatalf("download command failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+				}
+
+				downloaded := filepath.Join(tmpOutDir, uploadedBasename)
+				data, err := os.ReadFile(downloaded)
+				if err != nil {
+					t.Fatalf("downloaded file missing: %v", err)
+				}
+				if !strings.Contains(string(data), uploadedContent) {
+					t.Fatalf("downloaded file content mismatch, expected %q, got: %s", uploadedContent, string(data))
+				}
+			})
+
+			// Extend
+			t.Run("Extend", func(t *testing.T) {
+				out, _, err := runCmux(provider, "extend", sandboxID)
+				if err != nil {
+					t.Fatalf("extend command failed: %v", err)
+				}
+				if !strings.Contains(out, "Extended timeout by") {
+					t.Errorf("extend output unexpected: %s", out)
+				}
+			})
+
+			// Code/VNC print URLs (no browser open)
+			t.Run("CodePrint", func(t *testing.T) {
+				out, _, err := runCmux(provider, "code", sandboxID, "--print")
+				if err != nil {
+					t.Fatalf("code --print command failed: %v", err)
+				}
+				if !strings.Contains(out, "tkn=") {
+					t.Errorf("code --print should include token, got: %s", out)
+				}
+			})
+
+			t.Run("VNCPrint", func(t *testing.T) {
+				out, _, err := runCmux(provider, "vnc", sandboxID, "--print")
+				if err != nil {
+					t.Fatalf("vnc --print command failed: %v", err)
+				}
+				if !strings.Contains(out, "tkn=") {
+					t.Errorf("vnc --print should include token, got: %s", out)
+				}
+			})
+
+			// Computer screenshot (saves to file)
+			t.Run("ComputerScreenshot", func(t *testing.T) {
+				tmpPng, err := os.CreateTemp("", "cmux-e2e-*.png")
+				if err != nil {
+					t.Fatalf("failed to create temp png: %v", err)
+				}
+				_ = tmpPng.Close()
+				t.Cleanup(func() { _ = os.Remove(tmpPng.Name()) })
+
+				out, errOut, err := runCmuxWithTimeout(2*time.Minute, provider, "computer", "screenshot", sandboxID, tmpPng.Name())
+				if err != nil {
+					t.Fatalf("computer screenshot command failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+				}
+
+				data, err := os.ReadFile(tmpPng.Name())
+				if err != nil {
+					t.Fatalf("failed to read screenshot: %v", err)
+				}
+				if len(data) < 8 || !bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G'}) {
+					t.Fatalf("screenshot file does not look like a PNG (len=%d)", len(data))
+				}
+			})
+
+			// Stop
+			t.Run("Stop", func(t *testing.T) {
+				out, _, err := runCmux(provider, "stop", sandboxID)
+				if err != nil {
+					t.Fatalf("stop command failed: %v", err)
+				}
+				if !strings.Contains(out, "Stopped:") {
+					t.Errorf("stop output unexpected: %s", out)
+				}
+			})
+
+			// Delete
+			t.Run("Delete", func(t *testing.T) {
+				out, _, err := runCmux(provider, "delete", sandboxID)
+				if err != nil {
+					t.Fatalf("delete command failed: %v", err)
+				}
+				if !strings.Contains(out, "Deleted:") {
+					t.Errorf("delete output unexpected: %s", out)
+				}
+			})
+		})
 	}
-
-	// Test: Status
-	t.Run("Status", func(t *testing.T) {
-		stdout, _, err := runCmux("status", testSandboxID)
-		if err != nil {
-			t.Fatalf("status command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "running") {
-			t.Errorf("status should show 'running', got: %s", stdout)
-		}
-		if !strings.Contains(stdout, testSandboxID) {
-			t.Errorf("status should contain sandbox ID, got: %s", stdout)
-		}
-	})
-
-	// Test: Status JSON
-	t.Run("StatusJSON", func(t *testing.T) {
-		stdout, _, err := runCmux("status", testSandboxID, "--json")
-		if err != nil {
-			t.Fatalf("status --json command failed: %v", err)
-		}
-
-		var status map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &status); err != nil {
-			t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, stdout)
-		}
-
-		if status["status"] != "running" {
-			t.Errorf("status should be 'running', got: %v", status["status"])
-		}
-	})
-
-	// Test: Exec
-	t.Run("Exec", func(t *testing.T) {
-		stdout, _, err := runCmux("exec", testSandboxID, "echo 'Hello from E2E test'")
-		if err != nil {
-			t.Fatalf("exec command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Hello from E2E test") {
-			t.Errorf("exec output should contain echo result, got: %s", stdout)
-		}
-	})
-
-	// Test: Exec with multiple commands
-	t.Run("ExecMultipleCommands", func(t *testing.T) {
-		stdout, _, err := runCmux("exec", testSandboxID, "whoami && pwd && echo done")
-		if err != nil {
-			t.Fatalf("exec command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "user") {
-			t.Errorf("exec should show 'user', got: %s", stdout)
-		}
-		if !strings.Contains(stdout, "/home/user") {
-			t.Errorf("exec should show '/home/user', got: %s", stdout)
-		}
-		if !strings.Contains(stdout, "done") {
-			t.Errorf("exec should show 'done', got: %s", stdout)
-		}
-	})
-
-	// Test: PTY List
-	t.Run("PTYList", func(t *testing.T) {
-		stdout, _, err := runCmux("pty-list", testSandboxID)
-		if err != nil {
-			t.Fatalf("pty-list command failed: %v", err)
-		}
-
-		// Should show no active sessions or a list
-		if !strings.Contains(stdout, "PTY") && !strings.Contains(stdout, "No active") {
-			t.Errorf("pty-list output unexpected: %s", stdout)
-		}
-	})
-
-	// Test: Upload
-	t.Run("Upload", func(t *testing.T) {
-		// Create a temp file
-		tmpFile, err := os.CreateTemp("", "cmux-e2e-*.txt")
-		if err != nil {
-			t.Fatalf("failed to create temp file: %v", err)
-		}
-		defer os.Remove(tmpFile.Name())
-
-		testContent := fmt.Sprintf("E2E test content %d", time.Now().Unix())
-		if _, err := tmpFile.WriteString(testContent); err != nil {
-			t.Fatalf("failed to write temp file: %v", err)
-		}
-		tmpFile.Close()
-
-		// Upload the file
-		stdout, stderr, err := runCmuxWithTimeout(30*time.Second, "upload", tmpFile.Name(), testSandboxID+":/home/user/e2e-test.txt")
-		if err != nil {
-			t.Fatalf("upload command failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-
-		if !strings.Contains(stdout, "Uploaded") {
-			t.Errorf("upload output should confirm upload, got: %s", stdout)
-		}
-
-		// Verify the file was uploaded
-		verifyStdout, _, err := runCmux("exec", testSandboxID, "cat /home/user/e2e-test.txt")
-		if err != nil {
-			t.Fatalf("failed to verify uploaded file: %v", err)
-		}
-
-		if !strings.Contains(verifyStdout, testContent) {
-			t.Errorf("uploaded file content mismatch, expected %q, got: %s", testContent, verifyStdout)
-		}
-	})
-
-	// Test: Sync
-	t.Run("Sync", func(t *testing.T) {
-		// Create a temp directory with files
-		tmpDir, err := os.MkdirTemp("", "cmux-e2e-sync-*")
-		if err != nil {
-			t.Fatalf("failed to create temp dir: %v", err)
-		}
-		defer os.RemoveAll(tmpDir)
-
-		// Create test files
-		for i := 1; i <= 3; i++ {
-			content := fmt.Sprintf("file %d content", i)
-			if err := os.WriteFile(filepath.Join(tmpDir, fmt.Sprintf("file%d.txt", i)), []byte(content), 0644); err != nil {
-				t.Fatalf("failed to create test file: %v", err)
-			}
-		}
-
-		// Sync the directory
-		stdout, stderr, err := runCmuxWithTimeout(60*time.Second, "sync", testSandboxID, tmpDir, "/home/user/e2e-sync")
-		if err != nil {
-			t.Fatalf("sync command failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-
-		if !strings.Contains(stdout, "Synced") {
-			t.Errorf("sync output should confirm sync, got: %s", stdout)
-		}
-
-		// Verify files were synced
-		verifyStdout, _, err := runCmux("exec", testSandboxID, "ls -la /home/user/e2e-sync/")
-		if err != nil {
-			t.Fatalf("failed to verify synced files: %v", err)
-		}
-
-		for i := 1; i <= 3; i++ {
-			if !strings.Contains(verifyStdout, fmt.Sprintf("file%d.txt", i)) {
-				t.Errorf("synced directory should contain file%d.txt, got: %s", i, verifyStdout)
-			}
-		}
-	})
-
-	// Test: Extend
-	t.Run("Extend", func(t *testing.T) {
-		stdout, _, err := runCmux("extend", testSandboxID)
-		if err != nil {
-			t.Fatalf("extend command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Extended") {
-			t.Errorf("extend output should confirm extension, got: %s", stdout)
-		}
-	})
-
-	// Test: Code URL
-	t.Run("Code", func(t *testing.T) {
-		stdout, _, err := runCmux("code", testSandboxID)
-		if err != nil {
-			t.Fatalf("code command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Opening") || !strings.Contains(stdout, "VS Code") {
-			t.Errorf("code output should mention opening VS Code, got: %s", stdout)
-		}
-	})
-
-	// Test: VNC URL
-	t.Run("VNC", func(t *testing.T) {
-		stdout, _, err := runCmux("vnc", testSandboxID)
-		if err != nil {
-			t.Fatalf("vnc command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Opening") || !strings.Contains(stdout, "VNC") {
-			t.Errorf("vnc output should mention opening VNC, got: %s", stdout)
-		}
-	})
-
-	// Test: Stop
-	t.Run("Stop", func(t *testing.T) {
-		stdout, _, err := runCmux("stop", testSandboxID)
-		if err != nil {
-			t.Fatalf("stop command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Stopped") {
-			t.Errorf("stop output should confirm stop, got: %s", stdout)
-		}
-	})
-
-	// Test: Delete
-	t.Run("Delete", func(t *testing.T) {
-		stdout, _, err := runCmux("delete", testSandboxID)
-		if err != nil {
-			t.Fatalf("delete command failed: %v", err)
-		}
-
-		if !strings.Contains(stdout, "Deleted") {
-			t.Errorf("delete output should confirm deletion, got: %s", stdout)
-		}
-
-		// Clear the sandbox ID so TestMain doesn't try to delete again
-		testSandboxID = ""
-	})
 }
 
 // ===========================================================================
@@ -394,7 +455,7 @@ func TestSandboxLifecycle(t *testing.T) {
 // ===========================================================================
 
 func TestSkillsInstall(t *testing.T) {
-	stdout, _, err := runCmux("skills", "install")
+	stdout, _, err := runCmux("", "skills", "install")
 	if err != nil {
 		t.Fatalf("skills install command failed: %v", err)
 	}
@@ -409,7 +470,7 @@ func TestSkillsInstall(t *testing.T) {
 // ===========================================================================
 
 func TestInvalidSandboxID(t *testing.T) {
-	_, stderr, err := runCmux("status", "invalid_sandbox_id_12345")
+	_, stderr, err := runCmux("", "status", "invalid_sandbox_id_12345")
 	if err == nil {
 		t.Error("expected error for invalid sandbox ID")
 	}
@@ -429,12 +490,12 @@ func TestMissingArguments(t *testing.T) {
 		{"exec without sandbox", []string{"exec"}},
 		{"status without sandbox", []string{"status"}},
 		{"upload without args", []string{"upload"}},
-		{"sync without args", []string{"sync"}},
+		{"download without args", []string{"download"}},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := runCmux(tc.args...)
+			_, _, err := runCmux("", tc.args...)
 			if err == nil {
 				t.Errorf("expected error for %s", tc.name)
 			}

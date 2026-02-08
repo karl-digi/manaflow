@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -25,13 +24,13 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 	if isVNC {
 		// noVNC params for best experience
 		// See: https://github.com/novnc/noVNC/blob/master/docs/EMBEDDING.md
-		query.Set("autoconnect", "true")      // Auto-connect to VNC
-		query.Set("resize", "scale")          // Local scaling mode
-		query.Set("quality", "9")             // Highest JPEG quality (0-9)
-		query.Set("compression", "0")         // No compression (0-9, 0=best quality)
-		query.Set("show_dot", "true")         // Show local cursor
-		query.Set("reconnect", "true")        // Auto-reconnect on disconnect
-		query.Set("reconnect_delay", "1000")  // 1 second reconnect delay
+		query.Set("autoconnect", "true")     // Auto-connect to VNC
+		query.Set("resize", "scale")         // Local scaling mode
+		query.Set("quality", "9")            // Highest JPEG quality (0-9)
+		query.Set("compression", "0")        // No compression (0-9, 0=best quality)
+		query.Set("show_dot", "true")        // Show local cursor
+		query.Set("reconnect", "true")       // Auto-reconnect on disconnect
+		query.Set("reconnect_delay", "1000") // 1 second reconnect delay
 	} else {
 		// Set default folder for VSCode
 		query.Set("folder", "/home/user/workspace")
@@ -39,6 +38,11 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
+
+var (
+	codeFlagPrint bool
+	vncFlagPrint  bool
+)
 
 var codeCmd = &cobra.Command{
 	Use:   "code <id>",
@@ -54,7 +58,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		inst, err := client.GetInstance(teamSlug, args[0])
 		if err != nil {
 			return err
@@ -73,6 +80,11 @@ Examples:
 		authURL, err := buildAuthURL(inst.VSCodeURL, token, false)
 		if err != nil {
 			return err
+		}
+
+		if codeFlagPrint {
+			fmt.Println(authURL)
+			return nil
 		}
 
 		fmt.Println("Opening VS Code...")
@@ -94,7 +106,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		inst, err := client.GetInstance(teamSlug, args[0])
 		if err != nil {
 			return err
@@ -113,6 +128,11 @@ Examples:
 		authURL, err := buildAuthURL(inst.VNCURL, token, true)
 		if err != nil {
 			return err
+		}
+
+		if vncFlagPrint {
+			fmt.Println(authURL)
+			return nil
 		}
 
 		fmt.Println("Opening VNC...")
@@ -134,7 +154,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		inst, err := client.GetInstance(teamSlug, args[0])
 		if err != nil {
 			return err
@@ -196,4 +219,9 @@ func openBrowser(url string) error {
 // Keep openURL as alias for backward compatibility
 func openURL(url string) error {
 	return openBrowser(url)
+}
+
+func init() {
+	codeCmd.Flags().BoolVar(&codeFlagPrint, "print", false, "Print the VS Code URL instead of opening it")
+	vncCmd.Flags().BoolVar(&vncFlagPrint, "print", false, "Print the VNC URL instead of opening it")
 }

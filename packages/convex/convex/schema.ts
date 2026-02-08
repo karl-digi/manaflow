@@ -1215,7 +1215,7 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b")), // Provider name (extensible for future providers)
+    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("daytona")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
@@ -1230,6 +1230,58 @@ const convexSchema = defineSchema({
     lastPausedAt: v.optional(v.number()),
     stoppedAt: v.optional(v.number()),
   }).index("by_instanceId", ["instanceId"]),
+
+  // Daytona sandbox instances (separate from Morph devbox)
+  daytonaInstances: defineTable({
+    daytonaId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
+    userId: v.string(), // Owner user ID
+    teamId: v.string(), // Team scope
+    name: v.optional(v.string()), // User-friendly name
+    source: v.optional(v.union(v.literal("cli"), v.literal("web"))), // Where instance was created
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("archived"),
+      v.literal("starting"),
+      v.literal("stopping"),
+      v.literal("error"),
+      v.literal("unknown")
+    ),
+    metadata: v.optional(v.record(v.string(), v.string())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastAccessedAt: v.optional(v.number()), // When user last accessed the instance
+    stoppedAt: v.optional(v.number()), // When instance was stopped
+  })
+    .index("by_daytonaId", ["daytonaId"])
+    .index("by_team_user", ["teamId", "userId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_status", ["status", "updatedAt"]),
+
+  // Provider-specific info for Daytona instances (maps our ID to Daytona sandbox ID)
+  daytonaInfo: defineTable({
+    daytonaId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
+    providerSandboxId: v.string(), // Daytona's sandbox ID
+    image: v.optional(v.string()), // Docker image used
+    createdAt: v.number(),
+  })
+    .index("by_daytonaId", ["daytonaId"])
+    .index("by_providerSandboxId", ["providerSandboxId"]),
+
+  // Preview codes for secure Daytona preview URLs (token hidden from user)
+  daytonaPreviewCodes: defineTable({
+    code: v.string(), // Short unique code for the URL
+    daytonaId: v.string(), // Our sandbox ID
+    targetUrl: v.string(), // Daytona preview URL (without token)
+    token: v.string(), // Daytona preview token
+    port: v.number(), // Port number
+    userId: v.string(), // User who created this
+    createdAt: v.number(),
+  })
+    .index("by_code", ["code"])
+    .index("by_daytonaId_port", ["daytonaId", "port"]),
 
 });
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +23,10 @@ var execCmd = &cobra.Command{
 		id := args[0]
 		command := strings.Join(args[1:], " ")
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		resp, err := client.Exec(teamSlug, id, command, execFlagTimeout)
 		if err != nil {
 			return err

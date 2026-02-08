@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -36,7 +35,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		inst, err := client.GetInstance(teamSlug, sandboxID)
 		if err != nil {
 			return fmt.Errorf("sandbox not found: %w", err)
@@ -227,7 +229,10 @@ Examples:
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		inst, err := client.GetInstance(teamSlug, sandboxID)
 		if err != nil {
 			return fmt.Errorf("sandbox not found: %w", err)

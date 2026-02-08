@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/cmux-cli/cmux-devbox-2/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +17,10 @@ var listCmd = &cobra.Command{
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		instances, err := client.ListInstances(teamSlug)
 		if err != nil {
 			return err
@@ -56,7 +58,10 @@ var templatesCmd = &cobra.Command{
 			return fmt.Errorf("failed to get team: %w", err)
 		}
 
-		client := api.NewClient()
+		client, err := newAPIClient()
+		if err != nil {
+			return err
+		}
 		templates, err := client.ListTemplates(teamSlug)
 		if err != nil {
 			return err

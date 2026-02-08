@@ -50,6 +50,7 @@ pub struct ProxyConfig {
     pub backend_scheme: Scheme,
     pub morph_domain_suffix: Option<String>,
     pub workspace_domain_suffix: Option<String>,
+    pub daytona_domain_suffix: Option<String>,
 }
 
 impl Default for ProxyConfig {
@@ -60,6 +61,7 @@ impl Default for ProxyConfig {
             backend_scheme: Scheme::HTTP,
             morph_domain_suffix: None,
             workspace_domain_suffix: None,
+            daytona_domain_suffix: None,
         }
     }
 }
@@ -93,6 +95,7 @@ struct AppState {
     backend_scheme: Scheme,
     morph_domain_suffix: Option<String>,
     workspace_domain_suffix: Option<String>,
+    daytona_domain_suffix: Option<String>,
 }
 
 pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError> {
@@ -113,6 +116,7 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
         backend_scheme: config.backend_scheme,
         morph_domain_suffix: config.morph_domain_suffix,
         workspace_domain_suffix: config.workspace_domain_suffix,
+        daytona_domain_suffix: config.daytona_domain_suffix,
     });
 
     let make_svc = make_service_fn(move |_conn: &AddrStream| {
@@ -203,7 +207,23 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         .unwrap();
                 }
 
-                let target = if let Some(suffix) = state.morph_domain_suffix.clone() {
+                let daytona_id = route.morph_id.strip_prefix("daytona-");
+                let is_daytona = daytona_id.is_some();
+
+                let target = if let Some(daytona_id) = daytona_id {
+                    if let Some(suffix) = state.daytona_domain_suffix.clone() {
+                        // Daytona preview domains are shaped like: <port>-<sandbox_id>.proxy.daytona.works
+                        let host = format!("{}-{}{}", route.port, daytona_id, suffix);
+                        Target::Absolute {
+                            scheme: Scheme::HTTPS,
+                            host,
+                            port: None,
+                        }
+                    } else {
+                        // No Daytona suffix configured (e.g. local tests); fall back to backend port routing.
+                        Target::BackendPort(route.port)
+                    }
+                } else if let Some(suffix) = state.morph_domain_suffix.clone() {
                     let host = format!("port-{}-morphvm-{}{}", route.port, route.morph_id, suffix);
                     Target::Absolute {
                         scheme: Scheme::HTTPS,
@@ -220,6 +240,11 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                     (false, None)
                 };
 
+                // VNC uses a cookie-based session; when this proxy is served over plain HTTP
+                // (e.g. local dev), Secure cookies won't be sent by browsers. Strip Secure so
+                // VNC can work over http://*.localhost.
+                let strip_secure_cookies = route.port == 39_380 && !request_is_https(&req);
+
                 return forward_request(
                     state,
                     req,
@@ -228,9 +253,11 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         skip_service_worker: route.skip_service_worker,
                         add_cors: false,
                         strip_cors_headers,
+                        strip_secure_cookies,
                         workspace_header: None,
                         port_header: None,
                         frame_ancestors,
+                        daytona_skip_preview_warning: is_daytona,
                     },
                 )
                 .await;
@@ -271,9 +298,11 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         skip_service_worker: true,
                         add_cors: !is_vscode_route,
                         strip_cors_headers: is_vscode_route,
+                        strip_secure_cookies: false,
                         workspace_header: route.workspace_header,
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
+                        daytona_skip_preview_warning: false,
                     },
                 )
                 .await;
@@ -302,9 +331,11 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         skip_service_worker: false,
                         add_cors: false,
                         strip_cors_headers: false,
+                        strip_secure_cookies: false,
                         workspace_header: Some(route.workspace),
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
+                        daytona_skip_preview_warning: false,
                     },
                 )
                 .await;
@@ -331,9 +362,23 @@ struct ProxyBehavior {
     skip_service_worker: bool,
     add_cors: bool,
     strip_cors_headers: bool,
+    /// If true, rewrite any `Set-Cookie` headers by removing the `Secure` attribute.
+    ///
+    /// This is primarily useful for local HTTP development, where the proxy is
+    /// served over `http://*.localhost` and a Secure cookie would never be sent
+    /// back by the browser (breaking cookie-based auth flows like VNC).
+    strip_secure_cookies: bool,
     workspace_header: Option<String>,
     port_header: Option<String>,
     frame_ancestors: Option<&'static str>,
+    daytona_skip_preview_warning: bool,
+}
+
+fn request_is_https(req: &Request<Body>) -> bool {
+    req.headers()
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
 }
 
 async fn forward_request(
@@ -409,6 +454,13 @@ async fn forward_request(
 
     req.headers_mut()
         .insert("X-Cmux-Proxied", HeaderValue::from_static("true"));
+
+    if behavior.daytona_skip_preview_warning {
+        req.headers_mut().insert(
+            "X-Daytona-Skip-Preview-Warning",
+            HeaderValue::from_static("true"),
+        );
+    }
 
     if let Some(port_hdr) = behavior.port_header.as_ref() {
         if let Ok(value) = HeaderValue::from_str(port_hdr) {
@@ -676,6 +728,13 @@ fn collect_forward_headers(
     }
     headers.insert("X-Cmux-Proxied", HeaderValue::from_static("true"));
 
+    if behavior.daytona_skip_preview_warning {
+        headers.insert(
+            "X-Daytona-Skip-Preview-Warning",
+            HeaderValue::from_static("true"),
+        );
+    }
+
     if let Some(value) = original.get(header::USER_AGENT) {
         headers.insert(header::USER_AGENT, value.clone());
     }
@@ -858,6 +917,9 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                         let mut builder = Response::builder().status(status).version(version);
                         let mut new_headers =
                             sanitize_headers(&headers, /* strip_payload_headers */ true);
+                        if behavior.strip_secure_cookies {
+                            strip_secure_cookie_attributes(&mut new_headers);
+                        }
                         strip_csp_headers(&mut new_headers);
                         if behavior.strip_cors_headers {
                             strip_cors_headers(&mut new_headers);
@@ -908,6 +970,9 @@ fn forward_response_with_body(
 ) -> Response<Body> {
     let mut builder = Response::builder().status(status).version(version);
     let mut new_headers = sanitize_headers(headers, strip_payload_headers);
+    if behavior.strip_secure_cookies {
+        strip_secure_cookie_attributes(&mut new_headers);
+    }
     strip_csp_headers(&mut new_headers);
     if behavior.strip_cors_headers {
         strip_cors_headers(&mut new_headers);
@@ -981,6 +1046,34 @@ fn sanitize_headers(headers: &HeaderMap, strip_payload_headers: bool) -> HeaderM
         out.insert(name.clone(), value.clone());
     }
     out
+}
+
+fn strip_secure_cookie_attributes(headers: &mut HeaderMap) {
+    let cookies: Vec<String> = headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(|value| value.to_string())
+        .collect();
+
+    if cookies.is_empty() {
+        return;
+    }
+
+    headers.remove("set-cookie");
+
+    for cookie in cookies {
+        let stripped = cookie
+            .split(';')
+            .map(|part| part.trim())
+            .filter(|part| !part.eq_ignore_ascii_case("secure"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        if let Ok(value) = HeaderValue::from_str(&stripped) {
+            headers.append("set-cookie", value);
+        }
+    }
 }
 
 fn strip_csp_headers(headers: &mut HeaderMap) {

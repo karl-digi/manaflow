@@ -1,6 +1,6 @@
 #!/bin/bash
-# Start all services for the cmux E2B sandbox (Docker-enabled version)
-# Services: Docker, OpenVSCode, Chrome CDP, VNC, noVNC, worker daemon
+# Start all services for the cmux devbox sandbox (Docker-enabled version)
+# Services: Docker, cmux-code (VSCode), Chrome CDP, VNC, noVNC, worker daemon (Go)
 
 echo "[cmux-e2b] Starting services (Docker-enabled)..."
 
@@ -10,14 +10,15 @@ VSCODE_TOKEN_FILE="/home/user/.vscode-token"
 BOOT_ID_FILE="/home/user/.token-boot-id"
 
 AUTH_TOKEN=$(openssl rand -hex 32)
-echo "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
+# Use printf to avoid trailing newline (VSCode requires exact match)
+printf "%s" "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
 chmod 644 "$AUTH_TOKEN_FILE"
 chown user:user "$AUTH_TOKEN_FILE"
 
 echo "[cmux-e2b] Auth token generated: ${AUTH_TOKEN:0:8}..."
 
 # Create VSCode connection token file (same as worker auth)
-echo "$AUTH_TOKEN" > "$VSCODE_TOKEN_FILE"
+printf "%s" "$AUTH_TOKEN" > "$VSCODE_TOKEN_FILE"
 chmod 644 "$VSCODE_TOKEN_FILE"
 chown user:user "$VSCODE_TOKEN_FILE"
 
@@ -37,7 +38,8 @@ echo "[cmux-e2b] VNC auth handled by token proxy (no VNC password needed)"
 
 # Start Docker daemon
 echo "[cmux-e2b] Starting Docker daemon..."
-sudo dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
+# Some environments can't run Docker-in-Docker; keep going if dockerd fails.
+sudo dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 --tls=false >/tmp/dockerd.log 2>&1 &
 # Wait for Docker to be ready
 for i in {1..30}; do
     if docker info >/dev/null 2>&1; then
@@ -46,6 +48,9 @@ for i in {1..30}; do
     fi
     sleep 1
 done
+if ! docker info >/dev/null 2>&1; then
+    echo "[cmux-e2b] Warning: Docker daemon did not become ready (see /tmp/dockerd.log)"
+fi
 
 # Start D-Bus for desktop environment
 echo "[cmux-e2b] Starting D-Bus..."
@@ -63,26 +68,23 @@ sleep 3
 echo "[cmux-e2b] Starting VNC auth proxy on port 39380..."
 node /usr/local/bin/vnc-auth-proxy.js &
 
-# Start OpenVSCode Server on port 39378 with connection token
-echo "[cmux-e2b] Starting OpenVSCode Server on port 39378 (with token auth)..."
-/opt/openvscode-server/bin/openvscode-server \
+# Start cmux-code (our VSCode fork) on port 39378
+echo "[cmux-e2b] Starting cmux-code on port 39378 (token-protected)..."
+/app/cmux-code/bin/code-server-oss \
     --host 0.0.0.0 \
     --port 39378 \
     --connection-token-file "$VSCODE_TOKEN_FILE" \
-    --telemetry-level off \
     --disable-workspace-trust \
-    --server-data-dir /home/user/.openvscode-server/data \
-    --user-data-dir /home/user/.openvscode-server/data \
-    --extensions-dir /home/user/.openvscode-server/extensions \
-    /home/user/workspace 2>/dev/null &
+    --disable-telemetry \
+    /home/user/workspace >/tmp/cmux-code.log 2>&1 &
 
 # Chrome with CDP is started by VNC xstartup (visible browser)
 # CDP will be available on port 9222 once VNC desktop is up
 echo "[cmux-e2b] Chrome CDP will be available on port 9222 (started via VNC)"
 
-# Start worker daemon on port 39377
+# Start worker daemon on port 39377 (Go binary)
 echo "[cmux-e2b] Starting worker daemon on port 39377..."
-node /usr/local/bin/worker-daemon.js &
+/usr/local/bin/worker-daemon >/tmp/worker-daemon.log 2>&1 &
 
 echo "[cmux-e2b] All services started!"
 echo "[cmux-e2b] Services:"
