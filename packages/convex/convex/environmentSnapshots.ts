@@ -11,7 +11,7 @@ export const list = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const environment = await ctx.db.get(args.environmentId);
     if (!environment || environment.teamId !== teamId) {
-      throw new Error("Environment not found");
+      return [];
     }
 
     const versions = await ctx.db
