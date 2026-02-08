@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-02-07T00:00:00Z",
+  "templates": [
+    {
+      "templateId": "cmux-modal-base",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "20 GB SSD",
+      "image": "ubuntu:22.04",
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-07T00:00:00Z"
+        }
+      ],
+      "description": "Base Modal sandbox for cmux workspaces (CPU only)."
+    },
+    {
+      "templateId": "cmux-modal-gpu-t4",
+      "label": "GPU workspace (T4)",
+      "cpu": "4 vCPU",
+      "memory": "16 GB RAM",
+      "disk": "40 GB SSD",
+      "gpu": "T4",
+      "image": "ubuntu:22.04",
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-07T00:00:00Z"
+        }
+      ],
+      "description": "Modal sandbox with NVIDIA T4 GPU for light ML workloads."
+    },
+    {
+      "templateId": "cmux-modal-gpu-a10g",
+      "label": "GPU workspace (A10G)",
+      "cpu": "8 vCPU",
+      "memory": "32 GB RAM",
+      "disk": "80 GB SSD",
+      "gpu": "A10G",
+      "image": "ubuntu:22.04",
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-07T00:00:00Z"
+        }
+      ],
+      "description": "Modal sandbox with NVIDIA A10G GPU for inference and training."
+    },
+    {
+      "templateId": "cmux-modal-gpu-a100",
+      "label": "GPU workspace (A100)",
+      "cpu": "8 vCPU",
+      "memory": "64 GB RAM",
+      "disk": "100 GB SSD",
+      "gpu": "A100",
+      "image": "ubuntu:22.04",
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-07T00:00:00Z"
+        }
+      ],
+      "description": "Modal sandbox with NVIDIA A100 GPU for heavy training workloads."
+    },
+    {
+      "templateId": "cmux-modal-gpu-h100",
+      "label": "GPU workspace (H100)",
+      "cpu": "8 vCPU",
+      "memory": "64 GB RAM",
+      "disk": "100 GB SSD",
+      "gpu": "H100",
+      "image": "ubuntu:22.04",
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-07T00:00:00Z"
+        }
+      ],
+      "description": "Modal sandbox with NVIDIA H100 GPU for large-scale training."
+    }
+  ]
+}

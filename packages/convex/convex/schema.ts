@@ -1215,7 +1215,7 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("daytona")), // Provider name (extensible for future providers)
+    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
@@ -1229,6 +1229,15 @@ const convexSchema = defineSchema({
     lastResumedAt: v.optional(v.number()),
     lastPausedAt: v.optional(v.number()),
     stoppedAt: v.optional(v.number()),
+  }).index("by_instanceId", ["instanceId"]),
+
+  // Modal instance activity tracking (for managing instance lifecycle)
+  modalInstanceActivity: defineTable({
+    instanceId: v.string(), // Modal sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+    gpu: v.optional(v.string()), // GPU config used (e.g., "T4", "A100", "H100:2")
   }).index("by_instanceId", ["instanceId"]),
 
 });

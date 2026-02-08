@@ -20,6 +20,9 @@ const (
 	// Template names in E2B (fallback if template list endpoint is unavailable)
 	defaultTemplateName = "cmux-devbox"
 	dockerTemplateName  = "cmux-devbox-docker"
+
+	// Modal preset IDs from packages/shared/src/modal-templates.json
+	modalDefaultPresetID = "cmux-modal-base"
 )
 
 var (
@@ -29,6 +32,11 @@ var (
 	startFlagGit      string
 	startFlagBranch   string
 	startFlagDocker   bool
+	startFlagProvider string
+	startFlagGPU      string
+	startFlagCPU      float64
+	startFlagMemory   int
+	startFlagImage    string
 )
 
 // isGitURL checks if the string looks like a git URL
@@ -46,15 +54,21 @@ var startCmd = &cobra.Command{
 	Short:   "Create a new sandbox",
 	Long: `Create a new sandbox and optionally sync files or clone a git repo.
 
+Providers:
+  e2b    (default) E2B cloud sandboxes
+  modal  Modal sandboxes with optional GPU support
+
 Examples:
-  cmux start                              # Create empty sandbox
-  cmux start .                            # Create sandbox, sync current directory
-  cmux start ./my-project                 # Create sandbox, sync specific directory
-  cmux start https://github.com/user/repo # Clone git repo into sandbox
-  cmux start --git https://github.com/x/y # Clone git repo (explicit)
-  cmux start --git user/repo              # Clone from GitHub shorthand
-  cmux start -o                           # Create sandbox and open VS Code
-  cmux start --docker                     # Create sandbox with Docker support`,
+  cmux start                                    # E2B sandbox (default)
+  cmux start --provider modal                   # Modal sandbox (CPU only)
+  cmux start --provider modal --gpu A100        # Modal sandbox with A100 GPU
+  cmux start --provider modal --gpu T4          # Modal sandbox with T4 GPU
+  cmux start --provider modal --gpu H100 --cpu 8 --memory 65536
+  cmux start .                                  # Sync current directory
+  cmux start https://github.com/user/repo       # Clone git repo
+  cmux start --git user/repo                    # Clone from GitHub shorthand
+  cmux start -o                                 # Create sandbox and open VS Code
+  cmux start --docker                           # E2B sandbox with Docker support`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -123,27 +137,65 @@ Examples:
 		}
 
 		client := api.NewClient()
+		provider := startFlagProvider
+
+		// If --gpu is specified without --provider, default to modal
+		if startFlagGPU != "" && provider == "" {
+			provider = "modal"
+		}
 
 		// Determine which template to use
 		templateID := startFlagTemplate
 		if templateID == "" {
-			templates, err := client.ListTemplates(teamSlug)
+			templates, err := client.ListTemplates(teamSlug, provider)
 			if err == nil {
-				presetID := defaultTemplatePresetID
-				if startFlagDocker {
-					presetID = dockerTemplatePresetID
-				}
-				for _, t := range templates {
-					if t.PresetID == presetID {
-						templateID = t.ID
-						break
+				if provider == "modal" {
+					// For Modal, pick a GPU template if --gpu is specified
+					if startFlagGPU != "" {
+						gpuLower := strings.ToLower(startFlagGPU)
+						for _, t := range templates {
+							if t.Provider == "modal" && t.GPU != "" && strings.ToLower(t.GPU) == gpuLower {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+					// Fallback to default modal template
+					if templateID == "" {
+						for _, t := range templates {
+							if t.Provider == "modal" && t.ID == modalDefaultPresetID {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+					// Still nothing? Use first modal template
+					if templateID == "" {
+						for _, t := range templates {
+							if t.Provider == "modal" {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+				} else {
+					// E2B provider
+					presetID := defaultTemplatePresetID
+					if startFlagDocker {
+						presetID = dockerTemplatePresetID
+					}
+					for _, t := range templates {
+						if t.PresetID == presetID {
+							templateID = t.ID
+							break
+						}
 					}
 				}
 			}
 
-			// Fallback to E2B template name if the template list endpoint isn't
+			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
-			if templateID == "" {
+			if templateID == "" && provider != "modal" {
 				if startFlagDocker {
 					templateID = dockerTemplateName
 				} else {
@@ -152,7 +204,29 @@ Examples:
 			}
 		}
 
-		resp, err := client.CreateInstance(teamSlug, templateID, name)
+		// Build create request
+		createReq := api.CreateInstanceRequest{
+			TeamSlugOrID: teamSlug,
+			TemplateID:   templateID,
+			Name:         name,
+		}
+		if provider != "" {
+			createReq.Provider = provider
+		}
+		if startFlagGPU != "" {
+			createReq.GPU = startFlagGPU
+		}
+		if startFlagCPU > 0 {
+			createReq.CPU = startFlagCPU
+		}
+		if startFlagMemory > 0 {
+			createReq.MemoryMiB = startFlagMemory
+		}
+		if startFlagImage != "" {
+			createReq.Image = startFlagImage
+		}
+
+		resp, err := client.CreateInstance(createReq)
 		if err != nil {
 			return err
 		}
@@ -211,10 +285,19 @@ Examples:
 			}
 		}
 
+		providerLabel := resp.Provider
+		if providerLabel == "" {
+			providerLabel = "e2b"
+		}
+
 		if flagJSON {
 			output := map[string]interface{}{
-				"id":     resp.DevboxID,
-				"status": resp.Status,
+				"id":       resp.DevboxID,
+				"provider": providerLabel,
+				"status":   resp.Status,
+			}
+			if resp.GPU != "" {
+				output["gpu"] = resp.GPU
 			}
 			if vscodeAuthURL != "" {
 				output["vscodeUrl"] = vscodeAuthURL
@@ -230,16 +313,20 @@ Examples:
 			fmt.Println(string(data))
 		} else {
 			fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
-			fmt.Printf("  Status: %s\n", resp.Status)
+			fmt.Printf("  Provider: %s\n", providerLabel)
+			fmt.Printf("  Status:   %s\n", resp.Status)
+			if resp.GPU != "" {
+				fmt.Printf("  GPU:      %s\n", resp.GPU)
+			}
 			if vscodeAuthURL != "" {
-				fmt.Printf("  VSCode: %s\n", vscodeAuthURL)
+				fmt.Printf("  VSCode:   %s\n", vscodeAuthURL)
 			} else if resp.VSCodeURL != "" {
-				fmt.Printf("  VSCode: %s\n", resp.VSCodeURL)
+				fmt.Printf("  VSCode:   %s\n", resp.VSCodeURL)
 			}
 			if vncAuthURL != "" {
-				fmt.Printf("  VNC:    %s\n", vncAuthURL)
+				fmt.Printf("  VNC:      %s\n", vncAuthURL)
 			} else if resp.VNCURL != "" {
-				fmt.Printf("  VNC:    %s\n", resp.VNCURL)
+				fmt.Printf("  VNC:      %s\n", resp.VNCURL)
 			}
 		}
 
@@ -258,5 +345,14 @@ func init() {
 	startCmd.Flags().BoolVarP(&startFlagOpen, "open", "o", false, "Open VSCode after creation")
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
-	startCmd.Flags().BoolVar(&startFlagDocker, "docker", false, "Use template with Docker support (slower to build but includes Docker)")
+	startCmd.Flags().BoolVar(&startFlagDocker, "docker", false, "Use template with Docker support (E2B only)")
+
+	// Provider selection
+	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
+
+	// Modal-specific options
+	startCmd.Flags().StringVar(&startFlagGPU, "gpu", "", "GPU type for Modal (e.g., T4, A10G, A100, H100)")
+	startCmd.Flags().Float64Var(&startFlagCPU, "cpu", 0, "CPU cores for Modal (fractional ok, e.g., 4, 8)")
+	startCmd.Flags().IntVar(&startFlagMemory, "memory", 0, "Memory in MiB for Modal (e.g., 8192, 65536)")
+	startCmd.Flags().StringVar(&startFlagImage, "image", "", "Container image for Modal (e.g., ubuntu:22.04)")
 }

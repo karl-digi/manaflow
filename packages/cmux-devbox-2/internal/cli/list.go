@@ -8,10 +8,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	listFlagProvider      string
+	templatesFlagProvider string
+)
+
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List sandboxes",
+	Long: `List sandboxes. Optionally filter by provider.
+
+Examples:
+  cmux list                        # List all sandboxes
+  cmux list --provider e2b         # List only E2B sandboxes
+  cmux list --provider modal       # List only Modal sandboxes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -19,7 +30,7 @@ var listCmd = &cobra.Command{
 		}
 
 		client := api.NewClient()
-		instances, err := client.ListInstances(teamSlug)
+		instances, err := client.ListInstances(teamSlug, listFlagProvider)
 		if err != nil {
 			return err
 		}
@@ -41,7 +52,15 @@ var listCmd = &cobra.Command{
 			if name == "" {
 				name = "(unnamed)"
 			}
-			fmt.Printf("  %s - %s (%s)\n", inst.ID, inst.Status, name)
+			provider := inst.Provider
+			if provider == "" {
+				provider = "e2b"
+			}
+			extra := ""
+			if inst.GPU != "" {
+				extra = fmt.Sprintf(" [GPU: %s]", inst.GPU)
+			}
+			fmt.Printf("  %s - %s (%s) [%s]%s\n", inst.ID, inst.Status, name, provider, extra)
 		}
 		return nil
 	},
@@ -50,6 +69,12 @@ var listCmd = &cobra.Command{
 var templatesCmd = &cobra.Command{
 	Use:   "templates",
 	Short: "List available templates",
+	Long: `List available templates. Optionally filter by provider.
+
+Examples:
+  cmux templates                   # List all templates
+  cmux templates --provider e2b    # List only E2B templates
+  cmux templates --provider modal  # List only Modal templates`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -57,7 +82,7 @@ var templatesCmd = &cobra.Command{
 		}
 
 		client := api.NewClient()
-		templates, err := client.ListTemplates(teamSlug)
+		templates, err := client.ListTemplates(teamSlug, templatesFlagProvider)
 		if err != nil {
 			return err
 		}
@@ -75,8 +100,21 @@ var templatesCmd = &cobra.Command{
 
 		fmt.Println("Templates:")
 		for _, t := range templates {
-			fmt.Printf("  %s - %s\n", t.ID, t.Name)
+			provider := t.Provider
+			if provider == "" {
+				provider = "e2b"
+			}
+			extra := ""
+			if t.GPU != "" {
+				extra = fmt.Sprintf(" [GPU: %s]", t.GPU)
+			}
+			fmt.Printf("  %s - %s [%s]%s\n", t.ID, t.Name, provider, extra)
 		}
 		return nil
 	},
+}
+
+func init() {
+	listCmd.Flags().StringVarP(&listFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
+	templatesCmd.Flags().StringVarP(&templatesFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
 }

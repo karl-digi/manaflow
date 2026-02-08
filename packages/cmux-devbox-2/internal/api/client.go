@@ -1,4 +1,4 @@
-// Package api provides the E2B API client
+// Package api provides the sandbox API client (E2B + Modal)
 package api
 
 import (
@@ -71,7 +71,9 @@ type Instance struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`
 	Status    string `json:"status"`
+	Provider  string `json:"provider,omitempty"`
 	Template  string `json:"templateId,omitempty"`
+	GPU       string `json:"gpu,omitempty"`
 	CreatedAt int64  `json:"createdAt,omitempty"`
 	VSCodeURL string `json:"vscodeUrl,omitempty"`
 	VNCURL    string `json:"vncUrl,omitempty"`
@@ -79,27 +81,31 @@ type Instance struct {
 }
 
 type CreateInstanceRequest struct {
-	TeamSlugOrID string `json:"teamSlugOrId"`
-	TemplateID   string `json:"templateId,omitempty"`
-	Name         string `json:"name,omitempty"`
+	TeamSlugOrID string            `json:"teamSlugOrId"`
+	Provider     string            `json:"provider,omitempty"`
+	TemplateID   string            `json:"templateId,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	GPU          string            `json:"gpu,omitempty"`
+	CPU          float64           `json:"cpu,omitempty"`
+	MemoryMiB    int               `json:"memoryMiB,omitempty"`
+	Image        string            `json:"image,omitempty"`
+	TTLSeconds   int               `json:"ttlSeconds,omitempty"`
+	Envs         map[string]string `json:"envs,omitempty"`
 }
 
 type CreateInstanceResponse struct {
 	DevboxID  string `json:"id"`
+	Provider  string `json:"provider,omitempty"`
 	Status    string `json:"status"`
+	Template  string `json:"templateId,omitempty"`
+	GPU       string `json:"gpu,omitempty"`
 	VSCodeURL string `json:"vscodeUrl,omitempty"`
 	WorkerURL string `json:"workerUrl,omitempty"`
 	VNCURL    string `json:"vncUrl,omitempty"`
 }
 
-func (c *Client) CreateInstance(teamSlug, templateID, name string) (*CreateInstanceResponse, error) {
-	body := CreateInstanceRequest{
-		TeamSlugOrID: teamSlug,
-		TemplateID:   templateID,
-		Name:         name,
-	}
-
-	respBody, err := c.doRequest("POST", "/api/v2/devbox/instances", body)
+func (c *Client) CreateInstance(req CreateInstanceRequest) (*CreateInstanceResponse, error) {
+	respBody, err := c.doRequest("POST", "/api/v2/devbox/instances", req)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +122,11 @@ type ListInstancesResponse struct {
 	Instances []Instance `json:"instances"`
 }
 
-func (c *Client) ListInstances(teamSlug string) ([]Instance, error) {
+func (c *Client) ListInstances(teamSlug, provider string) ([]Instance, error) {
 	path := fmt.Sprintf("/api/v2/devbox/instances?teamSlugOrId=%s", teamSlug)
+	if provider != "" {
+		path += "&provider=" + provider
+	}
 	respBody, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -150,7 +159,7 @@ func (c *Client) StopInstance(teamSlug, id string) error {
 	return err
 }
 
-// ExtendTimeout extends the sandbox timeout (E2B doesn't have pause/resume)
+// ExtendTimeout extends the sandbox timeout
 func (c *Client) ExtendTimeout(teamSlug, id string, timeoutMs int) error {
 	path := fmt.Sprintf("/api/v2/devbox/instances/%s/extend", id)
 	body := map[string]interface{}{
@@ -195,9 +204,15 @@ func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse,
 
 type Template struct {
 	ID             string `json:"templateId"`
-	PresetID       string `json:"presetId"`
+	PresetID       string `json:"presetId,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 	Name           string `json:"name"`
 	Description    string `json:"description,omitempty"`
+	CPU            string `json:"cpu,omitempty"`
+	Memory         string `json:"memory,omitempty"`
+	Disk           string `json:"disk,omitempty"`
+	GPU            string `json:"gpu,omitempty"`
+	Image          string `json:"image,omitempty"`
 	SupportsDocker bool   `json:"supportsDocker,omitempty"`
 }
 
@@ -205,8 +220,11 @@ type ListTemplatesResponse struct {
 	Templates []Template `json:"templates"`
 }
 
-func (c *Client) ListTemplates(teamSlug string) ([]Template, error) {
+func (c *Client) ListTemplates(teamSlug, provider string) ([]Template, error) {
 	path := fmt.Sprintf("/api/v2/devbox/templates?teamSlugOrId=%s", teamSlug)
+	if provider != "" {
+		path += "&provider=" + provider
+	}
 	respBody, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -238,6 +256,32 @@ func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
 		return "", err
 	}
 	return resp.Token, nil
+}
+
+// ConfigResponse from GET /api/v2/devbox/config
+type ConfigResponse struct {
+	Providers       []string       `json:"providers"`
+	DefaultProvider string         `json:"defaultProvider"`
+	Modal           *ModalConfig   `json:"modal,omitempty"`
+}
+
+type ModalConfig struct {
+	DefaultTemplateID string   `json:"defaultTemplateId"`
+	GPUOptions        []string `json:"gpuOptions"`
+}
+
+// GetConfig fetches the devbox configuration (available providers, GPU options, etc.)
+func (c *Client) GetConfig() (*ConfigResponse, error) {
+	respBody, err := c.doRequest("GET", "/api/v2/devbox/config", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp ConfigResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // DoWorkerRequest makes a direct request to the worker daemon
