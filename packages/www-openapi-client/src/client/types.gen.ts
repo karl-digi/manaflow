@@ -941,6 +941,22 @@ export type EditorSettingsBody = {
     extensions?: string;
 };
 
+export type TestAnthropicConnectionResult = {
+    success: boolean;
+    message: string;
+    details?: {
+        statusCode?: number;
+        responseTime?: number;
+        endpoint: string;
+        modelsFound?: number;
+    };
+};
+
+export type TestAnthropicConnectionBody = {
+    baseUrl: string;
+    apiKey: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -3895,6 +3911,29 @@ export type PostApiEditorSettingsResponses = {
 };
 
 export type PostApiEditorSettingsResponse = PostApiEditorSettingsResponses[keyof PostApiEditorSettingsResponses];
+
+export type PostApiSettingsTestAnthropicConnectionData = {
+    body: TestAnthropicConnectionBody;
+    path?: never;
+    query?: never;
+    url: '/api/settings/test-anthropic-connection';
+};
+
+export type PostApiSettingsTestAnthropicConnectionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiSettingsTestAnthropicConnectionResponses = {
+    /**
+     * Connection test result
+     */
+    200: TestAnthropicConnectionResult;
+};
+
+export type PostApiSettingsTestAnthropicConnectionResponse = PostApiSettingsTestAnthropicConnectionResponses[keyof PostApiSettingsTestAnthropicConnectionResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

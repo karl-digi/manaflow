@@ -24,6 +24,7 @@ export const update = authMutation({
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
     autoSyncEnabled: v.optional(v.boolean()),
+    bypassAnthropicProxy: v.optional(v.boolean()),
     heatmapModel: v.optional(v.string()),
     heatmapThreshold: v.optional(v.number()),
     heatmapTooltipLanguage: v.optional(v.string()),
@@ -50,6 +51,7 @@ export const update = authMutation({
         worktreePath?: string;
         autoPrEnabled?: boolean;
         autoSyncEnabled?: boolean;
+        bypassAnthropicProxy?: boolean;
         heatmapModel?: string;
         heatmapThreshold?: number;
         heatmapTooltipLanguage?: string;
@@ -68,6 +70,9 @@ export const update = authMutation({
       }
       if (args.autoSyncEnabled !== undefined) {
         updates.autoSyncEnabled = args.autoSyncEnabled;
+      }
+      if (args.bypassAnthropicProxy !== undefined) {
+        updates.bypassAnthropicProxy = args.bypassAnthropicProxy;
       }
       if (args.heatmapModel !== undefined) {
         updates.heatmapModel = args.heatmapModel;
@@ -88,6 +93,7 @@ export const update = authMutation({
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
         autoSyncEnabled: args.autoSyncEnabled,
+        bypassAnthropicProxy: args.bypassAnthropicProxy,
         heatmapModel: args.heatmapModel,
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,

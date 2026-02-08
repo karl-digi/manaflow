@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
+import { internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 
 export const getAll = authQuery({
@@ -116,5 +117,22 @@ export const getAllForAgents = authQuery({
     }
 
     return keyMap;
+  },
+});
+
+export const getByEnvVarInternal = internalQuery({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    envVar: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("apiKeys")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", args.teamId).eq("userId", args.userId)
+      )
+      .filter((q) => q.eq(q.field("envVar"), args.envVar))
+      .first();
   },
 });

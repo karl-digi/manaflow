@@ -353,6 +353,8 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       candidates,
       teamSlugOrId,
+      teamId: teamContext.teamId,
+      userId: teamContext.userId,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -398,6 +400,22 @@ export const crownSummarize = httpAction(async (ctx, req) => {
       { code: 400, message: "teamSlugOrId is required" },
       400
     );
+  }
+
+  let teamIdForAction: string | undefined;
+  let userIdForAction: string | undefined;
+  if (workerAuth) {
+    teamIdForAction = workerAuth.payload.teamId;
+    userIdForAction = workerAuth.payload.userId;
+  } else {
+    const membership = await ensureTeamMembership(ctx, teamSlugOrId);
+    if (membership instanceof Response) return membership;
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    }
+    teamIdForAction = membership.teamId;
+    userIdForAction = identity.subject;
   }
 
   if (workerAuth) {
@@ -473,6 +491,8 @@ export const crownSummarize = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       gitDiff: data.gitDiff,
       teamSlugOrId,
+      teamId: teamIdForAction,
+      userId: userIdForAction,
     });
     return jsonResponse(result);
   } catch (error) {

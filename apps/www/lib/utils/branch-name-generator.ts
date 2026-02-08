@@ -6,6 +6,7 @@ import {
   CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_GEMINI_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  normalizeAnthropicBaseUrl,
 } from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
@@ -126,11 +127,13 @@ function getModelAndProvider(
   }
 
   if (apiKeys.ANTHROPIC_API_KEY) {
+    const rawAnthropicBaseUrl =
+      apiKeys.ANTHROPIC_BASE_URL?.trim() ||
+      process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+      CLOUDFLARE_ANTHROPIC_BASE_URL;
     const anthropic = createAnthropic({
       apiKey: apiKeys.ANTHROPIC_API_KEY,
-      baseURL:
-        process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
-        CLOUDFLARE_ANTHROPIC_BASE_URL,
+      baseURL: normalizeAnthropicBaseUrl(rawAnthropicBaseUrl).forAiSdk,
     });
     return {
       model: anthropic("claude-3-5-haiku-20241022"),
