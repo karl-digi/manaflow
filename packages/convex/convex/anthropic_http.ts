@@ -1,4 +1,5 @@
 import { httpAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import {
   BEDROCK_BASE_URL,
@@ -6,11 +7,16 @@ import {
   convertBedrockStreamToSSE,
 } from "./bedrock_utils";
 import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL as SHARED_CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY,
+  normalizeAnthropicBaseUrl,
+} from "@cmux/shared/convex-safe";
 
-const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
+const hardCodedApiKey = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
 
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
-  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic";
+  SHARED_CLOUDFLARE_ANTHROPIC_BASE_URL;
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -358,7 +364,7 @@ const TEMPORARY_DISABLE_AUTH = true;
  * 1. Anthropic direct (via Cloudflare) - when user provides their own API key
  * 2. AWS Bedrock (direct) - when using platform credits (placeholder key)
  */
-export const anthropicProxy = httpAction(async (_ctx, req) => {
+export const anthropicProxy = httpAction(async (ctx, req) => {
   const startTime = Date.now();
   const source = getSource(req);
   const xApiKey = req.headers.get("x-api-key");
@@ -404,18 +410,40 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
   }
 
   try {
-    const useUserApiKey = hasUserApiKey(xApiKey);
+    let userCustomBaseUrl: string | undefined;
+    if (workerAuth?.payload.teamId && workerAuth?.payload.userId) {
+      const userBaseUrlEntry = await ctx.runQuery(
+        internal.apiKeys.getByEnvVarInternal,
+        {
+          teamId: workerAuth.payload.teamId,
+          userId: workerAuth.payload.userId,
+          envVar: "ANTHROPIC_BASE_URL",
+        },
+      );
+      if (userBaseUrlEntry?.value?.trim()) {
+        userCustomBaseUrl = userBaseUrlEntry.value.trim();
+      }
+    }
+
+    const hasOfficialAnthropicKey = hasUserApiKey(xApiKey);
+    const hasCustomUrlWithAnyKey =
+      !!userCustomBaseUrl && xApiKey !== null && xApiKey !== hardCodedApiKey;
+    const useUserPath = hasOfficialAnthropicKey || hasCustomUrlWithAnyKey;
+
     const body = await req.json();
     sanitizeCacheControl(body);
     const requestedModel = body.model ?? "unknown";
     const isStreaming = body.stream ?? false;
     const payloadSummary = summarizeAnthropicPayload(body);
 
-    if (useUserApiKey) {
-      // User provided their own Anthropic API key - proxy directly to Anthropic
-      // TODO: get user's ANTHROPIC_BASE_URL from request/config to override default
-      const userBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
-      const baseUrl = userBaseUrl || CLOUDFLARE_ANTHROPIC_BASE_URL;
+    if (useUserPath) {
+      // User key path: custom URL (if present), otherwise AI gateway/cloudflare.
+      // If user configured a custom URL, accept provider-specific key formats.
+      const rawBaseUrl = normalizeAnthropicBaseUrl(
+        userCustomBaseUrl ||
+          process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+          CLOUDFLARE_ANTHROPIC_BASE_URL,
+      ).forRawFetch;
 
       const headers: Record<string, string> = {};
       req.headers.forEach((value, key) => {
@@ -426,10 +454,21 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
           headers[key] = value;
         }
       });
+
+      // When using custom base URL (not official Anthropic), convert auth header.
+      // Many third-party proxies use OpenAI-style "Authorization: Bearer" instead of "x-api-key".
+      if (userCustomBaseUrl && !userCustomBaseUrl.includes("anthropic.com")) {
+        const apiKey = headers["x-api-key"];
+        if (apiKey) {
+          delete headers["x-api-key"];
+          headers["authorization"] = `Bearer ${apiKey}`;
+        }
+      }
+
       // Ensure upstream returns identity encoding so Convex can parse it.
       headers["accept-encoding"] = "identity";
 
-      const response = await fetch(`${baseUrl}/v1/messages`, {
+      const response = await fetch(`${rawBaseUrl}/v1/messages`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -456,12 +495,17 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       return handleResponse(response, isStreaming);
     }
 
-    // Platform credits path: try AI Gateway first, then fall back to Bedrock
-    // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
-    const aiGatewayBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
+    // Platform credits path: use AI Gateway, then Bedrock fallback.
+    // NOTE: Do NOT use userCustomBaseUrl here - platform credits use placeholder key
+    // which won't authenticate with user's custom endpoint.
+    // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis.
+    const effectiveGatewayBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
+    const effectiveGatewayRawBaseUrl = effectiveGatewayBaseUrl
+      ? normalizeAnthropicBaseUrl(effectiveGatewayBaseUrl).forRawFetch
+      : undefined;
 
-    if (aiGatewayBaseUrl) {
-      // AI Gateway path: proxy request directly without modification
+    if (effectiveGatewayRawBaseUrl) {
+      // Custom URL / AI Gateway path: proxy request directly without modification
       const headers: Record<string, string> = {};
       req.headers.forEach((value, key) => {
         // Skip hop-by-hop headers and internal headers
@@ -473,8 +517,9 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       });
       headers["accept-encoding"] = "identity";
 
-      console.log("[anthropic-proxy] AI Gateway request summary:", {
+      console.log("[anthropic-proxy] Gateway request summary:", {
         requestedModel,
+        usingAiGateway: true,
         stream: payloadSummary.stream ?? false,
         maxTokens: payloadSummary.maxTokens ?? null,
         messageCount: payloadSummary.messages.count,
@@ -487,7 +532,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         toolChoiceType: payloadSummary.toolChoiceType ?? null,
       });
 
-      const response = await fetch(`${aiGatewayBaseUrl}/v1/messages`, {
+      const response = await fetch(`${effectiveGatewayRawBaseUrl}/v1/messages`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),

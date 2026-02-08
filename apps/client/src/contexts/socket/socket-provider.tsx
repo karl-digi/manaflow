@@ -146,7 +146,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     };
 
     void refreshAuthentication();
-    const intervalId = window.setInterval(refreshAuthentication, 5 * 60 * 1000);
+    // Refresh every 4 minutes to stay ahead of Stack Auth's ~5 minute token expiration
+    const intervalId = window.setInterval(refreshAuthentication, 4 * 60 * 1000);
     return () => {
       disposed = true;
       window.clearInterval(intervalId);

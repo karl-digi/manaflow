@@ -316,6 +316,9 @@ export async function spawnAgent(
     const userApiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
       teamSlugOrId,
     });
+    const workspaceSettings = await getConvex().query(api.workspaceSettings.get, {
+      teamSlugOrId,
+    });
 
     const apiKeys: Record<string, string> = {
       ...userApiKeys,
@@ -329,6 +332,9 @@ export async function spawnAgent(
         taskRunJwt,
         apiKeys,
         callbackUrl,
+        workspaceSettings: {
+          bypassAnthropicProxy: workspaceSettings?.bypassAnthropicProxy ?? false,
+        },
       });
       envVars = {
         ...envVars,

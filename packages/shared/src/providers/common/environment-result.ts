@@ -30,4 +30,7 @@ export type EnvironmentContext = {
   taskRunJwt: string;
   apiKeys?: Record<string, string>;
   callbackUrl: string;
+  workspaceSettings?: {
+    bypassAnthropicProxy?: boolean;
+  };
 };

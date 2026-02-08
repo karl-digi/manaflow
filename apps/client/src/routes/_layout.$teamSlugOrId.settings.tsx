@@ -10,6 +10,12 @@ import { ChevronDown, HelpCircle } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
+import {
+  ALL_BASE_URL_KEYS,
+  ANTHROPIC_BASE_URL_KEY,
+  API_KEY_TO_BASE_URL,
+  type ProviderBaseUrlKey,
+} from "@cmux/shared";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
@@ -19,6 +25,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electron";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -39,6 +47,17 @@ interface ProviderInfo {
 type HeatmapColors = {
   line: { start: string; end: string };
   token: { start: string; end: string };
+};
+
+type ConnectionTestResult = {
+  status: "success" | "error";
+  message: string;
+  details?: {
+    statusCode?: number;
+    responseTime?: number;
+    endpoint: string;
+    modelsFound?: number;
+  };
 };
 
 const createDefaultHeatmapColors = (): HeatmapColors => ({
@@ -268,6 +287,21 @@ function SettingsComponent() {
     Record<string, string>
   >({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [showBaseUrls, setShowBaseUrls] = useState(false);
+  const [baseUrlValues, setBaseUrlValues] = useState<Record<string, string>>({});
+  const [originalBaseUrlValues, setOriginalBaseUrlValues] = useState<
+    Record<string, string>
+  >({});
+  const [bypassAnthropicProxy, setBypassAnthropicProxy] =
+    useState<boolean>(false);
+  const [originalBypassAnthropicProxy, setOriginalBypassAnthropicProxy] =
+    useState<boolean>(false);
+  const [isTestingConnection, setIsTestingConnection] = useState<
+    Record<string, boolean>
+  >({});
+  const [connectionTestResults, setConnectionTestResults] = useState<
+    Record<string, ConnectionTestResult | null>
+  >({});
   const [isSaving, setIsSaving] = useState(false);
   const [teamSlug, setTeamSlug] = useState<string>("");
   const [originalTeamSlug, setOriginalTeamSlug] = useState<string>("");
@@ -379,6 +413,13 @@ function SettingsComponent() {
       });
       setApiKeyValues(values);
       setOriginalApiKeyValues(values);
+
+      const nextBaseUrlValues: Record<string, string> = {};
+      for (const baseUrlKey of ALL_BASE_URL_KEYS) {
+        nextBaseUrlValues[baseUrlKey.envVar] = values[baseUrlKey.envVar] || "";
+      }
+      setBaseUrlValues(nextBaseUrlValues);
+      setOriginalBaseUrlValues(nextBaseUrlValues);
     }
   }, [existingKeys]);
 
@@ -437,6 +478,15 @@ function SettingsComponent() {
     );
     setOriginalAutoPrEnabled((prev) =>
       prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
+    );
+
+    const nextBypassAnthropicProxy =
+      workspaceSettings?.bypassAnthropicProxy ?? false;
+    setBypassAnthropicProxy((prev) =>
+      prev === nextBypassAnthropicProxy ? prev : nextBypassAnthropicProxy
+    );
+    setOriginalBypassAnthropicProxy((prev) =>
+      prev === nextBypassAnthropicProxy ? prev : nextBypassAnthropicProxy
     );
 
     if (workspaceSettings?.heatmapModel) {
@@ -529,9 +579,124 @@ function SettingsComponent() {
     setApiKeyValues((prev) => ({ ...prev, [envVar]: value }));
   };
 
+  const handleBaseUrlChange = (baseUrlKey: ProviderBaseUrlKey, value: string) => {
+    setBaseUrlValues((prev) => ({ ...prev, [baseUrlKey.envVar]: value }));
+    setConnectionTestResults((prev) => ({ ...prev, [baseUrlKey.envVar]: null }));
+    if (
+      baseUrlKey.envVar === ANTHROPIC_BASE_URL_KEY.envVar &&
+      value.trim().length === 0
+    ) {
+      setBypassAnthropicProxy(false);
+    }
+  };
+
   const toggleShowKey = (envVar: string) => {
     setShowKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
   };
+
+  const testBaseUrlConnection = useCallback(
+    async (baseUrlKey: ProviderBaseUrlKey, apiKeyEnvVar: string) => {
+      const baseUrl = (baseUrlValues[baseUrlKey.envVar] || "").trim();
+      const apiKey = (apiKeyValues[apiKeyEnvVar] || "").trim();
+
+      if (!baseUrl) {
+        setConnectionTestResults((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: {
+            status: "error",
+            message: "Enter a base URL before testing.",
+          },
+        }));
+        return;
+      }
+
+      if (baseUrlKey.envVar !== ANTHROPIC_BASE_URL_KEY.envVar) {
+        setConnectionTestResults((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: {
+            status: "error",
+            message:
+              "Connection testing is currently available for Anthropic only.",
+          },
+        }));
+        return;
+      }
+
+      if (!apiKey) {
+        setConnectionTestResults((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: {
+            status: "error",
+            message: "Enter an Anthropic API key before testing.",
+          },
+        }));
+        return;
+      }
+
+      setIsTestingConnection((prev) => ({ ...prev, [baseUrlKey.envVar]: true }));
+      try {
+        const user = await cachedGetUser(stackClientApp);
+        if (!user) {
+          setConnectionTestResults((prev) => ({
+            ...prev,
+            [baseUrlKey.envVar]: {
+              status: "error",
+              message: "You must be signed in to test connections.",
+            },
+          }));
+          return;
+        }
+
+        const authHeaders = await user.getAuthHeaders();
+        const headers = new Headers(authHeaders);
+        headers.set("Content-Type", "application/json");
+
+        const endpoint = new URL(
+          "/api/settings/test-anthropic-connection",
+          WWW_ORIGIN
+        );
+        const response = await fetch(endpoint.toString(), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            baseUrl,
+            apiKey,
+          }),
+        });
+
+        const payload = (await response.json()) as {
+          success: boolean;
+          message: string;
+          details?: ConnectionTestResult["details"];
+        };
+
+        setConnectionTestResults((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: {
+            status: payload.success ? "success" : "error",
+            message: payload.message,
+            details: payload.details,
+          },
+        }));
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Connection test failed";
+        setConnectionTestResults((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: {
+            status: "error",
+            message,
+          },
+        }));
+      } finally {
+        setIsTestingConnection((prev) => ({
+          ...prev,
+          [baseUrlKey.envVar]: false,
+        }));
+      }
+    },
+    [apiKeyValues, baseUrlValues]
+  );
 
   const handleContainerSettingsChange = useCallback(
     (data: {
@@ -561,6 +726,12 @@ function SettingsComponent() {
       return currentValue !== originalValue;
     });
 
+    const baseUrlsChanged = ALL_BASE_URL_KEYS.some((baseUrlKey) => {
+      const currentValue = baseUrlValues[baseUrlKey.envVar] || "";
+      const originalValue = originalBaseUrlValues[baseUrlKey.envVar] || "";
+      return currentValue !== originalValue;
+    });
+
     // Check container settings changes
     const containerSettingsChanged =
       containerSettingsData &&
@@ -570,6 +741,8 @@ function SettingsComponent() {
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
+    const bypassAnthropicProxyChanged =
+      bypassAnthropicProxy !== originalBypassAnthropicProxy;
 
     // Heatmap settings changes
     const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
@@ -581,7 +754,9 @@ function SettingsComponent() {
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      bypassAnthropicProxyChanged ||
       apiKeysChanged ||
+      baseUrlsChanged ||
       containerSettingsChanged ||
       heatmapModelChanged ||
       heatmapThresholdChanged ||
@@ -596,11 +771,14 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      let savedWorkspaceSettings = false;
+      let savedContainerSettings = false;
 
       // Save worktree path / auto PR / heatmap settings if changed
       const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
         autoPrEnabled !== originalAutoPrEnabled ||
+        bypassAnthropicProxy !== originalBypassAnthropicProxy ||
         heatmapModel !== originalHeatmapModel ||
         heatmapThreshold !== originalHeatmapThreshold ||
         heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
@@ -611,6 +789,7 @@ function SettingsComponent() {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          bypassAnthropicProxy,
           heatmapModel,
           heatmapThreshold,
           heatmapTooltipLanguage,
@@ -618,10 +797,12 @@ function SettingsComponent() {
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalBypassAnthropicProxy(bypassAnthropicProxy);
         setOriginalHeatmapModel(heatmapModel);
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
         setOriginalHeatmapColors(heatmapColors);
+        savedWorkspaceSettings = true;
       }
 
       // Save container settings if changed
@@ -636,6 +817,7 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+        savedContainerSettings = true;
       }
 
       for (const key of apiKeys) {
@@ -664,13 +846,47 @@ function SettingsComponent() {
         }
       }
 
+      const normalizedBaseUrlValues: Record<string, string> = {
+        ...baseUrlValues,
+      };
+      for (const baseUrlKey of ALL_BASE_URL_KEYS) {
+        const value = (baseUrlValues[baseUrlKey.envVar] || "").trim();
+        const originalValue = (originalBaseUrlValues[baseUrlKey.envVar] || "").trim();
+        normalizedBaseUrlValues[baseUrlKey.envVar] = value;
+
+        if (value !== originalValue) {
+          if (value) {
+            await saveApiKeyMutation.mutateAsync({
+              envVar: baseUrlKey.envVar,
+              value,
+              displayName: baseUrlKey.displayName,
+              description: baseUrlKey.description,
+            });
+            savedCount++;
+          } else if (originalValue) {
+            await convex.mutation(api.apiKeys.remove, {
+              teamSlugOrId,
+              envVar: baseUrlKey.envVar,
+            });
+            deletedCount++;
+          }
+        }
+      }
+
       // Update original values to reflect saved state
       setOriginalApiKeyValues(apiKeyValues);
+      setBaseUrlValues(normalizedBaseUrlValues);
+      setOriginalBaseUrlValues(normalizedBaseUrlValues);
 
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
+      if (
+        savedCount > 0 ||
+        deletedCount > 0 ||
+        savedWorkspaceSettings ||
+        savedContainerSettings
+      ) {
         const actions = [];
         if (savedCount > 0) {
           actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
@@ -680,7 +896,11 @@ function SettingsComponent() {
             `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
           );
         }
-        toast.success(`Successfully ${actions.join(" and ")}`);
+        toast.success(
+          actions.length > 0
+            ? `Successfully ${actions.join(" and ")}`
+            : "Settings saved"
+        );
       } else {
         toast.info("No changes to save");
       }
@@ -1257,9 +1477,21 @@ function SettingsComponent() {
                   ) : (
                     <>
                       <div className="mb-3">
-                        <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-1">
-                          API Key Authentication
-                        </h3>
+                        <div className="flex items-center justify-between gap-3 mb-1">
+                          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                            API Key Authentication
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={() => setShowBaseUrls((prev) => !prev)}
+                            className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                          >
+                            {showBaseUrls ? "Hide more" : "Show more"}
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform ${showBaseUrls ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                        </div>
                         <div className="text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
                           <p>You can authenticate providers in two ways:</p>
                           <ul className="list-disc ml-4 space-y-0.5">
@@ -1280,6 +1512,14 @@ function SettingsComponent() {
                       {apiKeys.map((key) => {
                         const providerInfo = PROVIDER_INFO[key.envVar];
                         const usedModels = apiKeyModelsByEnv[key.envVar] ?? [];
+                        const baseUrlKey = API_KEY_TO_BASE_URL[key.envVar];
+                        const baseUrlValue = baseUrlKey
+                          ? baseUrlValues[baseUrlKey.envVar] || ""
+                          : "";
+                        const hasBaseUrlValue = baseUrlValue.trim().length > 0;
+                        const connectionResult = baseUrlKey
+                          ? connectionTestResults[baseUrlKey.envVar]
+                          : null;
 
                         return (
                           <div
@@ -1526,6 +1766,111 @@ function SettingsComponent() {
                                   <span className="text-xs text-green-600 dark:text-green-400">
                                     API key configured
                                   </span>
+                                </div>
+                              )}
+
+                              {showBaseUrls && baseUrlKey && (
+                                <div className="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+                                  <label
+                                    htmlFor={baseUrlKey.envVar}
+                                    className="block text-xs font-medium text-neutral-700 dark:text-neutral-300"
+                                  >
+                                    {baseUrlKey.displayName}
+                                  </label>
+                                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                                    {baseUrlKey.description}
+                                    {baseUrlKey.envVar === ANTHROPIC_BASE_URL_KEY.envVar && (
+                                      <>
+                                        {" "}
+                                        Enter the base URL without the /v1
+                                        suffix. Example:
+                                        {" "}
+                                        https://my-proxy.example.com
+                                      </>
+                                    )}
+                                  </p>
+                                  <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                      id={baseUrlKey.envVar}
+                                      type="text"
+                                      value={baseUrlValue}
+                                      onChange={(e) =>
+                                        handleBaseUrlChange(
+                                          baseUrlKey,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="flex-1 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
+                                      placeholder={baseUrlKey.placeholder}
+                                      autoComplete="off"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void testBaseUrlConnection(
+                                          baseUrlKey,
+                                          key.envVar
+                                        )
+                                      }
+                                      disabled={
+                                        !hasBaseUrlValue ||
+                                        !apiKeyValues[key.envVar]?.trim() ||
+                                        isTestingConnection[baseUrlKey.envVar]
+                                      }
+                                      className="px-3 py-2 text-xs rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {isTestingConnection[baseUrlKey.envVar]
+                                        ? "Testing..."
+                                        : "Test Connection"}
+                                    </button>
+                                  </div>
+
+                                  {connectionResult && (
+                                    <div
+                                      className={`mt-1 rounded-lg px-2 py-1.5 text-[11px] ${connectionResult.status === "success"
+                                        ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400"
+                                        : "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
+                                        }`}
+                                    >
+                                      <span className="font-medium">
+                                        {connectionResult.status === "success"
+                                          ? "Success: "
+                                          : "Error: "}
+                                      </span>
+                                      {connectionResult.message}
+                                      {connectionResult.details?.endpoint && (
+                                        <div className="mt-1 text-neutral-500 dark:text-neutral-400">
+                                          Tested: {connectionResult.details.endpoint}
+                                          {connectionResult.details.responseTime !==
+                                            undefined && (
+                                              <> ({connectionResult.details.responseTime}ms)</>
+                                            )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {baseUrlKey.envVar === ANTHROPIC_BASE_URL_KEY.envVar &&
+                                    hasBaseUrlValue && (
+                                      <div className="mt-2 flex items-start justify-between gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
+                                        <div>
+                                          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                                            Bypass cmux Anthropic proxy
+                                          </p>
+                                          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                                            When enabled, Claude connects directly
+                                            to your custom Anthropic endpoint.
+                                          </p>
+                                        </div>
+                                        <Switch
+                                          aria-label="Bypass cmux Anthropic proxy"
+                                          size="sm"
+                                          color="primary"
+                                          isSelected={bypassAnthropicProxy}
+                                          onValueChange={setBypassAnthropicProxy}
+                                        />
+                                      </div>
+                                    )}
                                 </div>
                               )}
                             </div>

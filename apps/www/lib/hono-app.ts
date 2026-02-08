@@ -30,6 +30,7 @@ import {
   iframePreflightRouter,
   workspaceConfigsRouter,
   previewRouter,
+  settingsRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -154,6 +155,7 @@ app.route("/", configRouter);
 app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
 app.route("/", editorSettingsRouter);
+app.route("/", settingsRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

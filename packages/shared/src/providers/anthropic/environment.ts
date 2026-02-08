@@ -2,7 +2,10 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
-import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "../../utils/anthropic";
+import {
+  CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY,
+  normalizeAnthropicBaseUrl,
+} from "../../utils/anthropic";
 
 export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "ANTHROPIC_API_KEY",
@@ -191,6 +194,8 @@ exit 0`;
   const hasAnthropicApiKey =
     ctx.apiKeys?.ANTHROPIC_API_KEY &&
     ctx.apiKeys.ANTHROPIC_API_KEY.trim().length > 0;
+  const userCustomBaseUrl = ctx.apiKeys?.ANTHROPIC_BASE_URL?.trim();
+  const bypassProxy = ctx.workspaceSettings?.bypassAnthropicProxy ?? false;
 
   // If OAuth token is provided, write it to /etc/claude-code/env
   // The wrapper scripts (claude and other launchers) source this file before running claude-code
@@ -228,13 +233,24 @@ exit 0`;
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
-      ...(hasOAuthToken
-        ? {}
-        : {
+      ...(() => {
+        if (hasOAuthToken) {
+          // OAuth users always connect directly to Anthropic.
+          return {};
+        }
+
+        if (bypassProxy && userCustomBaseUrl) {
+          return {
+            ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrl(userCustomBaseUrl)
+              .forRawFetch,
+          };
+        }
+
+        return {
           ANTHROPIC_BASE_URL: `${ctx.callbackUrl}/api/anthropic`,
           ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}\nx-cmux-source:cmux`,
-        }
-      ),
+        };
+      })(),
     },
   };
 
