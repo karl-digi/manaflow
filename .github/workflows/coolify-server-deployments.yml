@@ -148,16 +148,21 @@ jobs:
           }
 
           auto_detected_app_uuid="$(detect_app_uuid || true)"
+          app_uuid_source="secret"
 
           if [[ -z "${COOLIFY_APP_UUID:-}" ]]; then
             echo "COOLIFY_APP_UUID is not set; attempting auto-detection for base_directory=/apps/server..." >&2
             COOLIFY_APP_UUID="${auto_detected_app_uuid}"
+            app_uuid_source="auto-detected"
             if [[ -z "${COOLIFY_APP_UUID:-}" ]]; then
               echo "Could not auto-detect COOLIFY_APP_UUID. Set the COOLIFY_APP_UUID secret (application UUID) or run: bash scripts/coolify-find-app-uuid.sh" >&2
               exit 1
             fi
             echo "Detected Coolify application UUID: ${COOLIFY_APP_UUID}" >&2
           fi
+
+          echo "app_uuid_used=${COOLIFY_APP_UUID:-}" >> "$GITHUB_OUTPUT"
+          echo "app_uuid_source=${app_uuid_source}" >> "$GITHUB_OUTPUT"
 
           find_deployment_uuid() {
             local start_epoch="$1"
@@ -253,16 +258,114 @@ jobs:
             echo ""
           }
 
+          debug_print_deployments() {
+            local label="$1"
+            local url="$2"
+            local out_file="$3"
+            local code
+
+            code="$(http_get_json "$url" "$out_file")"
+            echo "${label} (HTTP ${code})"
+            echo "  endpoint: ${url}"
+            if [[ "$code" != "200" ]]; then
+              local snippet=""
+              snippet="$(head -c 400 "$out_file" 2>/dev/null || true)"
+              if [[ -n "${snippet:-}" ]]; then
+                echo "  response snippet: ${snippet}"
+              fi
+              return 0
+            fi
+
+            jq -r --arg sha "$sha" --arg sha7 "$sha7" '
+              def matches_commit($c):
+                ($c != null) and ($c != "") and
+                (($sha | startswith($c)) or ($c | startswith($sha)) or ($sha7 | startswith($c)) or ($c | startswith($sha7)));
+
+              (if type=="array" then .
+               elif has("data") and (.data|type)=="array" then .data
+               elif has("deployments") and (.deployments|type)=="array" then .deployments
+               else [] end)
+              | .[0:10]
+              | if length == 0 then
+                  "  (no deployments returned)"
+                else
+                  .[]
+                  | . as $dep
+                  | ($dep.commit // $dep.git_commit_sha // $dep.git_commit_hash // "") as $commit
+                  | "  - commit: \($commit | if . == \"\" then \"N/A\" else . end) | status: \($dep.status // \"unknown\") | uuid: \($dep.deployment_uuid // $dep.uuid // \"N/A\") | app: \($dep.application_uuid // \"N/A\") | match_sha: \(matches_commit($commit))"
+                end
+            ' "$out_file" 2>/dev/null || {
+              echo "  (could not parse response as deployment list)"
+              head -c 400 "$out_file" 2>/dev/null || true
+              echo
+            }
+          }
+
+          debug_no_deployment_found() {
+            echo "::group::Debug: Coolify deployment lookup"
+            echo "Deployment search details:"
+            echo "  - target SHA: ${sha}"
+            echo "  - target short SHA: ${sha7}"
+            echo "  - app UUID source: ${app_uuid_source}"
+            echo "  - app UUID used: ${COOLIFY_APP_UUID:-<empty>}"
+
+            if [[ -f "$tmp_dir/apps.json" ]]; then
+              echo "App detection candidates for base_directory=/apps/server:"
+              jq -r '
+                def norm_path($p):
+                  if ($p|type) != "string" or ($p|length)==0 then ""
+                  else ($p | if startswith("/") then . else "/" + . end | sub("/+$";""))
+                  end;
+                [ .[]
+                  | { uuid: (.uuid // ""), name: (.name // "N/A"), base: norm_path(.base_directory), compose: norm_path(.docker_compose_location) }
+                  | select(.base == "/apps/server")
+                ][0:10]
+                | if length == 0 then
+                    "  (no app with base_directory=/apps/server found)"
+                  else
+                    .[] | "  - uuid: \(.uuid) | name: \(.name) | base: \(.base) | compose: \(.compose)"
+                  end
+              ' "$tmp_dir/apps.json" 2>/dev/null || echo "  (could not parse app detection response)"
+            fi
+
+            debug_print_deployments \
+              "Recent deployments for app UUID" \
+              "${base_url}/api/v1/applications/${COOLIFY_APP_UUID}/deployments?skip=0&take=10" \
+              "$tmp_dir/debug_app_deployments.json"
+
+            debug_print_deployments \
+              "Recent deployments via deployments/applications endpoint" \
+              "${base_url}/api/v1/deployments/applications/${COOLIFY_APP_UUID}?skip=0&take=10" \
+              "$tmp_dir/debug_app_deployments_alt.json"
+
+            debug_print_deployments \
+              "Recent global deployments" \
+              "${base_url}/api/v1/deployments?skip=0&take=10" \
+              "$tmp_dir/debug_all_deployments.json"
+
+            echo "::endgroup::"
+          }
+
           echo "Looking for Coolify deployment for commit ${sha7}..." >&2
           start_epoch="$(now_epoch)"
           deployment_uuid="$(find_deployment_uuid "$start_epoch" || true)"
 
           if [[ -z "${deployment_uuid:-}" ]]; then
+            debug_no_deployment_found
             echo "conclusion=failure" >> "$GITHUB_OUTPUT"
             echo "coolify_status=no_deployment_found" >> "$GITHUB_OUTPUT"
             deployment_url="$(resolve_deployment_url "")"
             echo "deployment_url=${deployment_url:-}" >> "$GITHUB_OUTPUT"
-            echo "No Coolify deployment detected for SHA ${sha}." >&2
+            echo "::error::No Coolify deployment found for SHA ${sha} (${sha7})"
+            echo "This usually means one of the following:" >&2
+            echo "  1. Coolify webhook did not trigger for this push." >&2
+            echo "  2. Deployment is still pending/not yet created." >&2
+            echo "  3. Commit SHA mismatch between GitHub and Coolify." >&2
+            echo "App UUID used: ${COOLIFY_APP_UUID}" >&2
+            echo "Endpoints checked:" >&2
+            echo "  - ${base_url}/api/v1/deployments/applications/${COOLIFY_APP_UUID}" >&2
+            echo "  - ${base_url}/api/v1/applications/${COOLIFY_APP_UUID}/deployments" >&2
+            echo "  - ${base_url}/api/v1/deployments" >&2
             exit 1
           fi
 
@@ -318,6 +421,51 @@ jobs:
           echo "deployment_url=${deployment_url:-}" >> "$GITHUB_OUTPUT"
           echo "Timed out waiting for Coolify deployment ${deployment_uuid}." >&2
           exit 1
+
+      - name: Write debug summary on failure
+        if: failure()
+        shell: bash
+        env:
+          COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
+          COOLIFY_STATUS: ${{ steps.coolify.outputs.coolify_status }}
+          COOLIFY_APP_UUID_USED: ${{ steps.coolify.outputs.app_uuid_used }}
+          COOLIFY_APP_UUID_SOURCE: ${{ steps.coolify.outputs.app_uuid_source }}
+        run: |
+          set -euo pipefail
+
+          base_url="${COOLIFY_BASE_URL%/}"
+          coolify_status="${COOLIFY_STATUS:-unknown}"
+          app_uuid_used="${COOLIFY_APP_UUID_USED:-unknown}"
+          app_uuid_source="${COOLIFY_APP_UUID_SOURCE:-unknown}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Coolify Deployment Status Check Failed
+
+          **Commit:** \`${GITHUB_SHA}\`  
+          **Run:** ${RUN_URL}  
+          **Coolify status:** \`${coolify_status}\`  
+          **App UUID used:** \`${app_uuid_used}\`  
+          **App UUID source:** \`${app_uuid_source}\`
+
+          ### Troubleshooting
+
+          1. Check Coolify dashboard to confirm a deployment was created for this commit.
+          2. Verify webhook and source settings for this Coolify application.
+          3. Verify app matching locally: \`bash scripts/coolify-find-app-uuid.sh\`.
+
+          ### API endpoints checked
+
+          - \`${base_url}/api/v1/deployments/applications/${app_uuid_used}\`
+          - \`${base_url}/api/v1/applications/${app_uuid_used}/deployments\`
+          - \`${base_url}/api/v1/deployments\`
+
+          ### Debug command
+
+          \`\`\`bash
+          curl -fsS "\$COOLIFY_BASE_URL/api/v1/deployments?skip=0&take=5" \\
+            -H "Authorization: Bearer \$COOLIFY_API_TOKEN" | jq
+          \`\`\`
+          EOF
 
       - name: Update GitHub deployment status
         if: always()
