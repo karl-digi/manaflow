@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-02-07T22:47:49Z",
+  "updatedAt": "2026-02-08T06:42:24Z",
   "presets": [
     {
       "presetId": "4vcpu_8gb_32gb",
@@ -266,6 +266,12 @@
           "snapshotId": "snapshot_c112c38e",
           "templateVmid": 9039,
           "capturedAt": "2026-02-07T22:47:14Z"
+        },
+        {
+          "version": 44,
+          "snapshotId": "snapshot_0c079d9b",
+          "templateVmid": 9031,
+          "capturedAt": "2026-02-08T06:41:52Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -462,42 +468,15 @@
           "snapshotId": "snapshot_2c6bde93",
           "templateVmid": 9040,
           "capturedAt": "2026-02-07T22:47:49Z"
+        },
+        {
+          "version": 32,
+          "snapshotId": "snapshot_19d17edd",
+          "templateVmid": 9041,
+          "capturedAt": "2026-02-08T06:42:24Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
-    },
-    {
-      "presetId": "6vcpu_8gb_32gb",
-      "label": "Performance workspace",
-      "cpu": "6 vCPU",
-      "memory": "8 GB RAM",
-      "disk": "32 GB SSD",
-      "versions": [
-        {
-          "version": 1,
-          "snapshotId": "snapshot_7bbee934",
-          "templateVmid": 9022,
-          "capturedAt": "2026-01-29T00:21:58Z"
-        },
-        {
-          "version": 2,
-          "snapshotId": "snapshot_5f84f8d2",
-          "templateVmid": 9024,
-          "capturedAt": "2026-01-29T00:37:48Z"
-        },
-        {
-          "version": 3,
-          "snapshotId": "snapshot_f908ee4f",
-          "templateVmid": 9051,
-          "capturedAt": "2026-01-29T06:51:38Z"
-        },
-        {
-          "version": 4,
-          "snapshotId": "snapshot_d32fa147",
-          "templateVmid": 9007,
-          "capturedAt": "2026-01-31T07:56:14Z"
-        }
-      ]
     }
   ],
   "node": "karl-ws",
