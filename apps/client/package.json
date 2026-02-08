@@ -7,7 +7,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/manaflow-ai/cmux.git"
+    "url": "https://github.com/karlorz/cmux.git"
   },
   "main": "./out/main/index.js",
   "scripts": {
