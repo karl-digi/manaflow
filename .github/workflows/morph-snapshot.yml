@@ -2,7 +2,7 @@ name: Daily Morph Snapshot
 
 on:
   schedule:
-    - cron: "0 18 * * 0" # Every Sunday 10am PST / 11am PDT
+    - cron: "0 22 * * 0" # Every Sunday 10am PST / 11am PDT
   workflow_dispatch:
 
 concurrency:
