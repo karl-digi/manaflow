@@ -645,6 +645,68 @@ async function handleStopInstance(
 }
 
 // ============================================================================
+// POST /api/v2/devbox/instances/{id}/env - Push environment variables
+// ============================================================================
+async function handlePushEnv(
+  ctx: ActionCtx,
+  id: string,
+  teamSlugOrId: string,
+  envVarsContent: string
+): Promise<Response> {
+  try {
+    const instance = await ctx.runQuery(devboxApi.getById, {
+      teamSlugOrId,
+      id,
+    });
+
+    if (!instance) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+
+    const providerInstanceId = await getProviderInstanceId(ctx, id);
+    if (!providerInstanceId) {
+      return jsonResponse(
+        { code: 404, message: "Provider mapping not found" },
+        404
+      );
+    }
+
+    // Base64-encode the env content for safe shell transport
+    const encoded = btoa(envVarsContent);
+
+    // Write env file and ensure it's sourced from .bashrc
+    const command = [
+      `printf '%s' '${encoded}' | base64 -d > /home/user/.env`,
+      `chmod 600 /home/user/.env`,
+      `grep -q '/home/user/.env' /home/user/.bashrc 2>/dev/null || printf '\\n# Load environment variables\\nif [ -f /home/user/.env ]; then set -a; . /home/user/.env; set +a; fi\\n' >> /home/user/.bashrc`,
+    ].join(" && ");
+
+    const result = (await ctx.runAction(e2bActionsApi.execCommand, {
+      instanceId: providerInstanceId,
+      command,
+    })) as { stdout?: string; stderr?: string; exit_code?: number };
+
+    if (result.exit_code !== 0) {
+      console.error(
+        `[devbox_v2.env] Failed to push env vars: exit=${result.exit_code} stderr=${(result.stderr ?? "").slice(0, 200)}`
+      );
+      return jsonResponse(
+        { code: 500, message: "Failed to apply environment variables" },
+        500
+      );
+    }
+
+    return jsonResponse({ applied: true, provider: "e2b" });
+  } catch (error) {
+    console.error("[devbox_v2.env] Error:", error);
+    return jsonResponse(
+      { code: 500, message: "Failed to apply environment variables" },
+      500
+    );
+  }
+}
+
+// ============================================================================
 // POST /api/v2/devbox/instances/{id}/ttl - Update TTL
 // ============================================================================
 async function handleUpdateTtl(
@@ -856,6 +918,7 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
     command?: string | string[];
     timeout?: number;
     ttlSeconds?: number;
+    envVarsContent?: string;
   };
 
   try {
@@ -906,6 +969,15 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
         body.teamSlugOrId,
         body.ttlSeconds ?? 3600
       );
+
+    case "env":
+      if (!body.envVarsContent) {
+        return jsonResponse(
+          { code: 400, message: "envVarsContent is required" },
+          400
+        );
+      }
+      return handlePushEnv(ctx, id, body.teamSlugOrId, body.envVarsContent);
 
     default:
       return jsonResponse({ code: 404, message: "Not found" }, 404);
