@@ -19,9 +19,9 @@ var listCmd = &cobra.Command{
 	Long: `List sandboxes. Optionally filter by provider.
 
 Examples:
-  cmux list                        # List all sandboxes
-  cmux list --provider e2b         # List only E2B sandboxes
-  cmux list --provider modal       # List only Modal sandboxes`,
+  cloudrouter list                        # List all sandboxes
+  cloudrouter list --provider e2b         # List only E2B sandboxes
+  cloudrouter list --provider modal       # List only Modal sandboxes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -65,9 +65,9 @@ var templatesCmd = &cobra.Command{
 	Long: `List available templates. Optionally filter by provider.
 
 Examples:
-  cmux templates                   # List all templates
-  cmux templates --provider e2b    # List only E2B templates
-  cmux templates --provider modal  # List only Modal templates`,
+  cloudrouter templates                   # List all templates
+  cloudrouter templates --provider e2b    # List only E2B templates
+  cloudrouter templates --provider modal  # List only Modal templates`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {

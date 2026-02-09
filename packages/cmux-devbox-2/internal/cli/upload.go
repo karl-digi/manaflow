@@ -28,12 +28,12 @@ The local path defaults to the current directory if not specified.
 The remote path defaults to /home/user/workspace if not specified.
 
 Examples:
-  cmux upload cmux_abc123                           # Upload current dir to workspace
-  cmux upload cmux_abc123 ./my-project              # Upload specific directory
-  cmux upload cmux_abc123 ./config.json             # Upload single file
-  cmux upload cmux_abc123 . -r /home/user/app       # Upload to specific remote path
-  cmux upload cmux_abc123 . --watch                 # Watch and upload on changes
-  cmux upload cmux_abc123 . --delete                # Delete remote files not present locally`,
+  cloudrouter upload cr_abc123                           # Upload current dir to workspace
+  cloudrouter upload cr_abc123 ./my-project              # Upload specific directory
+  cloudrouter upload cr_abc123 ./config.json             # Upload single file
+  cloudrouter upload cr_abc123 . -r /home/user/app       # Upload to specific remote path
+  cloudrouter upload cr_abc123 . --watch                 # Watch and upload on changes
+  cloudrouter upload cr_abc123 . --delete                # Delete remote files not present locally`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]

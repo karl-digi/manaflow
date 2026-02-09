@@ -26,7 +26,7 @@ var ptyCmd = &cobra.Command{
 This provides a terminal experience via WebSocket.
 
 Examples:
-  cmux pty cmux_abc123`,
+  cloudrouter pty cr_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]
@@ -215,9 +215,9 @@ var ptyListCmd = &cobra.Command{
 Output can be piped to other tools like rg for filtering.
 
 Examples:
-  cmux pty-list cmux_abc123
-  cmux pty-list cmux_abc123 | rg bash
-  cmux pty-list cmux_abc123 --json`,
+  cloudrouter pty-list cr_abc123
+  cloudrouter pty-list cr_abc123 | rg bash
+  cloudrouter pty-list cr_abc123 --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]

@@ -19,11 +19,11 @@ var computerCmd = &cobra.Command{
 These commands allow you to automate the Chrome browser running in the VNC desktop.
 
 Examples:
-  cmux computer snapshot cmux_abc123              # Get accessibility tree
-  cmux computer open cmux_abc123 https://example.com  # Navigate to URL
-  cmux computer click cmux_abc123 @e1             # Click element by ref
-  cmux computer type cmux_abc123 "hello world"   # Type text
-  cmux computer screenshot cmux_abc123           # Take screenshot`,
+  cloudrouter computer snapshot cr_abc123              # Get accessibility tree
+  cloudrouter computer open cr_abc123 https://example.com  # Navigate to URL
+  cloudrouter computer click cr_abc123 @e1             # Click element by ref
+  cloudrouter computer type cr_abc123 "hello world"   # Type text
+  cloudrouter computer screenshot cr_abc123           # Take screenshot`,
 }
 
 // execComputerCommand makes a request to the worker daemon's computer endpoint
@@ -80,7 +80,7 @@ var computerSnapshotCmd = &cobra.Command{
 Each element is assigned a ref (e.g., @e1, @e2) that can be used with click, type, etc.
 
 Example:
-  cmux computer snapshot cmux_abc123`,
+  cloudrouter computer snapshot cr_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := execComputerCommand(args[0], "/snapshot", nil)
@@ -108,7 +108,7 @@ var computerOpenCmd = &cobra.Command{
 	Long: `Navigate the browser to the specified URL.
 
 Example:
-  cmux computer open cmux_abc123 https://google.com`,
+  cloudrouter computer open cr_abc123 https://google.com`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/open", map[string]interface{}{
@@ -130,8 +130,8 @@ var computerClickCmd = &cobra.Command{
 	Long: `Click an element by selector (ref like @e1 or CSS selector).
 
 Examples:
-  cmux computer click cmux_abc123 @e1          # Click by ref
-  cmux computer click cmux_abc123 "#submit"    # Click by CSS selector`,
+  cloudrouter computer click cr_abc123 @e1          # Click by ref
+  cloudrouter computer click cr_abc123 "#submit"    # Click by CSS selector`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/click", map[string]interface{}{
@@ -153,7 +153,7 @@ var computerTypeCmd = &cobra.Command{
 	Long: `Type text into the currently focused element.
 
 Example:
-  cmux computer type cmux_abc123 "hello world"`,
+  cloudrouter computer type cr_abc123 "hello world"`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/type", map[string]interface{}{
@@ -175,8 +175,8 @@ var computerFillCmd = &cobra.Command{
 	Long: `Clear an input field and fill it with the specified value.
 
 Examples:
-  cmux computer fill cmux_abc123 @e2 "user@example.com"
-  cmux computer fill cmux_abc123 "#email" "user@example.com"`,
+  cloudrouter computer fill cr_abc123 @e2 "user@example.com"
+  cloudrouter computer fill cr_abc123 "#email" "user@example.com"`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/fill", map[string]interface{}{
@@ -201,8 +201,8 @@ var computerPressCmd = &cobra.Command{
 Common keys: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 
 Example:
-  cmux computer press cmux_abc123 Enter
-  cmux computer press cmux_abc123 Tab`,
+  cloudrouter computer press cr_abc123 Enter
+  cloudrouter computer press cr_abc123 Tab`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/press", map[string]interface{}{
@@ -226,8 +226,8 @@ var computerScrollCmd = &cobra.Command{
 Directions: up, down
 
 Example:
-  cmux computer scroll cmux_abc123 down
-  cmux computer scroll cmux_abc123 up`,
+  cloudrouter computer scroll cr_abc123 down
+  cloudrouter computer scroll cr_abc123 up`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/scroll", map[string]interface{}{
@@ -251,8 +251,8 @@ var computerScreenshotCmd = &cobra.Command{
 If output file is not specified, outputs base64-encoded PNG to stdout.
 
 Examples:
-  cmux computer screenshot cmux_abc123
-  cmux computer screenshot cmux_abc123 screenshot.png`,
+  cloudrouter computer screenshot cr_abc123
+  cloudrouter computer screenshot cr_abc123 screenshot.png`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := execComputerCommand(args[0], "/screenshot", nil)
@@ -404,8 +404,8 @@ var computerWaitCmd = &cobra.Command{
 	Long: `Wait for an element to be visible.
 
 Example:
-  cmux computer wait cmux_abc123 "#content"
-  cmux computer wait cmux_abc123 "@e5"`,
+  cloudrouter computer wait cr_abc123 "#content"
+  cloudrouter computer wait cr_abc123 "@e5"`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/wait", map[string]interface{}{
@@ -427,8 +427,8 @@ var computerHoverCmd = &cobra.Command{
 	Long: `Hover the mouse over an element.
 
 Example:
-  cmux computer hover cmux_abc123 @e5
-  cmux computer hover cmux_abc123 ".dropdown"`,
+  cloudrouter computer hover cr_abc123 @e5
+  cloudrouter computer hover cr_abc123 ".dropdown"`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := execComputerCommand(args[0], "/hover", map[string]interface{}{

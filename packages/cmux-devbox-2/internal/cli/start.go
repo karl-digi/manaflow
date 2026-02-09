@@ -78,13 +78,13 @@ GPU options (--gpu):
   B200        192GB VRAM - latest gen, frontier models
 
 Examples:
-  cmux start                          # Create a sandbox
-  cmux start --gpu T4                 # Sandbox with T4 GPU
-  cmux start --gpu A100               # Sandbox with A100 GPU
-  cmux start --gpu H100:2             # Sandbox with 2x H100 GPUs
-  cmux start .                        # Sync current directory
-  cmux start https://github.com/u/r   # Clone git repo
-  cmux start --docker                 # Sandbox with Docker support`,
+  cloudrouter start                          # Create a sandbox
+  cloudrouter start --gpu T4                 # Sandbox with T4 GPU
+  cloudrouter start --gpu A100               # Sandbox with A100 GPU
+  cloudrouter start --gpu H100:2             # Sandbox with 2x H100 GPUs
+  cloudrouter start .                        # Sync current directory
+  cloudrouter start https://github.com/u/r   # Clone git repo
+  cloudrouter start --docker                 # Sandbox with Docker support`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()

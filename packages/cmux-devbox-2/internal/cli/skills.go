@@ -17,20 +17,20 @@ const (
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
-	Short: "Manage Claude Code skills for cmux",
-	Long:  `Manage Claude Code skills that help AI assistants use cmux effectively.`,
+	Short: "Manage Claude Code skills for cloudrouter",
+	Long:  `Manage Claude Code skills that help AI assistants use cloudrouter effectively.`,
 }
 
 var skillsUpdateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Update cmux skills from remote",
-	Long: `Update the cmux SKILL.md file from the official repository.
+	Short: "Update cloudrouter skills from remote",
+	Long: `Update the cloudrouter SKILL.md file from the official repository.
 
 This downloads the latest skill documentation and installs it to:
-  ~/.claude/skills/cmux/SKILL.md
+  ~/.claude/skills/cloudrouter/SKILL.md
 
 The skill provides Claude Code and other AI assistants with
-documentation on how to use cmux commands effectively.`,
+documentation on how to use cloudrouter commands effectively.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return updateSkills()
 	},
@@ -38,8 +38,8 @@ documentation on how to use cmux commands effectively.`,
 
 var skillsInstallCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install cmux skills locally",
-	Long: `Install the cmux SKILL.md file to the Claude Code skills directory.
+	Short: "Install cloudrouter skills locally",
+	Long: `Install the cloudrouter SKILL.md file to the Claude Code skills directory.
 
 This is equivalent to 'skills update' but with a clearer intent for first-time setup.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,7 +57,7 @@ func getSkillsDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return filepath.Join(home, ".claude", "skills", "cmux"), nil
+	return filepath.Join(home, ".claude", "skills", "cloudrouter"), nil
 }
 
 func updateSkills() error {
@@ -72,7 +72,7 @@ func updateSkills() error {
 	}
 
 	// Download SKILL.md from GitHub
-	skillURL := skillsBaseURL + "/cmux/SKILL.md"
+	skillURL := skillsBaseURL + "/cloudrouter/SKILL.md"
 	fmt.Printf("Downloading skill from %s...\n", skillURL)
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -98,7 +98,7 @@ func updateSkills() error {
 	}
 
 	fmt.Printf("✓ Skill updated: %s\n", skillPath)
-	fmt.Println("\nThe cmux skill is now available to Claude Code and other AI assistants.")
+	fmt.Println("\nThe cloudrouter skill is now available to Claude Code and other AI assistants.")
 	return nil
 }
 
@@ -137,7 +137,7 @@ func updateSkillsSilent() error {
 		return err
 	}
 
-	skillURL := skillsBaseURL + "/cmux/SKILL.md"
+	skillURL := skillsBaseURL + "/cloudrouter/SKILL.md"
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(skillURL)
 	if err != nil {

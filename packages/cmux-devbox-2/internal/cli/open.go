@@ -45,7 +45,7 @@ var codeCmd = &cobra.Command{
 	Long: `Open VS Code for a sandbox in your browser.
 
 Examples:
-  cmux code cmux_abc123`,
+  cloudrouter code cr_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -85,7 +85,7 @@ var vncCmd = &cobra.Command{
 	Long: `Open VNC desktop for a sandbox in your browser.
 
 Examples:
-  cmux vnc cmux_abc123`,
+  cloudrouter vnc cr_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -125,7 +125,7 @@ var statusCmd = &cobra.Command{
 	Long: `Show the status of a sandbox.
 
 Examples:
-  cmux status cmux_abc123`,
+  cloudrouter status cr_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()

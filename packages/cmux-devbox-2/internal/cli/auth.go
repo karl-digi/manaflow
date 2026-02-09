@@ -14,7 +14,7 @@ var authCmd = &cobra.Command{
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Login to cmux (opens browser)",
+	Short: "Login to cloudrouter (opens browser)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return auth.Login()
 	},
@@ -33,7 +33,7 @@ var whoamiCmd = &cobra.Command{
 	Short: "Show current user and team",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !auth.IsLoggedIn() {
-			fmt.Println("Not logged in. Run 'cmux login' to authenticate.")
+			fmt.Println("Not logged in. Run 'cloudrouter login' to authenticate.")
 			return nil
 		}
 
@@ -60,7 +60,7 @@ var whoamiCmd = &cobra.Command{
 func init() {
 	authCmd.AddCommand(&cobra.Command{
 		Use:   "login",
-		Short: "Login to cmux",
+		Short: "Login to cloudrouter",
 		RunE:  loginCmd.RunE,
 	})
 	authCmd.AddCommand(&cobra.Command{

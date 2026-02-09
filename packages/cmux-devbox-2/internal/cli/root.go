@@ -20,20 +20,20 @@ var versionCheckDone chan struct{}
 var versionCheckResult *version.CheckResult
 
 var rootCmd = &cobra.Command{
-	Use:   "cmux",
-	Short: "cmux - Cloud sandboxes for development",
-	Long: `cmux manages cloud sandboxes for development.
+	Use:   "cloudrouter",
+	Short: "cloudrouter - Cloud sandboxes for development",
+	Long: `cloudrouter manages cloud sandboxes for development.
 
 Quick start:
-  cmux login                      # Authenticate
-  cmux start                      # Create a sandbox
-  cmux start --gpu T4             # Create a sandbox with GPU
-  cmux start --docker             # Create a sandbox with Docker
-  cmux start ./my-project         # Create sandbox + upload directory
-  cmux code <id>                  # Open VS Code
-  cmux pty <id>                   # Open terminal session
-  cmux stop <id>                  # Stop sandbox
-  cmux ls                         # List all sandboxes
+  cloudrouter login                      # Authenticate
+  cloudrouter start                      # Create a sandbox
+  cloudrouter start --gpu T4             # Create a sandbox with GPU
+  cloudrouter start --docker             # Create a sandbox with Docker
+  cloudrouter start ./my-project         # Create sandbox + upload directory
+  cloudrouter code <id>                  # Open VS Code
+  cloudrouter pty <id>                   # Open terminal session
+  cloudrouter stop <id>                  # Stop sandbox
+  cloudrouter ls                         # List all sandboxes
 
 GPU options (--gpu):
   T4          16GB VRAM  - inference, fine-tuning small models
@@ -146,7 +146,7 @@ func SetVersionInfo(version, commit, buildTime string) {
 	commitStr = commit
 	buildTimeStr = buildTime
 	rootCmd.Version = version
-	rootCmd.SetVersionTemplate("cmux version {{.Version}}\n")
+	rootCmd.SetVersionTemplate("cloudrouter version {{.Version}}\n")
 }
 
 func SetBuildMode(mode string) {

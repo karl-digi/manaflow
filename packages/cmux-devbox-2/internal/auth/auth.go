@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	KeychainService = "cmux"
-	ConfigDirName   = "cmux"
+	KeychainService = "cloudrouter"
+	ConfigDirName   = "cloudrouter"
 	StackAuthAPIURL = "https://api.stack-auth.com"
 
 	// Dev defaults
@@ -332,7 +332,7 @@ type RefreshTokenResponse struct {
 func Login() error {
 	cfg := GetConfig()
 	if IsLoggedIn() {
-		fmt.Println("Already logged in. Run 'cmux logout' first to re-authenticate.")
+		fmt.Println("Already logged in. Run 'cloudrouter logout' first to re-authenticate.")
 		return nil
 	}
 
@@ -415,7 +415,7 @@ func GetAccessToken() (string, error) {
 
 	refreshToken, err := GetRefreshToken()
 	if err != nil {
-		return "", fmt.Errorf("not logged in. Run 'cmux login' first")
+		return "", fmt.Errorf("not logged in. Run 'cloudrouter login' first")
 	}
 
 	cfg := GetConfig()

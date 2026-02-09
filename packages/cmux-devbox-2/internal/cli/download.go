@@ -22,9 +22,9 @@ The remote path defaults to /home/user/workspace if not specified.
 The local path defaults to the current directory if not specified.
 
 Examples:
-  cmux download cmux_abc123                          # Download workspace to current dir
-  cmux download cmux_abc123 ./output                 # Download workspace to ./output
-  cmux download cmux_abc123 . -r /home/user/app      # Download specific remote path`,
+  cloudrouter download cr_abc123                          # Download workspace to current dir
+  cloudrouter download cr_abc123 ./output                 # Download workspace to ./output
+  cloudrouter download cr_abc123 . -r /home/user/app      # Download specific remote path`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]

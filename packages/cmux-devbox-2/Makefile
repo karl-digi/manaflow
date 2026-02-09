@@ -25,7 +25,7 @@ LDFLAGS := -s -w \
            -X '$(AUTH_PKG).CmuxURL=$(CMUX_API_URL)' \
            -X '$(AUTH_PKG).ConvexSiteURL=$(CONVEX_SITE_URL)'
 
-.PHONY: build build-dev build-prod build-all build-npm clean test install install-dev deps npm-version npm-publish npm-publish-dry
+.PHONY: build build-dev build-prod build-all build-npm clean test install install-dev deps npm-version npm-publish npm-publish-dry build-npm-cloudrouter npm-publish-cloudrouter npm-publish-cloudrouter-dry
 
 # =============================================================================
 # Development builds
@@ -162,6 +162,64 @@ npm-publish-dry: build-npm
 	cd npm/linux-x64 && npm publish --access public --dry-run
 	cd npm/win32-x64 && npm publish --access public --dry-run
 	cd npm/cmux && npm publish --access public --dry-run
+	@echo "Done!"
+
+# =============================================================================
+# Cloudrouter NPM package builds (@manaflow-ai/cloudrouter)
+# =============================================================================
+
+# Build cloudrouter npm packages (production)
+# Usage: make build-npm-cloudrouter STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...
+build-npm-cloudrouter:
+	@echo "Building cloudrouter npm packages..."
+	@if [ -z "$(STACK_PROJECT_ID)" ]; then echo "Error: STACK_PROJECT_ID is required"; exit 1; fi
+	@if [ -z "$(STACK_PUBLISHABLE_CLIENT_KEY)" ]; then echo "Error: STACK_PUBLISHABLE_CLIENT_KEY is required"; exit 1; fi
+	@if [ -z "$(CMUX_API_URL)" ]; then echo "Error: CMUX_API_URL is required"; exit 1; fi
+	@if [ -z "$(CONVEX_SITE_URL)" ]; then echo "Error: CONVEX_SITE_URL is required"; exit 1; fi
+	@mkdir -p npm/cloudrouter-darwin-arm64/bin npm/cloudrouter-darwin-x64/bin npm/cloudrouter-linux-arm64/bin npm/cloudrouter-linux-x64/bin npm/cloudrouter-win32-x64/bin npm/cloudrouter/lib
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-darwin-arm64/bin/cloudrouter ./cmd/cmux
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-darwin-x64/bin/cloudrouter ./cmd/cmux
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-linux-arm64/bin/cloudrouter ./cmd/cmux
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-linux-x64/bin/cloudrouter ./cmd/cmux
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-win32-x64/bin/cloudrouter.exe ./cmd/cmux
+	@# Copy darwin-arm64 binary to lib/cloudrouter as fallback for bunx/npx
+	@cp npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter
+	@chmod +x npm/cloudrouter/lib/cloudrouter npm/cloudrouter/bin/cloudrouter 2>/dev/null || true
+	@echo "Done! Cloudrouter binaries built in npm/cloudrouter-*/bin/"
+	@# Verify binaries report correct version
+	@echo "Verifying binary versions..."
+	@EXPECTED="cloudrouter version $(VERSION)"; \
+	for bin in npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter-darwin-x64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter; do \
+		ACTUAL=$$($$bin --version 2>/dev/null || echo "failed"); \
+		if [ "$$ACTUAL" != "$$EXPECTED" ]; then \
+			echo "ERROR: $$bin reports '$$ACTUAL' but expected '$$EXPECTED'"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "All cloudrouter binaries verified at version $(VERSION)"
+
+# Publish cloudrouter to npm
+npm-publish-cloudrouter: build-npm-cloudrouter
+	@echo "Publishing @manaflow-ai/cloudrouter to npm..."
+	@echo "1. Publishing platform packages..."
+	cd npm/cloudrouter-darwin-arm64 && npm publish --access public
+	cd npm/cloudrouter-darwin-x64 && npm publish --access public
+	cd npm/cloudrouter-linux-arm64 && npm publish --access public
+	cd npm/cloudrouter-linux-x64 && npm publish --access public
+	cd npm/cloudrouter-win32-x64 && npm publish --access public
+	@echo "2. Publishing main package..."
+	cd npm/cloudrouter && npm publish --access public
+	@echo "Done! Published @manaflow-ai/cloudrouter"
+
+# Dry-run publish cloudrouter (for testing)
+npm-publish-cloudrouter-dry: build-npm-cloudrouter
+	@echo "Dry-run publishing @manaflow-ai/cloudrouter to npm..."
+	cd npm/cloudrouter-darwin-arm64 && npm publish --access public --dry-run
+	cd npm/cloudrouter-darwin-x64 && npm publish --access public --dry-run
+	cd npm/cloudrouter-linux-arm64 && npm publish --access public --dry-run
+	cd npm/cloudrouter-linux-x64 && npm publish --access public --dry-run
+	cd npm/cloudrouter-win32-x64 && npm publish --access public --dry-run
+	cd npm/cloudrouter && npm publish --access public --dry-run
 	@echo "Done!"
 
 # =============================================================================
