@@ -33,7 +33,7 @@ const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
   x64: null,
 };
 
-const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/cmux";
+const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/manaflow";
 
 const compactNumberFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -59,7 +59,7 @@ const formatStarCount = (stars?: number | null): string => {
 export function SiteHeader({
   linkPrefix = "",
   showDownload = true,
-  fallbackUrl = "https://github.com/manaflow-ai/cmux/releases",
+  fallbackUrl = "https://github.com/manaflow-ai/manaflow/releases",
   latestVersion,
   macDownloadUrls,
   extraEndContent,

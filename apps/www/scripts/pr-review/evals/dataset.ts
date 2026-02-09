@@ -38,7 +38,7 @@ export const EVAL_DATASET: EvalDataset = {
   prs: [
     {
       id: "cmux-728",
-      url: "https://github.com/manaflow-ai/cmux/pull/728/files",
+      url: "https://github.com/manaflow-ai/manaflow/pull/728/files",
       title: "Initial PR for eval dataset",
       description: "Base case PR from cmux repo",
       tags: ["typescript", "react", "baseline"],
