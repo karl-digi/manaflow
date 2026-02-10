@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/input"
@@ -56,16 +55,18 @@ func (bm *browserManager) ensureConnected() (context.Context, error) {
 		return nil, fmt.Errorf("Chrome CDP not available: %w", err)
 	}
 
+	// Find the first visible page target via the HTTP debug API.
+	// We avoid using a temporary chromedp context for target discovery
+	// because creating and cancelling contexts on the allocator can leave
+	// stale session state that breaks subsequent CDP domain calls.
+	targetID, err := bm.findPageTarget()
+	if err != nil {
+		return nil, fmt.Errorf("no page target found: %w", err)
+	}
+
 	allocCtx, allocCanc := chromedp.NewRemoteAllocator(context.Background(), wsURL)
 	bm.allocCtx = allocCtx
 	bm.allocCanc = allocCanc
-
-	// Find the first visible page target to attach to.
-	targetID, err := bm.findPageTarget(allocCtx)
-	if err != nil {
-		allocCanc()
-		return nil, fmt.Errorf("no page target found: %w", err)
-	}
 
 	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithTargetID(targetID))
 	bm.ctx = ctx
@@ -101,25 +102,33 @@ func (bm *browserManager) getWSURL() (string, error) {
 	return data.WebSocketDebuggerURL, nil
 }
 
-func (bm *browserManager) findPageTarget(allocCtx context.Context) (target.ID, error) {
-	ctx, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
-
-	// Get list of targets.
-	targets, err := chromedp.Targets(ctx)
+// findPageTarget uses Chrome's HTTP debug API to discover page targets
+// without creating (and cancelling) a temporary chromedp session.
+func (bm *browserManager) findPageTarget() (target.ID, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/json/list", cdpPort))
 	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var targets []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
 		return "", err
 	}
 
 	// Prefer type "page".
 	for _, t := range targets {
 		if t.Type == "page" {
-			return t.TargetID, nil
+			return target.ID(t.ID), nil
 		}
 	}
 	// Fall back to any target.
 	if len(targets) > 0 {
-		return targets[0].TargetID, nil
+		return target.ID(targets[0].ID), nil
 	}
 	return "", fmt.Errorf("no targets available")
 }
@@ -281,9 +290,11 @@ func (bm *browserManager) cmdClick(ctx context.Context, selector string) (map[st
 		if err != nil {
 			return nil, err
 		}
-		_, _, err = runtime.CallFunctionOn(`function() { this.click(); }`).
-			WithObjectID(objID).Do(ctx)
-		if err != nil {
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			_, _, err := runtime.CallFunctionOn(`function() { this.click(); }`).
+				WithObjectID(objID).Do(ctx)
+			return err
+		})); err != nil {
 			return nil, fmt.Errorf("click failed: %w", err)
 		}
 	} else {
@@ -319,9 +330,11 @@ func (bm *browserManager) cmdFill(ctx context.Context, selector, value string) (
 			this.dispatchEvent(new Event('input', {bubbles: true}));
 			this.dispatchEvent(new Event('change', {bubbles: true}));
 		}`, strconv.Quote(value))
-		_, _, err = runtime.CallFunctionOn(js).
-			WithObjectID(objID).Do(ctx)
-		if err != nil {
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			_, _, err := runtime.CallFunctionOn(js).
+				WithObjectID(objID).Do(ctx)
+			return err
+		})); err != nil {
 			return nil, fmt.Errorf("fill failed: %w", err)
 		}
 	} else {
@@ -377,6 +390,11 @@ func (bm *browserManager) cmdBack(ctx context.Context) (map[string]interface{}, 
 
 func (bm *browserManager) cmdForward(ctx context.Context) (map[string]interface{}, error) {
 	if err := chromedp.Run(ctx, chromedp.NavigateForward()); err != nil {
+		if strings.Contains(err.Error(), "invalid navigation entry") {
+			return map[string]interface{}{
+				"data": map[string]interface{}{"navigated": "forward", "noHistory": true},
+			}, nil
+		}
 		return nil, fmt.Errorf("forward failed: %w", err)
 	}
 	return map[string]interface{}{
@@ -452,27 +470,29 @@ func (bm *browserManager) cmdHover(ctx context.Context, selector string) (map[st
 			return nil, err
 		}
 		// Get the element's bounding box via JS, then dispatch mouseMoved
-		res, _, err := runtime.CallFunctionOn(`function() {
-			var rect = this.getBoundingClientRect();
-			return JSON.stringify({x: rect.x + rect.width/2, y: rect.y + rect.height/2});
-		}`).WithObjectID(objID).WithReturnByValue(true).Do(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("hover failed to get position: %w", err)
-		}
-		// res.Value is jsontext.Value ([]byte) containing a JSON string like "\"...\""
-		// First unquote the JSON string, then parse the inner JSON object.
-		var posJSON string
-		if err := json.Unmarshal([]byte(res.Value), &posJSON); err != nil {
-			return nil, fmt.Errorf("hover failed to parse position string: %w", err)
-		}
-		var pos struct {
-			X float64 `json:"x"`
-			Y float64 `json:"y"`
-		}
-		if err := json.Unmarshal([]byte(posJSON), &pos); err != nil {
-			return nil, fmt.Errorf("hover failed to parse coords: %w", err)
-		}
-		if err := input.DispatchMouseEvent(input.MouseMoved, pos.X, pos.Y).Do(ctx); err != nil {
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			res, _, err := runtime.CallFunctionOn(`function() {
+				var rect = this.getBoundingClientRect();
+				return JSON.stringify({x: rect.x + rect.width/2, y: rect.y + rect.height/2});
+			}`).WithObjectID(objID).WithReturnByValue(true).Do(ctx)
+			if err != nil {
+				return fmt.Errorf("hover failed to get position: %w", err)
+			}
+			// res.Value is jsontext.Value ([]byte) containing a JSON string like "\"...\""
+			// First unquote the JSON string, then parse the inner JSON object.
+			var posJSON string
+			if err := json.Unmarshal([]byte(res.Value), &posJSON); err != nil {
+				return fmt.Errorf("hover failed to parse position string: %w", err)
+			}
+			var pos struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.Unmarshal([]byte(posJSON), &pos); err != nil {
+				return fmt.Errorf("hover failed to parse coords: %w", err)
+			}
+			return input.DispatchMouseEvent(input.MouseMoved, pos.X, pos.Y).Do(ctx)
+		})); err != nil {
 			return nil, fmt.Errorf("hover failed: %w", err)
 		}
 	} else {
@@ -539,8 +559,8 @@ func (bm *browserManager) RunBrowserAgent(body map[string]interface{}) (map[stri
 
 // axNode is a simplified accessibility node for tree building.
 type axNode struct {
-	NodeID    accessibility.NodeID
-	ParentID  accessibility.NodeID
+	NodeID    string
+	ParentID  string
 	Role      string
 	Name      string
 	Value     string
@@ -550,46 +570,104 @@ type axNode struct {
 	Children  []*axNode
 }
 
+// rawAXValue is a lenient version of the CDP AXValue type.
+// Uses plain strings instead of strict enum types to handle unknown values
+// from newer Chrome versions (e.g. PropertyName "uninteresting").
+type rawAXValue struct {
+	Type  string      `json:"type"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+// rawAXProperty is a lenient version of the CDP AXProperty type.
+type rawAXProperty struct {
+	Name  string     `json:"name"`
+	Value *rawAXValue `json:"value"`
+}
+
+// rawAXNode is a lenient version of the CDP AXNode type.
+type rawAXNode struct {
+	NodeID           string           `json:"nodeId"`
+	Ignored          bool             `json:"ignored"`
+	IgnoredReasons   []*rawAXProperty `json:"ignoredReasons,omitempty"`
+	Role             *rawAXValue      `json:"role,omitempty"`
+	Name             *rawAXValue      `json:"name,omitempty"`
+	Properties       []*rawAXProperty `json:"properties,omitempty"`
+	ParentID         string           `json:"parentId,omitempty"`
+	BackendDOMNodeID int64            `json:"backendDOMNodeId,omitempty"`
+}
+
+// rawAXTreeResult is the result of Accessibility.getFullAXTree.
+type rawAXTreeResult struct {
+	Nodes []rawAXNode `json:"nodes"`
+}
+
+// rawAXValueStr extracts a string from a rawAXValue.
+func rawAXValueStr(v *rawAXValue) string {
+	if v == nil || v.Value == nil {
+		return ""
+	}
+	switch val := v.Value.(type) {
+	case string:
+		return val
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(val)
+	default:
+		return fmt.Sprintf("%v", v.Value)
+	}
+}
+
+// getRawAXTree fetches the full accessibility tree using a raw CDP call.
+// This avoids cdproto's strict enum unmarshalling which rejects unknown
+// PropertyName values (e.g. "uninteresting") from newer Chrome versions.
+func getRawAXTree(ctx context.Context) ([]rawAXNode, error) {
+	var result rawAXTreeResult
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return cdp.Execute(ctx, "Accessibility.getFullAXTree", nil, &result)
+	})); err != nil {
+		return nil, err
+	}
+	return result.Nodes, nil
+}
+
 func (bm *browserManager) buildAccessibilitySnapshot(ctx context.Context) (string, error) {
-	// Get the full accessibility tree via CDP.
-	nodes, err := accessibility.GetFullAXTree().Do(ctx)
+	rawNodes, err := getRawAXTree(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get accessibility tree: %w", err)
 	}
 
-	if len(nodes) == 0 {
+	if len(rawNodes) == 0 {
 		return "No accessibility tree available", nil
 	}
 
 	// Build a map of nodeID → axNode.
-	nodeMap := make(map[accessibility.NodeID]*axNode, len(nodes))
+	nodeMap := make(map[string]*axNode, len(rawNodes))
 	var roots []*axNode
 
-	for _, n := range nodes {
+	for _, n := range rawNodes {
 		an := &axNode{
-			NodeID: n.NodeID,
+			NodeID:  n.NodeID,
 			Ignored: n.Ignored,
 		}
 		if n.ParentID != "" {
 			an.ParentID = n.ParentID
 		}
-		if n.Role != nil {
-			an.Role = unquoteJSON(string(n.Role.Value))
-		}
-		if n.Name != nil {
-			an.Name = unquoteJSON(string(n.Name.Value))
-		}
-		// Check properties for value and focused.
+		an.Role = rawAXValueStr(n.Role)
+		an.Name = rawAXValueStr(n.Name)
 		for _, p := range n.Properties {
-			switch p.Name.String() {
+			if p == nil || p.Value == nil {
+				continue
+			}
+			switch p.Name {
 			case "focused":
-				an.Focused = strings.TrimSpace(string(p.Value.Value)) == "true"
+				an.Focused = rawAXValueStr(p.Value) == "true"
 			case "value":
-				an.Value = unquoteJSON(string(p.Value.Value))
+				an.Value = rawAXValueStr(p.Value)
 			}
 		}
 		if n.BackendDOMNodeID != 0 {
-			an.BackendID = n.BackendDOMNodeID
+			an.BackendID = cdp.BackendNodeID(n.BackendDOMNodeID)
 		}
 		nodeMap[n.NodeID] = an
 	}
@@ -627,7 +705,6 @@ func (bm *browserManager) buildAccessibilitySnapshot(ctx context.Context) (strin
 	var traverse func(node *axNode, indent int)
 	traverse = func(node *axNode, indent int) {
 		if node.Ignored || node.Role == "InlineTextBox" {
-			// Still recurse into children of ignored nodes.
 			for _, child := range node.Children {
 				traverse(child, indent)
 			}
@@ -672,26 +749,25 @@ func (bm *browserManager) resolveElementRef(ctx context.Context, ref string) (ru
 		return "", fmt.Errorf("invalid element ref: %s", ref)
 	}
 
-	nodes, err := accessibility.GetFullAXTree().Do(ctx)
+	rawNodes, err := getRawAXTree(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get accessibility tree: %w", err)
 	}
 
 	// Count non-ignored, non-InlineTextBox nodes in pre-order.
-	// Build parent map first.
 	type nodeInfo struct {
-		node     *accessibility.Node
-		children []*accessibility.Node
+		node     *rawAXNode
+		children []*rawAXNode
 	}
-	nodeMap := make(map[accessibility.NodeID]*nodeInfo, len(nodes))
-	var roots []*accessibility.Node
+	nodeMap := make(map[string]*nodeInfo, len(rawNodes))
+	var roots []*rawAXNode
 
-	for i := range nodes {
-		n := nodes[i]
+	for i := range rawNodes {
+		n := &rawNodes[i]
 		nodeMap[n.NodeID] = &nodeInfo{node: n}
 	}
-	for i := range nodes {
-		n := nodes[i]
+	for i := range rawNodes {
+		n := &rawNodes[i]
 		if n.ParentID != "" {
 			if parent, ok := nodeMap[n.ParentID]; ok {
 				parent.children = append(parent.children, n)
@@ -715,18 +791,15 @@ func (bm *browserManager) resolveElementRef(ctx context.Context, ref string) (ru
 
 	// Pre-order traversal counting non-ignored nodes.
 	counter := 0
-	var target *accessibility.Node
-	var walk func(n *accessibility.Node) bool
-	walk = func(n *accessibility.Node) bool {
-		role := ""
-		if n.Role != nil {
-			role = unquoteJSON(string(n.Role.Value))
-		}
+	var tgt *rawAXNode
+	var walk func(n *rawAXNode) bool
+	walk = func(n *rawAXNode) bool {
+		role := rawAXValueStr(n.Role)
 		ignored := n.Ignored || role == "InlineTextBox"
 		if !ignored {
 			counter++
 			if counter == refNum {
-				target = n
+				tgt = n
 				return true
 			}
 		}
@@ -746,34 +819,28 @@ func (bm *browserManager) resolveElementRef(ctx context.Context, ref string) (ru
 		}
 	}
 
-	if target == nil {
+	if tgt == nil {
 		return "", fmt.Errorf("element %s not found", ref)
 	}
 
-	if target.BackendDOMNodeID == 0 {
+	if tgt.BackendDOMNodeID == 0 {
 		return "", fmt.Errorf("element %s has no DOM node", ref)
 	}
 
 	// Resolve backend node to remote object.
-	obj, err := dom.ResolveNode().WithBackendNodeID(target.BackendDOMNodeID).Do(ctx)
-	if err != nil {
+	var objID runtime.RemoteObjectID
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		obj, err := dom.ResolveNode().WithBackendNodeID(cdp.BackendNodeID(tgt.BackendDOMNodeID)).Do(ctx)
+		if err != nil {
+			return err
+		}
+		objID = obj.ObjectID
+		return nil
+	})); err != nil {
 		return "", fmt.Errorf("failed to resolve DOM node for %s: %w", ref, err)
 	}
 
-	return obj.ObjectID, nil
-}
-
-// unquoteJSON strips JSON string quotes from a raw JSON value.
-// e.g., `"hello"` → `hello`, `true` → `true`, `123` → `123`
-func unquoteJSON(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		var s string
-		if err := json.Unmarshal([]byte(raw), &s); err == nil {
-			return s
-		}
-	}
-	return raw
+	return objID, nil
 }
 
 // mapKeyName maps human-friendly key names to the strings chromedp expects.
