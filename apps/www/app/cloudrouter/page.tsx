@@ -1,4 +1,12 @@
 import type { Metadata } from "next";
+import { Source_Serif_4 } from "next/font/google";
+
+const sourceSerif = Source_Serif_4({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  style: ["normal"],
+  variable: "--font-source-serif",
+});
 
 export const metadata: Metadata = {
   title: "cloudrouter — Cloud VMs/GPUs for Claude Code/Codex",
@@ -60,7 +68,7 @@ const features = [
 
 export default function CloudRouterPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center bg-white px-4 py-12 font-mono text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-20">
+    <div className={`flex min-h-screen flex-col items-center bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-20 ${sourceSerif.className}`}>
       <div className="w-full max-w-2xl">
         {/* Header */}
         <header className="mb-12 flex items-center justify-between text-sm">
