@@ -9,6 +9,7 @@ import http2 from "node:http2";
 import net, { type Socket } from "node:net";
 import tls, { type TLSSocket } from "node:tls";
 import { randomBytes, createHash } from "node:crypto";
+import { Transform } from "node:stream";
 import { pipeline as streamPipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import type { Session, WebContents } from "electron";
@@ -23,6 +24,7 @@ type ClientHttp2Stream = http2.ClientHttp2Stream;
 const CMUX_PROXY_PORT = 39379;
 const DEFAULT_MORPH_DOMAIN_SUFFIX = ".http.cloud.morph.so";
 const HTTP2_CANCEL_CODE = http2.constants.NGHTTP2_CANCEL;
+const HTML_INJECTION_SCAN_LIMIT_BYTES = 64 * 1024;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -114,6 +116,7 @@ interface ProxyContext {
   session: Session;
   webContentsId: number;
   persistKey?: string;
+  wsOverrideScript?: string;
 }
 
 interface CmuxProxyMetadata {
@@ -282,6 +285,17 @@ export async function configurePreviewProxyForView(
   const username = `wc-${webContents.id}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(12).toString("hex");
   const authToken = Buffer.from(`${username}:${password}`).toString("base64");
+  let wsOverrideRawScript: string | undefined;
+  let wsOverrideScriptTag: string | undefined;
+  if (route.cmuxProxyOrigin) {
+    const proxyOrigin = new URL(route.cmuxProxyOrigin);
+    const wsOverrideScript = buildWsOverrideScript(
+      proxyOrigin.hostname,
+      proxyOrigin.protocol === "https:"
+    );
+    wsOverrideRawScript = wsOverrideScript.rawScript;
+    wsOverrideScriptTag = wsOverrideScript.scriptTag;
+  }
 
   const context: ProxyContext = {
     username,
@@ -291,6 +305,7 @@ export async function configurePreviewProxyForView(
     session: webContents.session,
     webContentsId: webContents.id,
     persistKey,
+    wsOverrideScript: wsOverrideScriptTag,
   };
 
   contextsByUsername.set(username, context);
@@ -337,71 +352,19 @@ export async function configurePreviewProxyForView(
 
   webContents.once("destroyed", cleanup);
 
-  // Inject WebSocket override script on each page load
+  // Fallback: inject WebSocket override with executeJavaScript when needed.
+  // Primary path is HTML response injection in proxy forwarding.
   // Chromium's session.setProxy() doesn't proxy ws:// URLs through HTTP proxies,
   // so we override the WebSocket constructor in JavaScript to rewrite localhost URLs
-  if (route.cmuxProxyOrigin) {
-    const proxyOrigin = new URL(route.cmuxProxyOrigin);
-    const proxyHostBase = proxyOrigin.hostname; // e.g., "port-39379-pvelxc-5a68172e.alphasolves.com"
-    const proxyIsSecure = proxyOrigin.protocol === "https:";
-
+  if (wsOverrideRawScript) {
     const injectWebSocketOverride = () => {
-      const script = `
-        (function() {
-          if (window.__cmuxWebSocketOverrideInstalled) return;
-          window.__cmuxWebSocketOverrideInstalled = true;
-
-          var proxyHostBase = ${JSON.stringify(proxyHostBase)};
-          var proxyIsSecure = ${JSON.stringify(proxyIsSecure)};
-          var loopbackHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
-
-          function isLoopback(hostname) {
-            if (loopbackHosts.indexOf(hostname) >= 0) return true;
-            if (hostname.indexOf('127.') === 0) return true;
-            return false;
-          }
-
-          function rewriteWsUrl(url) {
-            try {
-              var parsed = new URL(url);
-              if (!isLoopback(parsed.hostname)) return url;
-              // Replace port in proxyHostBase with the requested port
-              var targetHost = proxyHostBase.replace(/^port-\\d+/, 'port-' + (parsed.port || '80'));
-              var wsProtocol = proxyIsSecure ? 'wss:' : 'ws:';
-              var newUrl = wsProtocol + '//' + targetHost + parsed.pathname + parsed.search;
-              console.log('[cmux-ws-override] Rewriting:', url, '->', newUrl);
-              return newUrl;
-            } catch (e) {
-              console.error('[cmux-ws-override] Error rewriting URL:', e);
-              return url;
-            }
-          }
-
-          var OriginalWebSocket = window.WebSocket;
-          window.WebSocket = function(url, protocols) {
-            var newUrl = typeof url === 'string' ? rewriteWsUrl(url) : url;
-            if (protocols !== undefined) {
-              return new OriginalWebSocket(newUrl, protocols);
-            }
-            return new OriginalWebSocket(newUrl);
-          };
-          window.WebSocket.prototype = OriginalWebSocket.prototype;
-          window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
-          window.WebSocket.OPEN = OriginalWebSocket.OPEN;
-          window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
-          window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
-
-          console.log('[cmux-ws-override] WebSocket override installed, proxyHostBase:', proxyHostBase);
-        })();
-      `;
-
-      webContents.executeJavaScript(script).catch((err) => {
+      webContents.executeJavaScript(wsOverrideRawScript).catch((err) => {
         proxyWarn("websocket-override-inject-failed", { error: err });
       });
     };
 
-    // Inject on current page and on each navigation
-    webContents.on("did-finish-load", injectWebSocketOverride);
+    // Inject on each document and SPA navigation.
+    webContents.on("dom-ready", injectWebSocketOverride);
     webContents.on("did-navigate-in-page", injectWebSocketOverride);
 
     // Also inject immediately if page is already loaded
@@ -416,6 +379,158 @@ export async function configurePreviewProxyForView(
     route,
   });
   return cleanup;
+}
+
+function buildWsOverrideScript(
+  proxyHostBase: string,
+  proxyIsSecure: boolean
+): { scriptTag: string; rawScript: string } {
+  const rawScript = `
+(function() {
+  if (window.__cmuxWebSocketOverrideInstalled) return;
+  window.__cmuxWebSocketOverrideInstalled = true;
+
+  var proxyHostBase = ${JSON.stringify(proxyHostBase)};
+  var proxyIsSecure = ${JSON.stringify(proxyIsSecure)};
+  var loopbackHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
+
+  function isLoopback(hostname) {
+    if (loopbackHosts.indexOf(hostname) >= 0) return true;
+    if (hostname.indexOf('127.') === 0) return true;
+    return false;
+  }
+
+  function rewriteWsUrl(url) {
+    try {
+      var parsed = new URL(url);
+      if (!isLoopback(parsed.hostname)) return url;
+      var targetHost = proxyHostBase.replace(/^port-\\d+/, 'port-' + (parsed.port || '80'));
+      var wsProtocol = proxyIsSecure ? 'wss:' : 'ws:';
+      var newUrl = wsProtocol + '//' + targetHost + parsed.pathname + parsed.search;
+      console.log('[cmux-ws-override] Rewriting:', url, '->', newUrl);
+      return newUrl;
+    } catch (e) {
+      console.error('[cmux-ws-override] Error rewriting URL:', e);
+      return url;
+    }
+  }
+
+  var OriginalWebSocket = window.WebSocket;
+  window.WebSocket = function(url, protocols) {
+    var newUrl = typeof url === 'string' ? rewriteWsUrl(url) : url;
+    if (protocols !== undefined) {
+      return new OriginalWebSocket(newUrl, protocols);
+    }
+    return new OriginalWebSocket(newUrl);
+  };
+  window.WebSocket.prototype = OriginalWebSocket.prototype;
+  window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+  window.WebSocket.OPEN = OriginalWebSocket.OPEN;
+  window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
+  window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+
+  console.log('[cmux-ws-override] WebSocket override installed, proxyHostBase:', proxyHostBase);
+})();`.trim();
+
+  return {
+    scriptTag: `<script data-cmux-injected="true">${rawScript}</script>`,
+    rawScript,
+  };
+}
+
+function createHtmlInjectionTransform(scriptTag: string): Transform {
+  const scriptBuffer = Buffer.from(scriptTag, "utf8");
+  let buffered = Buffer.alloc(0);
+  let passthrough = false;
+
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      if (passthrough) {
+        this.push(chunk);
+        callback();
+        return;
+      }
+
+      const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      buffered =
+        buffered.length === 0
+          ? chunkBuffer
+          : Buffer.concat([buffered, chunkBuffer]);
+
+      const scanLength = Math.min(
+        buffered.length,
+        HTML_INJECTION_SCAN_LIMIT_BYTES
+      );
+      const scanText = buffered.subarray(0, scanLength).toString("latin1");
+      const headMatch = /<head\b[^>]*>/i.exec(scanText);
+      if (headMatch && headMatch.index !== undefined) {
+        const insertIndex = headMatch.index + headMatch[0].length;
+        this.push(buffered.subarray(0, insertIndex));
+        this.push(scriptBuffer);
+        this.push(buffered.subarray(insertIndex));
+        buffered = Buffer.alloc(0);
+        passthrough = true;
+        callback();
+        return;
+      }
+
+      if (buffered.length >= HTML_INJECTION_SCAN_LIMIT_BYTES) {
+        this.push(buffered);
+        buffered = Buffer.alloc(0);
+        passthrough = true;
+      }
+
+      callback();
+    },
+    flush(callback) {
+      if (buffered.length > 0) {
+        this.push(buffered);
+      }
+      callback();
+    },
+  });
+}
+
+function isHtmlResponse(
+  headers: Record<string, string | number | string[] | undefined>
+): boolean {
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "content-type") {
+      continue;
+    }
+    if (typeof value === "string") {
+      return value.toLowerCase().includes("text/html");
+    }
+    if (Array.isArray(value)) {
+      return value.some((entry) =>
+        entry.toLowerCase().includes("text/html")
+      );
+    }
+    if (typeof value === "number") {
+      return String(value).toLowerCase().includes("text/html");
+    }
+  }
+  return false;
+}
+
+function isCompressedResponse(
+  headers: Record<string, string | number | string[] | undefined>
+): boolean {
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "content-encoding") {
+      continue;
+    }
+    const raw = Array.isArray(value)
+      ? value.join(", ")
+      : typeof value === "string"
+        ? value
+        : "";
+    const normalized = raw.toLowerCase().trim();
+    if (normalized && normalized !== "identity") {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function startPreviewProxy(logger: Logger): Promise<number> {
@@ -1176,6 +1291,9 @@ function forwardHttpRequestViaHttp1(
   return new Promise((resolve) => {
     const { url, secure, connectPort } = target;
     const requestHeaders = buildHttp1Headers(clientReq.headers, target);
+    if (context.wsOverrideScript) {
+      deleteHeaderCaseInsensitive(requestHeaders.headers, "accept-encoding");
+    }
     const agent = secure ? HTTPS1_KEEP_ALIVE_AGENT : HTTP1_KEEP_ALIVE_AGENT;
 
     const requestOptions = {
@@ -1191,14 +1309,30 @@ function forwardHttpRequestViaHttp1(
 
     const httpModule = secure ? https : http;
     const proxyReq = httpModule.request(requestOptions, (proxyRes) => {
+      const shouldInjectWsOverride =
+        Boolean(context.wsOverrideScript) &&
+        isHtmlResponse(proxyRes.headers) &&
+        !isCompressedResponse(proxyRes.headers);
+      const responseHeaders = { ...proxyRes.headers };
+      if (shouldInjectWsOverride) {
+        deleteHeaderCaseInsensitive(responseHeaders, "content-length");
+      }
       if (!clientRes.headersSent) {
         clientRes.writeHead(
           proxyRes.statusCode ?? 500,
           proxyRes.statusMessage ?? "",
-          proxyRes.headers
+          responseHeaders
         );
       }
-      void streamPipeline(proxyRes, clientRes)
+      const responsePipeline =
+        shouldInjectWsOverride && context.wsOverrideScript
+          ? streamPipeline(
+              proxyRes,
+              createHtmlInjectionTransform(context.wsOverrideScript),
+              clientRes
+            )
+          : streamPipeline(proxyRes, clientRes);
+      void responsePipeline
         .then(() => {
           resolve();
         })
@@ -1247,6 +1381,12 @@ async function forwardHttpRequestViaHttp2(
 ): Promise<void> {
   const session = await getHttp2SessionFor(target);
   const headers = buildHttp2Headers(clientReq.headers, target);
+  if (context.wsOverrideScript) {
+    deleteHeaderCaseInsensitive(
+      headers as Record<string, string | number | string[] | undefined>,
+      "accept-encoding"
+    );
+  }
   headers[":method"] = clientReq.method ?? "GET";
   headers[":path"] = `${target.url.pathname}${target.url.search}`;
   headers[":scheme"] = target.url.protocol.replace(":", "");
@@ -1254,6 +1394,14 @@ async function forwardHttpRequestViaHttp2(
 
   await new Promise<void>((resolve, reject) => {
     const upstreamReq: ClientHttp2Stream = session.request(headers);
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback();
+    };
     const logHttp2 = (event: string, data?: Record<string, unknown>) => {
       proxyLog("http2-forward", {
         event,
@@ -1284,6 +1432,13 @@ async function forwardHttpRequestViaHttp2(
           responseHeaders[name] = String(value);
         }
       }
+      const shouldInjectWsOverride =
+        Boolean(context.wsOverrideScript) &&
+        isHtmlResponse(upstreamHeaders) &&
+        !isCompressedResponse(upstreamHeaders);
+      if (shouldInjectWsOverride) {
+        deleteHeaderCaseInsensitive(responseHeaders, "content-length");
+      }
       if (!clientRes.headersSent) {
         clientRes.writeHead(status, responseHeaders);
       }
@@ -1291,20 +1446,32 @@ async function forwardHttpRequestViaHttp2(
         status,
         headerCount: Object.keys(responseHeaders).length,
       });
-    });
-
-    upstreamReq.on("data", (chunk) => {
-      if (!clientRes.writableEnded) {
-        clientRes.write(chunk);
-      }
-    });
-
-    upstreamReq.on("end", () => {
-      if (!clientRes.writableEnded) {
-        clientRes.end();
-      }
-      logHttp2("response-end");
-      resolve();
+      const responsePipeline =
+        shouldInjectWsOverride && context.wsOverrideScript
+          ? streamPipeline(
+              upstreamReq,
+              createHtmlInjectionTransform(context.wsOverrideScript),
+              clientRes
+            )
+          : streamPipeline(upstreamReq, clientRes);
+      void responsePipeline
+        .then(() => {
+          logHttp2("response-end");
+          settle(resolve);
+        })
+        .catch((pipelineError) => {
+          logHttp2("response-pipeline-error", {
+            message: (pipelineError as Error).message,
+          });
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(502);
+            clientRes.end("Bad Gateway");
+          } else if (!clientRes.writableEnded) {
+            clientRes.end();
+          }
+          upstreamReq.close(HTTP2_CANCEL_CODE);
+          settle(() => reject(pipelineError));
+        });
     });
 
     upstreamReq.on("error", (error) => {
@@ -1318,13 +1485,14 @@ async function forwardHttpRequestViaHttp2(
         clientRes.end();
       }
       upstreamReq.close(HTTP2_CANCEL_CODE);
-      reject(error);
+      settle(() => reject(error));
     });
 
     clientReq.pipe(upstreamReq);
     clientReq.on("aborted", () => {
       logHttp2("client-aborted");
       upstreamReq.close(HTTP2_CANCEL_CODE);
+      settle(resolve);
     });
   });
 }
@@ -1387,7 +1555,7 @@ function normalizeHeaderName(name: string): string {
 }
 
 function deleteHeaderCaseInsensitive(
-  headers: Record<string, string>,
+  headers: Record<string, unknown>,
   targetName: string
 ): void {
   const lower = targetName.toLowerCase();
@@ -1919,7 +2087,7 @@ async function forwardHttp2StreamToHttp2(
   clientStream: http2.ServerHttp2Stream,
   clientHeaders: http2.IncomingHttpHeaders,
   target: ProxyTarget,
-  _context: ProxyContext
+  context: ProxyContext
 ) {
 
   const session = await getHttp2SessionFor(target);
@@ -1934,6 +2102,9 @@ async function forwardHttp2StreamToHttp2(
     if (key === "host" && target.cmuxProxy) {
       delete upstreamHeaders[key];
     }
+  }
+  if (context.wsOverrideScript) {
+    deleteHeaderCaseInsensitive(upstreamHeaders, "accept-encoding");
   }
   
   // Re-add pseudo headers
@@ -1952,11 +2123,30 @@ async function forwardHttp2StreamToHttp2(
 
 
   upstreamStream.on("response", (responseHeaders) => {
+    const shouldInjectWsOverride =
+      Boolean(context.wsOverrideScript) &&
+      isHtmlResponse(responseHeaders) &&
+      !isCompressedResponse(responseHeaders);
+    const outgoingHeaders = { ...responseHeaders };
+    if (shouldInjectWsOverride) {
+      deleteHeaderCaseInsensitive(outgoingHeaders, "content-length");
+    }
 
-    clientStream.respond(responseHeaders);
+    clientStream.respond(outgoingHeaders);
+    const responseStream =
+      shouldInjectWsOverride && context.wsOverrideScript
+        ? upstreamStream.pipe(
+            createHtmlInjectionTransform(context.wsOverrideScript)
+          )
+        : upstreamStream;
+    responseStream.pipe(clientStream);
+    responseStream.on("error", (error) => {
+      console.error("Upstream response stream error:", error);
+      if (!clientStream.closed) {
+        clientStream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      }
+    });
   });
-
-  upstreamStream.pipe(clientStream);
   clientStream.pipe(upstreamStream);
 
   upstreamStream.on("error", (err) => {
@@ -1974,7 +2164,7 @@ async function forwardHttp2StreamToHttp1(
   clientStream: http2.ServerHttp2Stream,
   clientHeaders: http2.IncomingHttpHeaders,
   target: ProxyTarget,
-  _context: ProxyContext
+  context: ProxyContext
 ) {
     // This is a bit more complex: H2 stream -> H1 request
     // We can use the 'http2' compatibility or just manual mapping.
@@ -1988,6 +2178,9 @@ async function forwardHttp2StreamToHttp1(
         if (key === "host" && target.cmuxProxy) continue;
         if (Array.isArray(value)) headers[key] = value.join(", ");
         else if (value) headers[key] = value;
+    }
+    if (context.wsOverrideScript) {
+        deleteHeaderCaseInsensitive(headers, "accept-encoding");
     }
     
     injectCmuxProxyHeaders(headers, target.cmuxProxy);
@@ -2008,6 +2201,10 @@ async function forwardHttp2StreamToHttp1(
 
     const httpModule = target.secure ? https : http;
     const proxyReq = httpModule.request(requestOptions, (proxyRes) => {
+        const shouldInjectWsOverride =
+            Boolean(context.wsOverrideScript) &&
+            isHtmlResponse(proxyRes.headers) &&
+            !isCompressedResponse(proxyRes.headers);
         const responseHeaders: http2.OutgoingHttpHeaders = {
             ":status": proxyRes.statusCode || 200,
         };
@@ -2015,11 +2212,30 @@ async function forwardHttp2StreamToHttp1(
             if (HOP_BY_HOP_HEADERS.has(key)) continue;
             responseHeaders[key] = value;
         }
+        if (shouldInjectWsOverride) {
+            deleteHeaderCaseInsensitive(
+                responseHeaders as Record<string, unknown>,
+                "content-length"
+            );
+        }
         clientStream.respond(responseHeaders);
-        proxyRes.pipe(clientStream);
+        const responseStream =
+            shouldInjectWsOverride && context.wsOverrideScript
+                ? proxyRes.pipe(
+                    createHtmlInjectionTransform(context.wsOverrideScript)
+                  )
+                : proxyRes;
+        responseStream.pipe(clientStream);
+        responseStream.on("error", (error) => {
+            console.error("HTTP/1 upstream response stream error:", error);
+            if (!clientStream.closed) {
+                clientStream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+            }
+        });
     });
 
-    proxyReq.on("error", (_err) => {
+    proxyReq.on("error", (err) => {
+        console.error("HTTP/1 proxy request error:", err);
         if (!clientStream.closed) {
             clientStream.respond({ ":status": 502 });
             clientStream.end();
@@ -2043,7 +2259,7 @@ function deriveRoute(url: string): ProxyRoute | null {
                 cmuxProxyOrigin: process.env.TEST_CMUX_PROXY_ORIGIN
             };
         }
-      } catch (_e) { /* ignore */ }
+      } catch (e) { console.error("Failed to parse test proxy URL", e); }
   }
 
   try {
