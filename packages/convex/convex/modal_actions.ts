@@ -153,6 +153,7 @@ nohup google-chrome \\
   --disable-default-apps --disable-sync --disable-translate --disable-infobars \\
   --disable-features=ChromeWhatsNewUI,AutofillServerCommunication \\
   --start-maximized --window-position=0,0 --window-size=1920,1080 \\
+  --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 \\
   --user-data-dir=/root/.config/chrome --password-store=basic \\
   about:blank > /tmp/chrome.log 2>&1 &
 

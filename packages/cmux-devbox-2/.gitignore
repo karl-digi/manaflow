@@ -10,6 +10,7 @@ npm/linux-*/bin/
 npm/win32-*/bin/
 
 # Compiled binaries in wrapper packages
+npm/cloudrouter/bin/cloudrouter
 npm/cloudrouter/lib/cloudrouter
 npm/cloudrouter/lib/cmux
 npm/cmux/lib/cmux
