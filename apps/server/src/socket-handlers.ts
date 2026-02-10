@@ -2814,10 +2814,10 @@ Please address the issue mentioned in the comment above.`;
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5.1-codex-high
+            // Use provided selectedAgents or default to claude/opus-4.6 and codex/gpt-5.3-codex-xhigh
             selectedAgents: selectedAgents || [
-              "claude/sonnet-4",
-              "codex/gpt-5.1-codex-high",
+              "claude/opus-4.6",
+              "codex/gpt-5.3-codex-xhigh",
             ],
           },
           safeTeam
