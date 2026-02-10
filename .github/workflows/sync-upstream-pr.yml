@@ -1,0 +1,36 @@
+name: Weekly Upstream Sync PR
+
+on:
+  schedule:
+    - cron: "0 18 * * 0" # Every Sunday 2am HKT (6pm UTC Saturday)
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream-pr
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync-upstream-pr:
+    name: Sync karl-digi/manaflow PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout karlorz/cmux
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync karl-digi/manaflow main from upstream
+        env:
+          GH_TOKEN: ${{ secrets.KARL_DIGI_TOKEN }}
+        run: |
+          gh repo sync karl-digi/manaflow --source manaflow-ai/manaflow --branch main --force
+
+      - name: Force-push karlorz/cmux:main to karl-digi/manaflow:karlorz-cmux-main
+        env:
+          GH_TOKEN: ${{ secrets.KARL_DIGI_TOKEN }}
+        run: |
+          git remote add karl-digi https://x-access-token:${GH_TOKEN}@github.com/karl-digi/manaflow.git
+          git push karl-digi origin/main:refs/heads/karlorz-cmux-main --force
