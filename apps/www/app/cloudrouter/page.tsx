@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Source_Serif_4 } from "next/font/google";
+import { CopyButton } from "./copy-button";
 
 
 const sourceSerif = Source_Serif_4({
@@ -29,9 +30,12 @@ export const metadata: Metadata = {
 
 function CodeBlock({ children }: { children: string }) {
   return (
-    <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm leading-relaxed dark:border-neutral-800 dark:bg-neutral-900">
-      <code>{children}</code>
-    </pre>
+    <div className="relative">
+      <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 pr-16 text-sm leading-relaxed dark:border-neutral-800 dark:bg-neutral-900">
+        <code>{children}</code>
+      </pre>
+      <CopyButton text={children} />
+    </div>
   );
 }
 
