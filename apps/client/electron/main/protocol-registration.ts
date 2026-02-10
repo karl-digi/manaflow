@@ -11,7 +11,6 @@ function looksLikeOption(arg: string): boolean {
 function looksLikeUrl(arg: string): boolean {
   // Protocol URLs may include auth tokens; treat all URLs as non-paths here.
   try {
-    // eslint-disable-next-line no-new
     new URL(arg);
     return true;
   } catch {
@@ -48,4 +47,3 @@ export function computeSetAsDefaultProtocolClientCall(params: {
     args: [resolve(appPathArg)],
   };
 }
-

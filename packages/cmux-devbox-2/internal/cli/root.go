@@ -116,6 +116,9 @@ func init() {
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(downloadCmd)
 
+	// Environment variable management
+	rootCmd.AddCommand(envCmd)
+
 	// PTY commands (terminal session)
 	rootCmd.AddCommand(ptyCmd)
 	rootCmd.AddCommand(ptyListCmd)
