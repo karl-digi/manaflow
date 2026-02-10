@@ -112,7 +112,7 @@ export default function CloudRouterPage() {
             Cloud VMs/GPUs for Claude Code/Codex
           </h1>
           <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            Give Claude Code and Codex a CLI to create VMs and run experiments with GPUs.
+            Give Claude Code and Codex the ability to create VMs and run experiments with GPUs.
             Spin up a sandbox from your local directory, run commands, transfer files,
             and automate browsers — all from the command line or as an agent skill.
             The agent can self-verify and close the loop for all web dev and research tasks
