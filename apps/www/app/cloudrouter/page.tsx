@@ -112,7 +112,7 @@ export default function CloudRouterPage() {
             Cloud VMs/GPUs for Claude Code/Codex
           </h1>
           <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            The missing primitive — giving Claude Code and Codex the ability to start VMs and run experiments with GPUs.
+            The missing primitive — giving Claude Code and Codex the ability to start up VMs and run experiments with GPUs.
             Agents start up VMs from your local directory, run commands, transfer files,
             control browsers, and run GPUs directly from the command line.
           </p>
