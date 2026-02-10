@@ -225,8 +225,8 @@ export default async function LandingPage() {
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-neutral-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-neutral-800"
                   title={
                     latestVersion
-                      ? `Download ${latestVersion} for macOS`
-                      : "Download for macOS"
+                      ? `Download Manaflow ${latestVersion} for macOS`
+                      : "Download Manaflow for macOS"
                   }
                   urls={macDownloadUrls}
                 >

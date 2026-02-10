@@ -142,8 +142,8 @@ export function SiteHeader({
               className="hidden md:inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800"
               title={
                 latestVersion
-                  ? `Download ${latestVersion} for macOS`
-                  : "Download for macOS"
+                  ? `Download Manaflow ${latestVersion} for macOS`
+                  : "Download Manaflow for macOS"
               }
               urls={effectiveUrls}
             >
@@ -176,8 +176,8 @@ function GithubRepoButton({
   const formattedStars = formatStarCount(stars);
   const ariaLabel =
     typeof stars === "number"
-      ? `View on GitHub (${formattedStars} stars)`
-      : "View on GitHub";
+      ? `View Manaflow on GitHub (${formattedStars} stars)`
+      : "View Manaflow on GitHub";
 
   return (
     <a
