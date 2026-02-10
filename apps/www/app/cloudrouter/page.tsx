@@ -73,8 +73,8 @@ export default function CloudRouterPage() {
       <div className="w-full max-w-2xl">
         {/* Header */}
         <header className="mb-12 flex items-center justify-between text-sm">
-          <span className="flex items-center gap-2 font-semibold">
-            <CmuxLogo height={20} showWordmark={false} />
+          <span className="flex items-center gap-1.5 font-semibold">
+            <CmuxLogo height={20} showWordmark={false} style={{ width: 20 }} />
             cloudrouter
           </span>
           <nav className="flex gap-4 text-neutral-500 dark:text-neutral-400">
