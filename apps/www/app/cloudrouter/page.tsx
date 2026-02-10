@@ -72,14 +72,11 @@ export default function CloudRouterPage() {
     <div className={`flex min-h-screen flex-col items-center bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-20 ${sourceSerif.className}`}>
       <div className="w-full max-w-2xl">
         {/* Header */}
-        <header className="mb-12 flex items-center justify-between text-sm">
-          <CmuxLogo
-            height={28}
-            label="cloudrouter"
-            showWordmark
-            wordmarkText="cloudrouter"
-            wordmarkFill="currentColor"
-          />
+        <header className="mb-12 flex items-center justify-between text-base">
+          <span className="flex items-center gap-2 font-bold">
+            <CmuxLogo height={24} showWordmark={false} style={{ width: 24 }} />
+            <span className="text-lg">cloudrouter</span>
+          </span>
           <nav className="flex gap-4 text-neutral-500 dark:text-neutral-400">
             <a href="#install" className="transition hover:text-neutral-900 dark:hover:text-white">
               Install
