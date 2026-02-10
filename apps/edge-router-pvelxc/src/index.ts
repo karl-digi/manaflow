@@ -672,10 +672,73 @@ export default {
       redirect: "manual",
     });
 
-    // WebSocket upgrades must be returned directly without modification
+    // WebSocket upgrades: proxy the connection through the Worker
     const upgradeHeader = request.headers.get("Upgrade");
     if (upgradeHeader?.toLowerCase() === "websocket") {
-      return fetch(outbound);
+      // Fetch the upstream WebSocket (use outbound which has X-Cmux-Proxied header)
+      const upstreamResponse = await fetch(outbound);
+
+      // Check if we got a WebSocket upgrade response
+      if (upstreamResponse.webSocket) {
+        // Create a WebSocketPair for the client
+        const [client, server] = Object.values(new WebSocketPair());
+
+        // Accept both WebSockets
+        server.accept();
+        upstreamResponse.webSocket.accept();
+
+        // Pipe messages between client and upstream
+        server.addEventListener("message", (event) => {
+          try {
+            upstreamResponse.webSocket!.send(event.data);
+          } catch {
+            // Connection closed
+          }
+        });
+
+        upstreamResponse.webSocket.addEventListener("message", (event) => {
+          try {
+            server.send(event.data);
+          } catch {
+            // Connection closed
+          }
+        });
+
+        // Handle close events
+        server.addEventListener("close", () => {
+          try {
+            upstreamResponse.webSocket!.close();
+          } catch {
+            // Already closed
+          }
+        });
+
+        upstreamResponse.webSocket.addEventListener("close", () => {
+          try {
+            server.close();
+          } catch {
+            // Already closed
+          }
+        });
+
+        // Return the client WebSocket to the browser
+        // Forward negotiated subprotocol if present
+        const responseHeaders = new Headers();
+        const subprotocol = upstreamResponse.headers.get(
+          "Sec-WebSocket-Protocol"
+        );
+        if (subprotocol) {
+          responseHeaders.set("Sec-WebSocket-Protocol", subprotocol);
+        }
+        return new Response(null, {
+          status: 101,
+          headers: responseHeaders,
+          webSocket: client,
+        });
+      }
+
+      // If no WebSocket in response, return the response as-is
+      return upstreamResponse;
     }
 
     let response = await fetch(outbound);

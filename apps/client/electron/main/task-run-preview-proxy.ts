@@ -300,7 +300,7 @@ export async function configurePreviewProxyForView(
   try {
     await webContents.session.setProxy({
       mode: "fixed_servers",
-      proxyRules: `http=127.0.0.1:${port};https=127.0.0.1:${port}`,
+      proxyRules: `127.0.0.1:${port}`,
       proxyBypassRules: "<-loopback>",
     });
     proxyLog("session-proxy-configured", {
@@ -336,6 +336,80 @@ export async function configurePreviewProxyForView(
   };
 
   webContents.once("destroyed", cleanup);
+
+  // Inject WebSocket override script on each page load
+  // Chromium's session.setProxy() doesn't proxy ws:// URLs through HTTP proxies,
+  // so we override the WebSocket constructor in JavaScript to rewrite localhost URLs
+  if (route.cmuxProxyOrigin) {
+    const proxyOrigin = new URL(route.cmuxProxyOrigin);
+    const proxyHostBase = proxyOrigin.hostname; // e.g., "port-39379-pvelxc-5a68172e.alphasolves.com"
+    const proxyIsSecure = proxyOrigin.protocol === "https:";
+
+    const injectWebSocketOverride = () => {
+      const script = `
+        (function() {
+          if (window.__cmuxWebSocketOverrideInstalled) return;
+          window.__cmuxWebSocketOverrideInstalled = true;
+
+          var proxyHostBase = ${JSON.stringify(proxyHostBase)};
+          var proxyIsSecure = ${JSON.stringify(proxyIsSecure)};
+          var loopbackHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
+
+          function isLoopback(hostname) {
+            if (loopbackHosts.indexOf(hostname) >= 0) return true;
+            if (hostname.indexOf('127.') === 0) return true;
+            return false;
+          }
+
+          function rewriteWsUrl(url) {
+            try {
+              var parsed = new URL(url);
+              if (!isLoopback(parsed.hostname)) return url;
+              // Replace port in proxyHostBase with the requested port
+              var targetHost = proxyHostBase.replace(/^port-\\d+/, 'port-' + (parsed.port || '80'));
+              var wsProtocol = proxyIsSecure ? 'wss:' : 'ws:';
+              var newUrl = wsProtocol + '//' + targetHost + parsed.pathname + parsed.search;
+              console.log('[cmux-ws-override] Rewriting:', url, '->', newUrl);
+              return newUrl;
+            } catch (e) {
+              console.error('[cmux-ws-override] Error rewriting URL:', e);
+              return url;
+            }
+          }
+
+          var OriginalWebSocket = window.WebSocket;
+          window.WebSocket = function(url, protocols) {
+            var newUrl = typeof url === 'string' ? rewriteWsUrl(url) : url;
+            if (protocols !== undefined) {
+              return new OriginalWebSocket(newUrl, protocols);
+            }
+            return new OriginalWebSocket(newUrl);
+          };
+          window.WebSocket.prototype = OriginalWebSocket.prototype;
+          window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+          window.WebSocket.OPEN = OriginalWebSocket.OPEN;
+          window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
+          window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+
+          console.log('[cmux-ws-override] WebSocket override installed, proxyHostBase:', proxyHostBase);
+        })();
+      `;
+
+      webContents.executeJavaScript(script).catch((err) => {
+        proxyWarn("websocket-override-inject-failed", { error: err });
+      });
+    };
+
+    // Inject on current page and on each navigation
+    webContents.on("did-finish-load", injectWebSocketOverride);
+    webContents.on("did-navigate-in-page", injectWebSocketOverride);
+
+    // Also inject immediately if page is already loaded
+    if (!webContents.isLoading()) {
+      injectWebSocketOverride();
+    }
+  }
+
   proxyLog("configured-context", {
     webContentsId: webContents.id,
     persistKey,
@@ -1981,7 +2055,7 @@ function deriveRoute(url: string): ProxyRoute | null {
       const morphId = morphMatch[2];
       if (morphId) {
         // const morphSuffix = morphMatch[3];
-        const cmuxProxyOrigin = process.env.TEST_CMUX_PROXY_ORIGIN || `http://port-${CMUX_PROXY_PORT}-morphvm-${morphId}.http.cloud.morph.so`;
+        const cmuxProxyOrigin = process.env.TEST_CMUX_PROXY_ORIGIN || `https://port-${CMUX_PROXY_PORT}-morphvm-${morphId}.http.cloud.morph.so`;
         return {
           morphId,
           scope: "base",
