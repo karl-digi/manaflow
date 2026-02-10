@@ -168,7 +168,7 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
     .index("by_team_user_created", ["teamId", "userId", "createdAt"])
-    .index("by_team_user_updated", ["teamId", "userId", "updatedAt"])
+    .index("by_team_user_merge_updated", ["teamId", "userId", "mergeStatus", "updatedAt"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
@@ -330,7 +330,7 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
-    .index("by_team_user_created", ["teamId", "userId", "createdAt"])
+    .index("by_team_user_status_created", ["teamId", "userId", "status", "createdAt"])
     .index("by_pull_request_url", ["pullRequestUrl"]),
 
   // Junction table linking taskRuns to pull requests by PR identity

@@ -52,38 +52,29 @@ export const getDashboardStats = authQuery({
       (t) => !t.isCloudWorkspace && !t.isLocalWorkspace && !t.isPreview,
     );
 
-    // Fetch tasks updated in the past 7 days, then filter to merged
-    const recentlyUpdatedTasks = await ctx.db
+    // Fetch only merged tasks updated in the past 7 days
+    const mergedTasks = await ctx.db
       .query("tasks")
-      .withIndex("by_team_user_updated", (idx) =>
+      .withIndex("by_team_user_merge_updated", (idx) =>
         idx
           .eq("teamId", teamId)
           .eq("userId", userId)
+          .eq("mergeStatus", "pr_merged")
           .gte("updatedAt", sevenDaysAgo),
       )
       .collect();
 
-    const mergedTasks = recentlyUpdatedTasks.filter(
-      (t) => t.mergeStatus === "pr_merged",
-    );
-
-    // Fetch task runs created in the past 7 days (filter by date at index level)
-    const recentRuns = await ctx.db
+    // Fetch only completed task runs created in the past 7 days
+    const completedRuns = await ctx.db
       .query("taskRuns")
-      .withIndex("by_team_user_created", (idx) =>
+      .withIndex("by_team_user_status_created", (idx) =>
         idx
           .eq("teamId", teamId)
           .eq("userId", userId)
+          .eq("status", "completed")
           .gte("createdAt", sevenDaysAgo),
       )
       .collect();
-
-    // Filter to completed runs in memory
-    const completedRuns = recentRuns.filter(
-      (r) =>
-        r.status === "completed" &&
-        (r.completedAt ?? r.updatedAt) >= sevenDaysAgo,
-    );
 
     return {
       tasksStarted: {
