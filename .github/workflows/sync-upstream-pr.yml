@@ -32,5 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.KARL_DIGI_TOKEN }}
         run: |
+          # Remove the default credential helper set by actions/checkout
+          # so it doesn't override our token with the github-actions[bot] token
+          git config --unset-all http.https://github.com/.extraheader || true
           git remote add karl-digi https://x-access-token:${GH_TOKEN}@github.com/karl-digi/manaflow.git
           git push karl-digi origin/main:refs/heads/karlorz-cmux-main --force
