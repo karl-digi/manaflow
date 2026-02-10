@@ -33,7 +33,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: manaflow/cmux
+  IMAGE_NAME: manaflow/manaflow
 
 jobs:
   docker-build:

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./convex/_generated/server.js",
   "types": "./convex/_generated/server.d.ts",
   "scripts": {
@@ -54,7 +55,9 @@
     "convex": "1.31.5",
     "convex-helpers": "^0.1.104",
     "effect": "^3.19.14",
+    "heic-convert": "^2.1.0",
     "jose": "^6.0.7",
+    "just-bash": "^2.9.6",
     "octokit": "^5.0.5",
     "sendblue": "^2.1.0",
     "socket.io-client": "^4.8.1",
