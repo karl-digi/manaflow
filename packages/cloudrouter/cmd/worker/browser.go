@@ -18,6 +18,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -380,7 +381,24 @@ func (bm *browserManager) cmdScroll(ctx context.Context, direction string) (map[
 }
 
 func (bm *browserManager) cmdBack(ctx context.Context) (map[string]interface{}, error) {
-	if err := chromedp.Run(ctx, chromedp.NavigateBack()); err != nil {
+	var currentIdx int64
+	var entries []*page.NavigationEntry
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		currentIdx, entries, err = page.GetNavigationHistory().Do(ctx)
+		return err
+	})); err != nil {
+		return nil, fmt.Errorf("back failed to get history: %w", err)
+	}
+	if currentIdx <= 0 || len(entries) <= 1 {
+		return map[string]interface{}{
+			"data": map[string]interface{}{"navigated": "back", "noHistory": true},
+		}, nil
+	}
+	targetEntry := entries[currentIdx-1]
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return page.NavigateToHistoryEntry(targetEntry.ID).Do(ctx)
+	})); err != nil {
 		return nil, fmt.Errorf("back failed: %w", err)
 	}
 	return map[string]interface{}{
@@ -389,12 +407,24 @@ func (bm *browserManager) cmdBack(ctx context.Context) (map[string]interface{}, 
 }
 
 func (bm *browserManager) cmdForward(ctx context.Context) (map[string]interface{}, error) {
-	if err := chromedp.Run(ctx, chromedp.NavigateForward()); err != nil {
-		if strings.Contains(err.Error(), "invalid navigation entry") {
-			return map[string]interface{}{
-				"data": map[string]interface{}{"navigated": "forward", "noHistory": true},
-			}, nil
-		}
+	var currentIdx int64
+	var entries []*page.NavigationEntry
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		currentIdx, entries, err = page.GetNavigationHistory().Do(ctx)
+		return err
+	})); err != nil {
+		return nil, fmt.Errorf("forward failed to get history: %w", err)
+	}
+	if int(currentIdx) >= len(entries)-1 {
+		return map[string]interface{}{
+			"data": map[string]interface{}{"navigated": "forward", "noHistory": true},
+		}, nil
+	}
+	targetEntry := entries[currentIdx+1]
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return page.NavigateToHistoryEntry(targetEntry.ID).Do(ctx)
+	})); err != nil {
 		return nil, fmt.Errorf("forward failed: %w", err)
 	}
 	return map[string]interface{}{
@@ -477,6 +507,9 @@ func (bm *browserManager) cmdHover(ctx context.Context, selector string) (map[st
 			}`).WithObjectID(objID).WithReturnByValue(true).Do(ctx)
 			if err != nil {
 				return fmt.Errorf("hover failed to get position: %w", err)
+			}
+			if res == nil || len(res.Value) == 0 {
+				return fmt.Errorf("hover failed: element has no bounding box")
 			}
 			// res.Value is jsontext.Value ([]byte) containing a JSON string like "\"...\""
 			// First unquote the JSON string, then parse the inner JSON object.
