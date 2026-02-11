@@ -43,6 +43,15 @@ crons.interval(
   internal.crown.autoRefreshEmptyDiffEvaluations
 );
 
+// Recover tasks where all runs completed but no crown evaluation was created
+// This handles cases where worker completion flow was interrupted
+// Runs every hour to detect and auto-evaluate via GitHub API
+crons.interval(
+  "recover missing crown evaluations",
+  { hours: 1 },
+  internal.crown.recoverMissingEvaluations
+);
+
 // Clean up stale warm pool entries daily at 11:30 UTC
 crons.daily(
   "cleanup warm pool",

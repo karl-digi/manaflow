@@ -996,6 +996,180 @@ export const autoRefreshEmptyDiffEvaluations = internalMutation({
   },
 });
 
+const MISSING_EVAL_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MISSING_EVAL_MIN_AGE_MS = 15 * 60 * 1000; // 15 minutes after completion
+
+/**
+ * Recover tasks where all runs completed but no crown evaluation was created.
+ * This can happen when:
+ * - Worker completion flow was interrupted
+ * - Sandbox was stopped before crown workflow ran
+ * - Network issues prevented crown API calls
+ *
+ * Finds completed tasks without evaluations and attempts to fetch diffs from GitHub.
+ * Runs every hour via cron job.
+ */
+export const recoverMissingEvaluations = internalMutation({
+  handler: async (ctx) => {
+    const now = Date.now();
+    const cutoffTime = now - MISSING_EVAL_LOOKBACK_MS;
+    const minAgeTime = now - MISSING_EVAL_MIN_AGE_MS;
+
+    // Find tasks that:
+    // 1. Are completed (isCompleted = true)
+    // 2. Have no crown evaluation status OR status is "error"
+    // 3. Were created in the last 24 hours (don't process very old tasks)
+    // 4. Have projectFullName and baseBranch (can fetch diffs from GitHub)
+    // 5. Are old enough (completed >15 min ago) to avoid racing with worker
+    const candidateTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_created", (q) => q.gt("createdAt", cutoffTime))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("isCompleted"), true),
+          // Only process tasks that are old enough (completed >15 min ago)
+          q.lt(q.field("lastActivityAt"), minAgeTime),
+          // Must have GitHub info to fetch diffs
+          q.neq(q.field("projectFullName"), undefined),
+          q.neq(q.field("baseBranch"), undefined)
+        )
+      )
+      .collect();
+
+    // Filter to tasks without crown evaluation or in error state
+    const tasksToProcess = candidateTasks.filter(
+      (task) =>
+        !task.crownEvaluationStatus ||
+        task.crownEvaluationStatus === "error"
+    );
+
+    if (tasksToProcess.length === 0) {
+      return { processed: 0, skipped: 0 };
+    }
+
+    console.log(
+      `[crown] Found ${tasksToProcess.length} tasks potentially missing crown evaluation`
+    );
+
+    let processedCount = 0;
+    let skippedCount = 0;
+
+    for (const task of tasksToProcess) {
+      // Check if there's already an evaluation
+      const existingEvaluation = await ctx.db
+        .query("crownEvaluations")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("teamId"), task.teamId),
+            q.eq(q.field("userId"), task.userId)
+          )
+        )
+        .first();
+
+      if (existingEvaluation) {
+        // Has evaluation but status not updated - fix status
+        if (task.crownEvaluationStatus !== "succeeded") {
+          await ctx.db.patch(task._id, {
+            crownEvaluationStatus: "succeeded",
+            crownEvaluationError: undefined,
+            updatedAt: now,
+          });
+          console.log(
+            `[crown] Fixed status for task ${task._id} - evaluation exists`
+          );
+        }
+        skippedCount++;
+        continue;
+      }
+
+      // Get completed task runs
+      const taskRuns = await ctx.db
+        .query("taskRuns")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .filter((q) => q.eq(q.field("teamId"), task.teamId))
+        .filter((q) => q.eq(q.field("userId"), task.userId))
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .collect();
+
+      if (taskRuns.length === 0) {
+        skippedCount++;
+        continue;
+      }
+
+      // Check if all runs have branch info for GitHub diff fetching
+      const runsWithBranches = taskRuns.filter(
+        (run) => run.newBranch
+      );
+
+      if (runsWithBranches.length === 0) {
+        console.log(
+          `[crown] Skipping task ${task._id}: no runs with branch info`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // Only auto-recover if we have 2+ completed runs (multi-agent comparison)
+      // Single-run tasks should have been auto-crowned by the worker
+      if (taskRuns.length === 1) {
+        // Single run - try to auto-crown it
+        const singleRun = taskRuns[0];
+        if (!singleRun.isCrowned && singleRun.newBranch) {
+          console.log(
+            `[crown] Auto-crowning single run ${singleRun._id} for task ${task._id}`
+          );
+          await ctx.db.patch(singleRun._id, {
+            isCrowned: true,
+            crownReason: "Auto-crowned: Single completed run (recovery)",
+          });
+          await ctx.db.patch(task._id, {
+            selectedTaskRunId: singleRun._id,
+            crownEvaluationStatus: "succeeded",
+            crownEvaluationError: undefined,
+            updatedAt: now,
+          });
+          processedCount++;
+          continue;
+        }
+        skippedCount++;
+        continue;
+      }
+
+      console.log(
+        `[crown] Scheduling GitHub diff fetch for task ${task._id} (${taskRuns.length} runs)`
+      );
+
+      // Mark as pending to prevent duplicate processing
+      await ctx.db.patch(task._id, {
+        crownEvaluationStatus: "pending",
+        crownEvaluationError: undefined,
+        updatedAt: now,
+      });
+
+      // Schedule fresh evaluation to fetch diffs from GitHub
+      await ctx.scheduler.runAfter(
+        0,
+        internal.crown.actions.retryEvaluationFresh,
+        {
+          taskId: task._id,
+          teamId: task.teamId,
+          userId: task.userId,
+          taskRunIds: runsWithBranches.map((r) => r._id),
+          isRefresh: true, // Use GitHub API instead of sandbox
+        }
+      );
+
+      processedCount++;
+    }
+
+    console.log(
+      `[crown] Missing evaluation recovery: ${processedCount} processed, ${skippedCount} skipped`
+    );
+    return { processed: processedCount, skipped: skippedCount };
+  },
+});
+
 /**
  * TEST ONLY: Clear retry data for a task to test the fresh retry flow.
  * Use internalMutation so it can be called from Convex dashboard.

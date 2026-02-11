@@ -1009,6 +1009,32 @@ sandboxesRouter.openapi(
           });
       }
 
+      // Populate projectFullName and baseBranch on the task for crown evaluation refresh.
+      // This ensures GitHub diff info is available when retrying crown evaluation.
+      if (body.taskRunId && parsedRepoUrl) {
+        void (async () => {
+          try {
+            const taskRun = await convex.query(api.taskRuns.get, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+            });
+            if (taskRun) {
+              await convex.mutation(api.tasks.setProjectAndBranch, {
+                teamSlugOrId: body.teamSlugOrId,
+                id: taskRun.taskId,
+                projectFullName: parsedRepoUrl.fullName,
+                baseBranch: body.branch ?? "main",
+              });
+            }
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to set project and branch info:",
+              error,
+            );
+          }
+        })();
+      }
+
       if (maintenanceScript || devScript) {
         (async () => {
           await runMaintenanceAndDevScripts({
