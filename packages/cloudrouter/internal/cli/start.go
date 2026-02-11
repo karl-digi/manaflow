@@ -36,17 +36,6 @@ var (
 	startFlagTimeout  int
 )
 
-// availableGpus are GPUs that can be used without special approval
-var availableGpus = map[string]bool{
-	"T4": true, "L4": true, "A10G": true,
-}
-
-// isGpuGated returns true if the GPU type requires approval
-func isGpuGated(gpu string) bool {
-	base := strings.ToUpper(strings.Split(gpu, ":")[0])
-	return !availableGpus[base]
-}
-
 // isGitURL checks if the string looks like a git URL
 func isGitURL(s string) bool {
 	return strings.HasPrefix(s, "git@") ||
@@ -66,8 +55,6 @@ GPU options (--gpu):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
-
-  The following require approval (contact founders@manaflow.com):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models
@@ -77,7 +64,7 @@ GPU options (--gpu):
 
 Examples:
   cloudrouter start                          # Create a sandbox
-  cloudrouter start --gpu T4                 # Sandbox with T4 GPU
+  cloudrouter start --gpu B200               # Sandbox with B200 GPU
   cloudrouter start --gpu A100               # Sandbox with A100 GPU
   cloudrouter start --gpu H100:2             # Sandbox with 2x H100 GPUs
   cloudrouter start .                        # Sync current directory
@@ -155,11 +142,6 @@ Examples:
 		// If --gpu is specified without --provider, default to modal
 		if startFlagGPU != "" && provider == "" {
 			provider = "modal"
-		}
-
-		// Check if the requested GPU is gated
-		if startFlagGPU != "" && isGpuGated(startFlagGPU) {
-			return fmt.Errorf("GPU type %q requires approval.\nPlease contact the Manaflow team at founders@manaflow.com for inquiry.\n\nAvailable GPUs: T4, L4, A10G", startFlagGPU)
 		}
 
 		// Determine which template to use
