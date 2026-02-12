@@ -19,7 +19,7 @@ const (
 	defaultTemplateName = "cmux-devbox-docker"
 
 	// Modal preset IDs from packages/shared/src/modal-templates.json
-	modalDefaultPresetID = "cmux-modal-base"
+	modalDefaultPresetID = "cmux-devbox-gpu"
 )
 
 var (
@@ -268,7 +268,7 @@ Examples:
 		}
 
 		// Build authenticated URLs
-		var vscodeAuthURL, vncAuthURL string
+		var vscodeAuthURL, vncAuthURL, jupyterAuthURL string
 		if token != "" {
 			if resp.VSCodeURL != "" {
 				vscodeAuthURL, _ = buildAuthURL(resp.VSCodeURL, token, false)
@@ -276,43 +276,49 @@ Examples:
 			if resp.VNCURL != "" {
 				vncAuthURL, _ = buildAuthURL(resp.VNCURL, token, true)
 			}
+			if resp.JupyterURL != "" {
+				jupyterAuthURL, _ = buildJupyterAuthURL(resp.JupyterURL, token)
+			}
+		}
+		// Fallback: Modal may return pre-built Jupyter URL with token
+		if jupyterAuthURL == "" && resp.JupyterURL != "" {
+			jupyterAuthURL = resp.JupyterURL
 		}
 
-		providerLabel := resp.Provider
-		if providerLabel == "" {
-			providerLabel = "e2b"
+		// Build type label: "Docker" for e2b, "GPU (type)" for modal
+		typeLabel := "Docker"
+		if resp.Provider == "modal" {
+			if resp.GPU != "" {
+				typeLabel = fmt.Sprintf("GPU (%s)", resp.GPU)
+			} else {
+				typeLabel = "GPU"
+			}
 		}
-
-		// For Modal, Jupyter URL comes pre-built with token from the backend
-		jupyterURL := resp.JupyterURL
 
 		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
-		fmt.Printf("  Provider: %s\n", providerLabel)
-		fmt.Printf("  Status:   %s\n", resp.Status)
-		if resp.GPU != "" {
-			fmt.Printf("  GPU:      %s\n", resp.GPU)
-		}
-		if jupyterURL != "" {
-			fmt.Printf("  Jupyter:  %s\n", jupyterURL)
-		}
+		fmt.Printf("  Type:   %s\n", typeLabel)
+		fmt.Printf("  Status: %s\n", resp.Status)
 		if vscodeAuthURL != "" {
-			fmt.Printf("  VSCode:   %s\n", vscodeAuthURL)
+			fmt.Printf("  VSCode:  %s\n", vscodeAuthURL)
 		} else if resp.VSCodeURL != "" {
-			fmt.Printf("  VSCode:   %s\n", resp.VSCodeURL)
+			fmt.Printf("  VSCode:  %s\n", resp.VSCodeURL)
+		}
+		if jupyterAuthURL != "" {
+			fmt.Printf("  Jupyter: %s\n", jupyterAuthURL)
 		}
 		if vncAuthURL != "" {
-			fmt.Printf("  VNC:      %s\n", vncAuthURL)
+			fmt.Printf("  VNC:     %s\n", vncAuthURL)
 		} else if resp.VNCURL != "" {
-			fmt.Printf("  VNC:      %s\n", resp.VNCURL)
+			fmt.Printf("  VNC:     %s\n", resp.VNCURL)
 		}
 
-		// Auto-open: prefer Jupyter for Modal, VSCode for E2B
+		// Auto-open: prefer Jupyter for GPU, VSCode for Docker
 		openableURL := vscodeAuthURL
-		if jupyterURL != "" {
-			openableURL = jupyterURL
+		if resp.Provider == "modal" && jupyterAuthURL != "" {
+			openableURL = jupyterAuthURL
 		}
 		if startFlagOpen && openableURL != "" {
-			if jupyterURL != "" {
+			if resp.Provider == "modal" && jupyterAuthURL != "" {
 				fmt.Println("\nOpening Jupyter Lab...")
 			} else {
 				fmt.Println("\nOpening VSCode...")
@@ -331,7 +337,7 @@ func init() {
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
 
-	// Provider selection
+	// Provider selection (internal: e2b = Docker, modal = GPU)
 	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
 
 	// GPU and resource options

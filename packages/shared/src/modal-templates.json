@@ -3,8 +3,8 @@
   "updatedAt": "2026-02-07T00:00:00Z",
   "templates": [
     {
-      "templateId": "cmux-modal-base",
-      "label": "Modal - Jupyter Lab (CPU)",
+      "templateId": "cmux-devbox-gpu",
+      "label": "Jupyter Lab (CPU)",
       "cpu": "2 vCPU",
       "memory": "4 GB RAM",
       "disk": "20 GB SSD",
@@ -19,8 +19,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-t4",
-      "label": "Modal - T4 GPU (16GB VRAM)",
+      "templateId": "cmux-devbox-gpu-t4",
+      "label": "T4 GPU (16GB VRAM)",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
       "disk": "40 GB SSD",
@@ -36,8 +36,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-l4",
-      "label": "Modal - L4 GPU (24GB VRAM)",
+      "templateId": "cmux-devbox-gpu-l4",
+      "label": "L4 GPU (24GB VRAM)",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
       "disk": "40 GB SSD",
@@ -53,8 +53,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a10g",
-      "label": "Modal - A10G GPU (24GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a10g",
+      "label": "A10G GPU (24GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "32 GB RAM",
       "disk": "80 GB SSD",
@@ -70,8 +70,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a100",
-      "label": "Modal - A100 GPU (40GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a100",
+      "label": "A100 GPU (40GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "64 GB RAM",
       "disk": "100 GB SSD",
@@ -87,8 +87,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a100-80gb",
-      "label": "Modal - A100 GPU (80GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a100-80gb",
+      "label": "A100 GPU (80GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
@@ -104,8 +104,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-l40s",
-      "label": "Modal - L40S GPU (48GB VRAM)",
+      "templateId": "cmux-devbox-gpu-l40s",
+      "label": "L40S GPU (48GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "64 GB RAM",
       "disk": "100 GB SSD",
@@ -121,8 +121,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-h100",
-      "label": "Modal - H100 GPU (80GB VRAM)",
+      "templateId": "cmux-devbox-gpu-h100",
+      "label": "H100 GPU (80GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
@@ -138,8 +138,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-h200",
-      "label": "Modal - H200 GPU (141GB VRAM)",
+      "templateId": "cmux-devbox-gpu-h200",
+      "label": "H200 GPU (141GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
@@ -155,8 +155,8 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-b200",
-      "label": "Modal - B200 GPU (192GB VRAM)",
+      "templateId": "cmux-devbox-gpu-b200",
+      "label": "B200 GPU (192GB VRAM)",
       "cpu": "16 vCPU",
       "memory": "256 GB RAM",
       "disk": "200 GB SSD",

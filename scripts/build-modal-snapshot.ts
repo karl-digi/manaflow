@@ -78,8 +78,40 @@ curl -fSL --retry 3 --retry-delay 2 -o /usr/local/bin/worker-daemon \\
   "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_VERSION}/worker-daemon"
 chmod +x /usr/local/bin/worker-daemon
 
-# Install JupyterLab
-pip install -q jupyterlab 2>/dev/null || true
+# Install JupyterLab + data science stack
+pip install -q \
+  jupyterlab \
+  numpy \
+  pandas \
+  scipy \
+  scikit-learn \
+  matplotlib \
+  seaborn \
+  plotly \
+  tensorflow \
+  transformers \
+  datasets \
+  accelerate \
+  opencv-python-headless \
+  Pillow \
+  requests \
+  httpx \
+  beautifulsoup4 \
+  lxml \
+  sqlalchemy \
+  ipywidgets \
+  tqdm \
+  pyyaml \
+  boto3 \
+  openai \
+  anthropic \
+  2>/dev/null || true
+
+# Install PyTorch CPU (separate due to custom index URL)
+pip install -q \
+  torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cpu \
+  2>/dev/null || true
 
 # Set Google Chrome as the default browser (system-level)
 update-alternatives --set x-www-browser /usr/bin/google-chrome-stable 2>/dev/null || true

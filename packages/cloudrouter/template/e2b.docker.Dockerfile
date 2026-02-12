@@ -175,6 +175,19 @@ RUN cd /tmp/worker-build && \
     go build -ldflags="-s -w" -o /usr/local/bin/worker-daemon ./cmd/worker && \
     rm -rf /tmp/worker-build
 
+# Install JupyterLab + basic data science packages
+RUN pip3 install --no-cache-dir \
+    jupyterlab \
+    numpy \
+    pandas \
+    matplotlib \
+    requests \
+    httpx \
+    ipywidgets \
+    tqdm \
+    openai \
+    anthropic
+
 # Keep Node.js VNC auth proxy (simple enough to stay in JS)
 COPY worker/vnc-auth-proxy.js /usr/local/bin/vnc-auth-proxy.js
 # Keep browser-agent-runner for browser automation (uses puppeteer)
@@ -193,7 +206,7 @@ ENV HOME=/home/user
 
 # Expose ports (E2B handles exposure, no nginx needed)
 # Note: 5901 (VNC) and 9222 (Chrome CDP) bind to localhost only for security
-EXPOSE 39377 39378 39380 10000
+EXPOSE 8888 39377 39378 39380 10000
 
 # Default command
 CMD ["/usr/local/bin/start-services.sh"]

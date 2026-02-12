@@ -268,7 +268,12 @@ export const createInstance = httpAction(async (ctx, req) => {
     }
 
     // Default: E2B provider
-    const templateId = body.templateId ?? DEFAULT_E2B_TEMPLATE_ID;
+    // Resolve preset ID (e.g. "cmux-devbox-docker") to actual E2B template ID
+    const requestedTemplate = body.templateId ?? DEFAULT_E2B_TEMPLATE_ID;
+    const resolvedPreset = E2B_TEMPLATE_PRESETS.find(
+      (p) => p.templateId === requestedTemplate,
+    );
+    const templateId = resolvedPreset?.id ?? requestedTemplate;
 
     const result = (await ctx.runAction(e2bActionsApi.startInstance, {
       templateId,
@@ -282,6 +287,7 @@ export const createInstance = httpAction(async (ctx, req) => {
     })) as {
       instanceId: string;
       status: string;
+      jupyterUrl?: string;
       vscodeUrl?: string;
       workerUrl?: string;
       vncUrl?: string;
@@ -304,6 +310,7 @@ export const createInstance = httpAction(async (ctx, req) => {
       provider: "e2b",
       status: result.status,
       templateId,
+      jupyterUrl: result.jupyterUrl,
       vscodeUrl: result.vscodeUrl,
       workerUrl: result.workerUrl,
       vncUrl: result.vncUrl,
