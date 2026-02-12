@@ -412,7 +412,15 @@ async function handleGetInstance(
       vncUrl?: string | null;
     };
 
-    const status = providerResult.status as "running" | "stopped";
+    const providerStatus = providerResult.status as "running" | "stopped";
+
+    // If the user explicitly paused and the provider still reports "running"
+    // (e.g. E2B has no native pause), preserve the local "paused" status.
+    // Only sync from provider when it reports a terminal state like "stopped".
+    const status =
+      instance.status === "paused" && providerStatus === "running"
+        ? "paused"
+        : providerStatus;
 
     if (status !== instance.status) {
       await ctx.runMutation(devboxApi.updateStatus, {
