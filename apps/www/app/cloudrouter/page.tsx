@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Source_Serif_4 } from "next/font/google";
 import { CloudrouterHeader } from "./header";
-import { CopyButton } from "./copy-button";
+import { CodeBlock } from "./code-block";
+import { SkillContent } from "./skill-content";
 import { TerminalDemo } from "./terminal-demo";
+
 
 const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
@@ -28,17 +30,6 @@ export const metadata: Metadata = {
       "Cloud sandboxes for development. Instant remote VMs with VS Code, terminal, VNC, and browser automation via Chrome CDP.",
   },
 };
-
-function CodeBlock({ children }: { children: string }) {
-  return (
-    <div className="relative">
-      <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 pr-16 text-sm leading-relaxed dark:border-neutral-800 dark:bg-neutral-900">
-        <code>{children}</code>
-      </pre>
-      <CopyButton text={children} />
-    </div>
-  );
-}
 
 const features = [
   {
@@ -75,9 +66,10 @@ const features = [
 export default function CloudRouterPage() {
   return (
     <div
-      className={`flex min-h-screen flex-col items-center bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-16 ${sourceSerif.className}`}
+      className={`flex min-h-screen flex-col items-center overflow-x-hidden bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-16 ${sourceSerif.className}`}
     >
-      <div className="w-full max-w-3xl">
+      <style dangerouslySetInnerHTML={{ __html: `.dark .shiki, .dark .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }` }} />
+      <div className="w-full min-w-0 max-w-3xl">
         <CloudrouterHeader />
 
         {/* Hero */}
@@ -95,7 +87,7 @@ export default function CloudRouterPage() {
         <TerminalDemo />
 
         {/* Docs content below */}
-        <div className="mx-auto mt-20 w-full max-w-2xl">
+        <div className="mx-auto mt-20 w-full min-w-0 max-w-2xl">
           <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
           {/* Install as agent skill */}
@@ -237,6 +229,17 @@ export default function CloudRouterPage() {
                 "cloudrouter delete cr_abc123",
               ].join("\n")}
             </CodeBlock>
+          </section>
+
+          <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
+
+          {/* Skill reference — rendered from SKILL.md */}
+          <section className="mb-8 scroll-mt-8">
+            <h2 className="mb-4 text-lg font-semibold">Full skill reference</h2>
+            <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Copy this skill file directly into your coding agent.
+            </p>
+            <SkillContent />
           </section>
 
           <hr className="mb-12 border-neutral-200 dark:border-neutral-800" />
