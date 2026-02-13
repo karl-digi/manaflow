@@ -10,7 +10,7 @@
 # import { Sandbox } from 'e2b'
 # const sandbox = await Sandbox.create('mzsphes266za7z5o1bbh')
 
-team_id = "aa31b299-02f6-4b38-b9d6-480698e0e377"
+team_id = "6a135931-2076-4ef8-90e0-d58644927d02"
 start_cmd = "/usr/local/bin/start-services.sh"
 dockerfile = "template/e2b.docker.Dockerfile"
 template_id = "mzsphes266za7z5o1bbh"

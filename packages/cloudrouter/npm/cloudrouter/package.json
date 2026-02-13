@@ -20,8 +20,8 @@
   "license": "MIT",
   "author": "Manaflow",
   "bin": {
-    "cloudrouter": "bin/cloudrouter",
-    "cr": "bin/cloudrouter"
+    "cloudrouter-dev": "bin/cloudrouter",
+    "cr-dev": "bin/cloudrouter"
   },
   "files": [
     "bin",

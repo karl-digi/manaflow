@@ -3,21 +3,15 @@ package cli
 import (
 	"bytes"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 // Rsync flags - set by sync.go before calling runRsyncOverWebSocket
@@ -34,103 +28,80 @@ const (
 	minFilesForParallel = 50 // Min files before using parallel sync
 )
 
-// buildSSHCommand creates an SSH command for use with rsync.
-// Creates a wrapper script that calls sshpass or uses SSH_ASKPASS.
-// Returns: sshCmd string (path to wrapper script), script path (to be deleted after use), error
-func buildSSHCommand(port int) (string, string, error) {
-	// Create a wrapper script for SSH with password
-	tmpFile, err := os.CreateTemp("", "cmux-ssh-*.sh")
+// buildSSHProxyCommand creates an SSH wrapper script that uses cloudrouter's
+// built-in __ssh-proxy as ProxyCommand for WebSocket tunneling.
+// Uses sshpass or SSH_ASKPASS to provide an empty password non-interactively.
+// Returns: sshCmd string (path to wrapper script), cleanup function, error
+func buildSSHProxyCommand(wsURL string) (string, func(), error) {
+	selfPath, err := getSelfPath()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create SSH wrapper script: %w", err)
+		return "", nil, err
 	}
+
+	proxyCmd := fmt.Sprintf("%s __ssh-proxy '%s'", selfPath, wsURL)
+
+	tmpFile, err := os.CreateTemp("", "cmux-ssh-proxy-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create SSH wrapper script: %w", err)
+	}
+
+	var cleanups []string
+	cleanups = append(cleanups, tmpFile.Name())
 
 	var scriptContent string
 	if _, err := exec.LookPath("sshpass"); err == nil {
-		// Use sshpass for password authentication
-		scriptContent = fmt.Sprintf(`#!/bin/sh
-exec sshpass -p '' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -p %d "$@"
-`, port)
+		scriptContent = fmt.Sprintf("#!/bin/sh\nexec sshpass -p '' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ProxyCommand=%q \"$@\"\n", proxyCmd)
 	} else {
-		// Fall back to SSH_ASKPASS approach
-		// Create askpass helper that echoes empty password
 		askpassFile, err := os.CreateTemp("", "cmux-askpass-*.sh")
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpFile.Name())
-			return "", "", fmt.Errorf("failed to create askpass script: %w", err)
+			return "", nil, fmt.Errorf("failed to create askpass script: %w", err)
 		}
 		if _, err := askpassFile.WriteString("#!/bin/sh\necho ''\n"); err != nil {
 			askpassFile.Close()
 			os.Remove(askpassFile.Name())
 			tmpFile.Close()
 			os.Remove(tmpFile.Name())
-			return "", "", fmt.Errorf("failed to write askpass script: %w", err)
+			return "", nil, fmt.Errorf("failed to write askpass script: %w", err)
 		}
 		askpassFile.Close()
 		os.Chmod(askpassFile.Name(), 0700)
+		cleanups = append(cleanups, askpassFile.Name())
 
-		// Use setsid on Linux to detach TTY so SSH_ASKPASS works reliably.
-		// On macOS, SSH_ASKPASS_REQUIRE=force should work (OpenSSH 8.4+).
-		setsidPrefix := ""
-		if runtime.GOOS == "linux" {
-			if _, setsidErr := exec.LookPath("setsid"); setsidErr == nil {
-				setsidPrefix = "setsid "
-			}
-		}
-		scriptContent = fmt.Sprintf(`#!/bin/sh
-export SSH_ASKPASS="%s"
-export SSH_ASKPASS_REQUIRE=force
-export DISPLAY=dummy
-exec %sssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -p %d "$@"
-`, askpassFile.Name(), setsidPrefix, port)
+		scriptContent = fmt.Sprintf("#!/bin/sh\nexport SSH_ASKPASS=\"%s\"\nexport SSH_ASKPASS_REQUIRE=force\nexport DISPLAY=dummy\nexec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ProxyCommand=%q \"$@\"\n", askpassFile.Name(), proxyCmd)
 	}
 
 	if _, err := tmpFile.WriteString(scriptContent); err != nil {
 		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return "", "", fmt.Errorf("failed to write SSH wrapper script: %w", err)
+		for _, f := range cleanups {
+			os.Remove(f)
+		}
+		return "", nil, fmt.Errorf("failed to write SSH wrapper script: %w", err)
 	}
 	tmpFile.Close()
 
-	// Make executable
 	if err := os.Chmod(tmpFile.Name(), 0700); err != nil {
-		os.Remove(tmpFile.Name())
-		return "", "", fmt.Errorf("failed to chmod SSH wrapper script: %w", err)
+		for _, f := range cleanups {
+			os.Remove(f)
+		}
+		return "", nil, fmt.Errorf("failed to chmod SSH wrapper script: %w", err)
 	}
 
-	return tmpFile.Name(), tmpFile.Name(), nil
+	cleanup := func() {
+		for _, f := range cleanups {
+			os.Remove(f)
+		}
+	}
+
+	return tmpFile.Name(), cleanup, nil
 }
 
-// getCurlWithWebSocket returns the path to curl with WebSocket support, or empty string if not found
-// We need curl built with WebSocket protocol support (shows "ws" or "wss" in protocols)
-func getCurlWithWebSocket() string {
-	var curlPaths []string
-	if runtime.GOOS == "darwin" {
-		// Prefer Homebrew curl which typically has WebSocket support
-		curlPaths = []string{
-			"/opt/homebrew/opt/curl/bin/curl",
-			"/usr/local/opt/curl/bin/curl",
-			"/usr/bin/curl",
-		}
-	} else {
-		curlPaths = []string{"curl"}
-	}
-
-	for _, path := range curlPaths {
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		// Check if this curl supports WebSocket protocol
-		out, err := exec.Command(path, "--version").Output()
-		if err != nil {
-			continue
-		}
-		// Look for "ws" or "wss" in the Protocols line
-		if strings.Contains(string(out), " ws ") || strings.Contains(string(out), " wss ") {
-			return path
-		}
-	}
-	return ""
+// toWebSocketURL converts an HTTP(S) worker URL to a WebSocket URL with auth token
+func toWebSocketURL(workerURL, token string) string {
+	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	return wsURL + "/ssh?token=" + url.QueryEscape(token)
 }
 
 // runRsyncOverWebSocket syncs files using rsync over a WebSocket SSH tunnel
@@ -270,29 +241,26 @@ func runRsyncOverWebSocket(workerURL, token, localPath, remotePath string) error
 
 // runRsyncSingleFile syncs a single file using rsync over WebSocket SSH
 func runRsyncSingleFile(workerURL, token, localFile, remotePath string) error {
-	// Check for rsync
 	if _, err := exec.LookPath("rsync"); err != nil {
 		return fmt.Errorf("rsync not found. Install with: brew install rsync (macOS) or apt install rsync (Linux)")
 	}
 
-	// Convert HTTP URL to WebSocket URL
-	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = wsURL + "/ssh?token=" + url.QueryEscape(token)
-
+	wsURL := toWebSocketURL(workerURL, token)
 	startTime := time.Now()
 
-	// Check if curl with WebSocket support is available
-	curlPath := getCurlWithWebSocket()
-	var stats *rsyncStats
-	var err error
+	rsyncArgs := buildRsyncArgsSingleFile(localFile, remotePath)
 
-	if curlPath != "" {
-		stats, err = runRsyncSingleFileWithCurl(curlPath, wsURL, localFile, remotePath)
-	} else {
-		stats, err = runRsyncSingleFileWithBridge(wsURL, token, localFile, remotePath)
+	sshCmd, cleanup, err := buildSSHProxyCommand(wsURL)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
+	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
 
+	remoteSpec := fmt.Sprintf("%s@e2b-sandbox:%s", token, remotePath)
+	rsyncArgs = append(rsyncArgs, remoteSpec)
+
+	stats, err := execRsync(rsyncArgs)
 	if err != nil {
 		return err
 	}
@@ -309,140 +277,32 @@ func runRsyncSingleFile(workerURL, token, localFile, remotePath string) error {
 	return nil
 }
 
-// runRsyncSingleFileWithCurl uses curl as SSH ProxyCommand for single file transfer
-func runRsyncSingleFileWithCurl(curlPath, wsURL, localFile, remotePath string) (*rsyncStats, error) {
-	rsyncArgs := buildRsyncArgsSingleFile(localFile, remotePath)
-
-	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
-	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand=%q", proxyCmd)
-	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
-
-	// Remote destination
-	remoteSpec := fmt.Sprintf("user@e2b-sandbox:%s", remotePath)
-	rsyncArgs = append(rsyncArgs, remoteSpec)
-
-	return execRsync(rsyncArgs)
-}
-
-// runRsyncSingleFileWithBridge uses Go WebSocket bridge for single file transfer
-func runRsyncSingleFileWithBridge(wsURL, token, localFile, remotePath string) (*rsyncStats, error) {
-	// Create a local TCP listener that will proxy to the WebSocket
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local listener: %w", err)
-	}
-	defer listener.Close()
-
-	localPort := listener.Addr().(*net.TCPAddr).Port
-
-	// Accept one connection for rsync
-	connCh := make(chan net.Conn, 1)
-	errCh := make(chan error, 1)
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			errCh <- err
-			return
-		}
-		connCh <- conn
-	}()
-
-	rsyncArgs := buildRsyncArgsSingleFile(localFile, remotePath)
-
-	// Create SSH wrapper script
-	sshCmd, scriptPath, err := buildSSHCommand(localPort)
-	if err != nil {
-		return nil, err
-	}
-	if scriptPath != "" {
-		defer os.Remove(scriptPath)
-	}
-
-	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
-
-	// Remote destination: token@host
-	remoteSpec := fmt.Sprintf("%s@127.0.0.1:%s", token, remotePath)
-	rsyncArgs = append(rsyncArgs, remoteSpec)
-
-	// Start rsync
-	rsyncExec := exec.Command("rsync", rsyncArgs...)
-
-	var stdout, stderr bytes.Buffer
-	rsyncExec.Stdout = &stdout
-	rsyncExec.Stderr = &stderr
-
-	if err := rsyncExec.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start rsync: %w", err)
-	}
-
-	// Wait for connection from rsync
-	var conn net.Conn
-	select {
-	case conn = <-connCh:
-		// Got connection
-	case err := <-errCh:
-		rsyncExec.Process.Kill()
-		return nil, fmt.Errorf("failed to accept connection: %w", err)
-	case <-time.After(30 * time.Second):
-		rsyncExec.Process.Kill()
-		rsyncExec.Wait()
-		return nil, fmt.Errorf("timeout waiting for rsync connection: %s", stderr.String())
-	}
-
-	// Bridge to WebSocket
-	proxyDone := make(chan error, 1)
-	go func() {
-		err := bridgeToWebSocket(conn, wsURL)
-		proxyDone <- err
-	}()
-
-	// Wait for rsync to complete
-	rsyncErr := rsyncExec.Wait()
-	conn.Close()
-	<-proxyDone
-
-	// Parse stats
-	stats := parseRsyncStats(stdout.String())
-
-	if rsyncErr != nil {
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "Warning: Permanently added") && stats != nil && stats.files > 0 {
-			return stats, nil
-		}
-		if len(stderrStr) > 0 {
-			return nil, fmt.Errorf("rsync failed: %s", stderrStr)
-		}
-		return nil, fmt.Errorf("rsync failed: %w", rsyncErr)
-	}
-
-	return stats, nil
-}
-
 // runRsyncDownload downloads files from remote sandbox to local using rsync over WebSocket SSH
 func runRsyncDownload(workerURL, token, remotePath, localPath string) error {
-	// Check for rsync
 	if _, err := exec.LookPath("rsync"); err != nil {
 		return fmt.Errorf("rsync not found. Install with: brew install rsync (macOS) or apt install rsync (Linux)")
 	}
 
-	// Convert HTTP URL to WebSocket URL
-	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = wsURL + "/ssh?token=" + url.QueryEscape(token)
-
+	wsURL := toWebSocketURL(workerURL, token)
 	startTime := time.Now()
 
-	curlPath := getCurlWithWebSocket()
-	var stats *rsyncStats
-	var err error
+	rsyncArgs := buildRsyncDownloadArgs()
 
-	if curlPath != "" {
-		stats, err = runRsyncDownloadWithCurl(curlPath, wsURL, remotePath, localPath)
-	} else {
-		stats, err = runRsyncDownloadWithBridge(wsURL, token, remotePath, localPath)
+	sshCmd, cleanup, err := buildSSHProxyCommand(wsURL)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
+	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
 
+	remoteSpec := fmt.Sprintf("%s@e2b-sandbox:%s/", token, remotePath)
+	localDest := localPath
+	if !strings.HasSuffix(localDest, "/") {
+		localDest += "/"
+	}
+	rsyncArgs = append(rsyncArgs, remoteSpec, localDest)
+
+	stats, err := execRsync(rsyncArgs)
 	if err != nil {
 		return err
 	}
@@ -457,115 +317,6 @@ func runRsyncDownload(workerURL, token, remotePath, localPath string) error {
 	}
 
 	return nil
-}
-
-// runRsyncDownloadWithCurl uses curl as SSH ProxyCommand for download (remote → local)
-func runRsyncDownloadWithCurl(curlPath, wsURL, remotePath, localPath string) (*rsyncStats, error) {
-	rsyncArgs := buildRsyncDownloadArgs()
-
-	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
-	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand=%q", proxyCmd)
-	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
-
-	// Remote as source, local as destination
-	remoteSpec := fmt.Sprintf("user@e2b-sandbox:%s/", remotePath)
-	localDest := localPath
-	if !strings.HasSuffix(localDest, "/") {
-		localDest += "/"
-	}
-	rsyncArgs = append(rsyncArgs, remoteSpec, localDest)
-
-	return execRsync(rsyncArgs)
-}
-
-// runRsyncDownloadWithBridge uses Go WebSocket bridge for download (remote → local)
-func runRsyncDownloadWithBridge(wsURL, token, remotePath, localPath string) (*rsyncStats, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local listener: %w", err)
-	}
-	defer listener.Close()
-
-	localPort := listener.Addr().(*net.TCPAddr).Port
-
-	connCh := make(chan net.Conn, 1)
-	errCh := make(chan error, 1)
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			errCh <- err
-			return
-		}
-		connCh <- conn
-	}()
-
-	rsyncArgs := buildRsyncDownloadArgs()
-
-	sshCmd, scriptPath, err := buildSSHCommand(localPort)
-	if err != nil {
-		return nil, err
-	}
-	if scriptPath != "" {
-		defer os.Remove(scriptPath)
-	}
-
-	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
-
-	// Remote as source (token as username), local as destination
-	remoteSpec := fmt.Sprintf("%s@127.0.0.1:%s/", token, remotePath)
-	localDest := localPath
-	if !strings.HasSuffix(localDest, "/") {
-		localDest += "/"
-	}
-	rsyncArgs = append(rsyncArgs, remoteSpec, localDest)
-
-	rsyncExec := exec.Command("rsync", rsyncArgs...)
-
-	var stdout, stderr bytes.Buffer
-	rsyncExec.Stdout = &stdout
-	rsyncExec.Stderr = &stderr
-
-	if err := rsyncExec.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start rsync: %w", err)
-	}
-
-	var conn net.Conn
-	select {
-	case conn = <-connCh:
-	case err := <-errCh:
-		rsyncExec.Process.Kill()
-		return nil, fmt.Errorf("failed to accept connection: %w", err)
-	case <-time.After(30 * time.Second):
-		rsyncExec.Process.Kill()
-		rsyncExec.Wait()
-		return nil, fmt.Errorf("timeout waiting for rsync connection: %s", stderr.String())
-	}
-
-	proxyDone := make(chan error, 1)
-	go func() {
-		err := bridgeToWebSocket(conn, wsURL)
-		proxyDone <- err
-	}()
-
-	rsyncErr := rsyncExec.Wait()
-	conn.Close()
-	<-proxyDone
-
-	stats := parseRsyncStats(stdout.String())
-
-	if rsyncErr != nil {
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "Warning: Permanently added") && stats != nil && stats.files > 0 {
-			return stats, nil
-		}
-		if len(stderrStr) > 0 {
-			return nil, fmt.Errorf("rsync failed: %s", stderrStr)
-		}
-		return nil, fmt.Errorf("rsync failed: %w", rsyncErr)
-	}
-
-	return stats, nil
 }
 
 // buildRsyncDownloadArgs builds rsync arguments for download (minimal excludes)
@@ -801,138 +552,21 @@ func splitEntries(entries []string, n int) [][]string {
 // runSingleRsync runs a single rsync process, optionally for specific items only
 // Tries curl with WebSocket support first, falls back to Go WebSocket bridge
 func runSingleRsync(workerURL, token, localPath, remotePath string, items []string) (*rsyncStats, error) {
-	// Convert HTTP URL to WebSocket URL
-	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = wsURL + "/ssh?token=" + url.QueryEscape(token)
-
-	// Check if curl with WebSocket support is available
-	curlPath := getCurlWithWebSocket()
-	if curlPath != "" {
-		return runRsyncWithCurl(curlPath, wsURL, localPath, remotePath, items)
-	}
-
-	// Fall back to Go WebSocket bridge
-	return runRsyncWithBridge(wsURL, token, localPath, remotePath, items)
-}
-
-// runRsyncWithCurl uses curl as SSH ProxyCommand for WebSocket tunneling
-func runRsyncWithCurl(curlPath, wsURL, localPath, remotePath string, items []string) (*rsyncStats, error) {
-	rsyncArgs := buildRsyncArgs(localPath, remotePath, items)
-
-	// SSH command using curl as ProxyCommand for WebSocket tunneling
-	// curl flags:
-	//   --no-progress-meter: suppress progress output
-	//   -N: disable buffering
-	//   --http1.1: force HTTP/1.1 (required for WebSocket upgrade)
-	//   -T .: read stdin and send as request body (bidirectional tunnel)
-	// Note: URL must be single-quoted to prevent shell glob expansion of '?' in query string
-	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
-	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand=%q", proxyCmd)
-	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
-
-	// Remote destination - hostname doesn't matter since ProxyCommand handles the connection
-	remoteSpec := fmt.Sprintf("user@e2b-sandbox:%s/", remotePath)
-	rsyncArgs = append(rsyncArgs, remoteSpec)
-
-	return execRsync(rsyncArgs)
-}
-
-// runRsyncWithBridge uses a Go WebSocket bridge for SSH tunneling
-// Uses token-as-username auth with empty password
-func runRsyncWithBridge(wsURL, token, localPath, remotePath string, items []string) (*rsyncStats, error) {
-	// Create a local TCP listener that will proxy to the WebSocket
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local listener: %w", err)
-	}
-	defer listener.Close()
-
-	localPort := listener.Addr().(*net.TCPAddr).Port
-
-	// Accept one connection for rsync
-	connCh := make(chan net.Conn, 1)
-	errCh := make(chan error, 1)
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			errCh <- err
-			return
-		}
-		connCh <- conn
-	}()
+	wsURL := toWebSocketURL(workerURL, token)
 
 	rsyncArgs := buildRsyncArgs(localPath, remotePath, items)
 
-	// Create SSH wrapper script
-	sshCmd, scriptPath, err := buildSSHCommand(localPort)
+	sshCmd, cleanup, err := buildSSHProxyCommand(wsURL)
 	if err != nil {
 		return nil, err
 	}
-	if scriptPath != "" {
-		defer os.Remove(scriptPath)
-	}
-
+	defer cleanup()
 	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
 
-	// Remote destination: token@host (token is the username!)
-	remoteSpec := fmt.Sprintf("%s@127.0.0.1:%s/", token, remotePath)
+	remoteSpec := fmt.Sprintf("%s@e2b-sandbox:%s/", token, remotePath)
 	rsyncArgs = append(rsyncArgs, remoteSpec)
 
-	// Start rsync
-	rsyncExec := exec.Command("rsync", rsyncArgs...)
-
-	var stdout, stderr bytes.Buffer
-	rsyncExec.Stdout = &stdout
-	rsyncExec.Stderr = &stderr
-
-	if err := rsyncExec.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start rsync: %w", err)
-	}
-
-	// Wait for connection from rsync
-	var conn net.Conn
-	select {
-	case conn = <-connCh:
-		// Got connection
-	case err := <-errCh:
-		rsyncExec.Process.Kill()
-		return nil, fmt.Errorf("failed to accept connection: %w", err)
-	case <-time.After(30 * time.Second):
-		rsyncExec.Process.Kill()
-		return nil, fmt.Errorf("timeout waiting for rsync connection")
-	}
-
-	// Bridge to WebSocket
-	proxyDone := make(chan error, 1)
-	go func() {
-		err := bridgeToWebSocket(conn, wsURL)
-		proxyDone <- err
-	}()
-
-	// Wait for rsync to complete
-	rsyncErr := rsyncExec.Wait()
-	conn.Close()
-	<-proxyDone
-
-	// Parse stats first - rsync might have succeeded even with SSH warnings
-	stats := parseRsyncStats(stdout.String())
-
-	if rsyncErr != nil {
-		// Check if it's just SSH warnings (not real errors)
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "Warning: Permanently added") && stats != nil && stats.files > 0 {
-			// SSH host key warning is not a real error, sync succeeded
-			return stats, nil
-		}
-		if len(stderrStr) > 0 {
-			return nil, fmt.Errorf("rsync failed: %s", stderrStr)
-		}
-		return nil, fmt.Errorf("rsync failed: %w", rsyncErr)
-	}
-
-	return stats, nil
+	return execRsync(rsyncArgs)
 }
 
 // buildRsyncArgs builds common rsync arguments
@@ -1006,104 +640,6 @@ func execRsync(rsyncArgs []string) (*rsyncStats, error) {
 	}
 
 	return parseRsyncStats(stdout.String()), nil
-}
-
-// bridgeToWebSocket bridges a TCP connection to a WebSocket
-func bridgeToWebSocket(conn net.Conn, wsURL string) error {
-	defer conn.Close()
-
-	// Buffer to hold TCP data that arrives before WebSocket is connected
-	var pendingData [][]byte
-	var pendingMu sync.Mutex
-	wsReady := false
-
-	// Start reading from TCP immediately
-	tcpDataCh := make(chan []byte, 100)
-	tcpErrCh := make(chan error, 1)
-
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := conn.Read(buf)
-			if err != nil {
-				tcpErrCh <- err
-				return
-			}
-			data := make([]byte, n)
-			copy(data, buf[:n])
-			tcpDataCh <- data
-		}
-	}()
-
-	// Connect to WebSocket
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  30 * time.Second,
-		EnableCompression: false,
-	}
-
-	wsConn, _, err := dialer.Dial(wsURL, http.Header{})
-	if err != nil {
-		return fmt.Errorf("WebSocket connect failed: %w", err)
-	}
-	defer wsConn.Close()
-
-	// Flush pending data
-	pendingMu.Lock()
-	wsReady = true
-	for _, data := range pendingData {
-		if err := wsConn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-			pendingMu.Unlock()
-			return fmt.Errorf("failed to send pending data: %w", err)
-		}
-	}
-	pendingData = nil
-	pendingMu.Unlock()
-
-	// Bridge TCP <-> WebSocket
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case data := <-tcpDataCh:
-				pendingMu.Lock()
-				if wsReady {
-					pendingMu.Unlock()
-					if err := wsConn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-						return
-					}
-				} else {
-					pendingData = append(pendingData, data)
-					pendingMu.Unlock()
-				}
-			case err := <-tcpErrCh:
-				if err != io.EOF {
-					// Ignore
-				}
-				wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			messageType, data, err := wsConn.ReadMessage()
-			if err != nil {
-				conn.Close()
-				return
-			}
-			if messageType == websocket.BinaryMessage || messageType == websocket.TextMessage {
-				if _, err := conn.Write(data); err != nil {
-					return
-				}
-			}
-		}
-	}()
-
-	<-done
-	return nil
 }
 
 var (
