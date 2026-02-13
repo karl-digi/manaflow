@@ -459,9 +459,9 @@ export function TerminalDemo() {
           addLine(outputLine);
         }
 
-        // Show next prompt immediately, then pause before typing
-        const nextPrompt = STEPS[stepIdx + 1]?.prompt ?? "~/my-app";
-        setCurrentPrompt(nextPrompt);
+        // Show prompt immediately after output, then pause before typing next command
+        const nextStep = STEPS[stepIdx + 1];
+        setCurrentPrompt(nextStep ? (nextStep.prompt ?? "~") : "~/my-app");
         setShowCursor(true);
 
         // Pause between steps
