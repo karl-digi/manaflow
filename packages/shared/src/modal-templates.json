@@ -3,18 +3,50 @@
   "updatedAt": "2026-02-07T00:00:00Z",
   "templates": [
     {
-      "templateId": "cmux-devbox-gpu",
-      "label": "Jupyter Lab (CPU)",
-      "cpu": "2 vCPU",
-      "memory": "4 GB RAM",
-      "disk": "20 GB SSD",
+      "templateId": "cmux-devbox-low",
+      "label": "Low (4 vCPU / 16 GB)",
+      "cpu": "4 vCPU",
+      "memory": "16 GB RAM",
+      "disk": "40 GB SSD",
       "image": "python:3.13-slim",
-      "description": "Jupyter Lab environment for data science, scripting, and CPU-bound tasks. Includes VS Code in browser. Best for: Python development, data analysis, automation, API development.",
+      "description": "Lightweight environment for simple tasks, scripting, and light development.",
+      "useCases": ["scripting", "automation", "light-dev"],
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-13T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "templateId": "cmux-devbox-mid",
+      "label": "Mid (6 vCPU / 24 GB)",
+      "cpu": "6 vCPU",
+      "memory": "24 GB RAM",
+      "disk": "40 GB SSD",
+      "image": "python:3.13-slim",
+      "description": "Balanced environment for most workloads. Good for data science, API development, and general coding.",
       "useCases": ["data-science", "scripting", "automation", "api-dev"],
       "versions": [
         {
           "version": 1,
-          "capturedAt": "2026-02-07T00:00:00Z"
+          "capturedAt": "2026-02-13T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "templateId": "cmux-devbox-gpu",
+      "label": "High (8 vCPU / 32 GB)",
+      "cpu": "8 vCPU",
+      "memory": "32 GB RAM",
+      "disk": "40 GB SSD",
+      "image": "python:3.13-slim",
+      "description": "High-performance environment for heavy workloads, large datasets, and compute-intensive tasks.",
+      "useCases": ["data-science", "heavy-compute", "large-datasets", "api-dev"],
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-13T00:00:00Z"
         }
       ]
     },

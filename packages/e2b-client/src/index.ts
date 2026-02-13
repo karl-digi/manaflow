@@ -5,7 +5,7 @@ export const DEFAULT_E2B_BASE_URL = "https://api.e2b.dev";
 /**
  * Default template ID for cmux devbox (with VSCode, VNC, Chrome CDP, Docker)
  */
-export const CMUX_DEVBOX_TEMPLATE_ID = "pou9b3m5z92g2hafjxrl";
+export const CMUX_DEVBOX_TEMPLATE_ID = "mknr7v3io3fqwpn7pbnk"; // high tier (8 vCPU / 32 GB)
 
 /**
  * Configuration for creating an E2B client

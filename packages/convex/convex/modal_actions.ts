@@ -6,6 +6,8 @@ import { env } from "../_shared/convex-env";
 import {
   DEFAULT_MODAL_TEMPLATE_ID,
   getModalTemplateByPresetId,
+  parsePresetCpu,
+  parsePresetMemoryMiB,
 } from "@cmux/shared/modal-templates";
 import { DEFAULT_MODAL_SNAPSHOT_ID } from "@cmux/shared/modal-snapshots";
 import { ModalClient } from "modal";
@@ -184,10 +186,12 @@ export const startInstance = internalAction({
     const presetId = args.templateId ?? DEFAULT_MODAL_TEMPLATE_ID;
     const preset = getModalTemplateByPresetId(presetId);
     const gpu = args.gpu ?? preset?.gpu;
+    const cpu = args.cpu ?? parsePresetCpu(preset?.cpu);
+    const memoryMiB = args.memoryMiB ?? parsePresetMemoryMiB(preset?.memory);
     const snapshotImageId = DEFAULT_MODAL_SNAPSHOT_ID;
 
     try {
-      console.log(`[modal_actions] Starting from snapshot ${snapshotImageId} (cpu=${args.cpu}, memoryMiB=${args.memoryMiB})`);
+      console.log(`[modal_actions] Starting from snapshot ${snapshotImageId} (cpu=${cpu}, memoryMiB=${memoryMiB})`);
 
       const app = await client.apps.fromName("cmux-devbox", {
         createIfMissing: true,
@@ -196,8 +200,8 @@ export const startInstance = internalAction({
 
       const sandbox = await client.sandboxes.create(app, image, {
         gpu,
-        cpu: args.cpu,
-        memoryMiB: args.memoryMiB,
+        cpu,
+        memoryMiB,
         timeoutMs: (args.ttlSeconds ?? 60 * 60) * 1000,
         env: args.envs,
         encryptedPorts: [8888, 39377, 39378, 39380],

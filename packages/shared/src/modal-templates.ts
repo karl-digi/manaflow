@@ -83,7 +83,52 @@ if (!firstPreset) {
   throw new Error("Modal template manifest must include a default template");
 }
 
-export const DEFAULT_MODAL_TEMPLATE_ID: string = firstPreset.templateId;
+export const DEFAULT_MODAL_TEMPLATE_ID: string = "cmux-devbox-gpu";
+
+/**
+ * Size tiers for Modal templates: low, mid, high.
+ * Default is "high" (cmux-devbox-gpu).
+ * Modal also supports custom CPU/memory via startInstance args.
+ */
+export type ModalSizeTier = "low" | "mid" | "high";
+
+const MODAL_SIZE_TIER_PRESET_IDS: Record<ModalSizeTier, string> = {
+  low: "cmux-devbox-low",
+  mid: "cmux-devbox-mid",
+  high: "cmux-devbox-gpu",
+};
+
+export const DEFAULT_MODAL_SIZE_TIER: ModalSizeTier = "high";
+
+/**
+ * Get the Modal template preset for a size tier.
+ */
+export const getModalTemplateByTier = (
+  tier: ModalSizeTier,
+): ModalTemplatePreset | undefined => {
+  const presetId = MODAL_SIZE_TIER_PRESET_IDS[tier];
+  return MODAL_TEMPLATE_PRESETS.find((p) => p.templateId === presetId);
+};
+
+/**
+ * Parse "8 vCPU" → 8, "4 vCPU" → 4, etc. Returns undefined if unparseable.
+ */
+export const parsePresetCpu = (cpu: string | undefined): number | undefined => {
+  if (!cpu) return undefined;
+  const match = cpu.match(/^(\d+(?:\.\d+)?)\s*v?cpu/i);
+  return match?.[1] ? Number(match[1]) : undefined;
+};
+
+/**
+ * Parse "32 GB RAM" → 32768 MiB, "16 GB RAM" → 16384 MiB, etc.
+ */
+export const parsePresetMemoryMiB = (
+  memory: string | undefined,
+): number | undefined => {
+  if (!memory) return undefined;
+  const match = memory.match(/^(\d+(?:\.\d+)?)\s*gb/i);
+  return match?.[1] ? Math.round(Number(match[1]) * 1024) : undefined;
+};
 
 /**
  * Get a template preset by its ID.
