@@ -51,6 +51,28 @@ export default function ManaflowPage() {
           <div>
             <div className="flex items-center gap-2">
               <a
+                href="https://cloudrouter.dev"
+                target="_blank"
+                className="text-black underline hover:text-neutral-600"
+              >
+                cloudrouter.dev
+              </a>
+              <a
+                href="https://github.com/manaflow-ai/cloudrouter"
+                target="_blank"
+                className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
+              >
+                [github]
+              </a>
+            </div>
+            <p className="text-neutral-600 text-sm mt-1">
+              Skill that lets Claude Code/Codex spin up VMs and GPUs.
+            </p>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <a
                 href="https://0github.com"
                 target="_blank"
                 className="text-black underline hover:text-neutral-600"
