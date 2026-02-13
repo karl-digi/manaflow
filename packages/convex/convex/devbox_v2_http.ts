@@ -728,97 +728,6 @@ async function handleDeleteInstance(
   }
 }
 
-// ============================================================================
-// POST /api/v2/devbox/instances/{id}/env - Push environment variables
-// ============================================================================
-async function handlePushEnv(
-  ctx: ActionCtx,
-  id: string,
-  teamSlugOrId: string,
-  envVarsContent: string
-): Promise<Response> {
-  try {
-    const instance = await ctx.runQuery(devboxApi.getById, {
-      teamSlugOrId,
-      id,
-    });
-
-    if (!instance) {
-      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
-    }
-
-    const providerInfo = await getProviderInfo(ctx, id);
-    if (!providerInfo) {
-      return jsonResponse(
-        { code: 404, message: "Provider mapping not found" },
-        404
-      );
-    }
-    const { providerInstanceId } = providerInfo;
-
-    // Get the worker URL from the E2B instance
-    const e2bResult = (await ctx.runAction(e2bActionsApi.getInstance, {
-      instanceId: providerInstanceId,
-    })) as {
-      instanceId: string;
-      status: string;
-      workerUrl?: string | null;
-    };
-
-    if (!e2bResult.workerUrl) {
-      return jsonResponse(
-        { code: 503, message: "Worker not available on sandbox" },
-        503
-      );
-    }
-
-    // Get the worker auth token
-    const tokenResult = (await ctx.runAction(e2bActionsApi.execCommand, {
-      instanceId: providerInstanceId,
-      command: "cat /home/user/.worker-auth-token 2>/dev/null || echo ''",
-    })) as { stdout?: string; stderr?: string; exit_code?: number };
-
-    const workerToken = tokenResult.stdout?.trim() || "";
-    if (!workerToken) {
-      return jsonResponse(
-        { code: 503, message: "Worker auth token not yet available" },
-        503
-      );
-    }
-
-    // POST to worker /env endpoint with base64-encoded content.
-    // This uses the same code path as the CLI (worker handles file writing,
-    // permissions, .bashrc/.profile sourcing, and envctl integration).
-    const encoded = btoa(envVarsContent);
-    const workerResp = await fetch(`${e2bResult.workerUrl}/env`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${workerToken}`,
-      },
-      body: JSON.stringify({ content: encoded, encoding: "base64" }),
-    });
-
-    if (!workerResp.ok) {
-      const errBody = await workerResp.text();
-      console.error(
-        `[devbox_v2.env] Worker /env failed: status=${workerResp.status} body=${errBody.slice(0, 200)}`
-      );
-      return jsonResponse(
-        { code: 500, message: "Failed to apply environment variables" },
-        500
-      );
-    }
-
-    return jsonResponse({ applied: true, provider: "e2b" });
-  } catch (error) {
-    console.error("[devbox_v2.env] Error:", error);
-    return jsonResponse(
-      { code: 500, message: "Failed to apply environment variables" },
-      500
-    );
-  }
-}
 
 // ============================================================================
 // POST /api/v2/devbox/instances/{id}/ttl - Update TTL
@@ -1032,7 +941,6 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
     command?: string | string[];
     timeout?: number;
     ttlSeconds?: number;
-    envVarsContent?: string;
   };
 
   try {
@@ -1086,15 +994,6 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
         body.teamSlugOrId,
         body.ttlSeconds ?? 3600
       );
-
-    case "env":
-      if (!body.envVarsContent) {
-        return jsonResponse(
-          { code: 400, message: "envVarsContent is required" },
-          400
-        );
-      }
-      return handlePushEnv(ctx, id, body.teamSlugOrId, body.envVarsContent);
 
     default:
       return jsonResponse({ code: 404, message: "Not found" }, 404);
