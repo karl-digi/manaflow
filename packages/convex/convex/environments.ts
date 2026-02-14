@@ -2,7 +2,7 @@ import { validateExposedPorts } from "@cmux/shared/convex-safe";
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 
 const normalizeExposedPorts = (
   ports: readonly number[] | undefined
@@ -272,6 +272,17 @@ export const getByIdInternal = internalQuery({
   },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+/**
+ * Delete an environment snapshot version record.
+ * Used by maintenance scripts to clean up old versions.
+ */
+export const deleteSnapshotVersionInternal = internalMutation({
+  args: { docId: v.id("environmentSnapshotVersions") },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.docId);
   },
 });
 
