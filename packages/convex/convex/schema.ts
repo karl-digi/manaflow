@@ -178,6 +178,8 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
     .index("by_team_user_archived", ["teamId", "userId", "isArchived"])
+    .index("by_team_user_created", ["teamId", "userId", "createdAt"])
+    .index("by_team_user_merge_updated", ["teamId", "userId", "mergeStatus", "updatedAt"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
@@ -346,6 +348,7 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_status_created", ["teamId", "userId", "status", "createdAt"])
     .index("by_pull_request_url", ["pullRequestUrl"]),
 
   // Junction table linking taskRuns to pull requests by PR identity
@@ -1282,7 +1285,7 @@ const convexSchema = defineSchema({
     .index("by_team", ["teamId"]),
   // User-owned devbox instances (standalone sandboxes not tied to task runs)
   devboxInstances: defineTable({
-    devboxId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
+    devboxId: v.string(), // Friendly ID (cr_xxxxxxxx) for CLI users
     userId: v.string(), // Owner user ID
     teamId: v.string(), // Team scope
     name: v.optional(v.string()), // User-friendly name
@@ -1308,7 +1311,7 @@ const convexSchema = defineSchema({
 
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
-    devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
+    devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
     provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance

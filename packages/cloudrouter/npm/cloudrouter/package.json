@@ -1,0 +1,43 @@
+{
+  "name": "@karlorz/cloudrouter",
+  "version": "0.9.22",
+  "description": "CLI tool to instantly spin up cloud VMs preloaded with Chrome, VNC, SSH, and rsync",
+  "keywords": [
+    "cli",
+    "devbox",
+    "cloud",
+    "sandbox",
+    "development",
+    "cloudrouter",
+    "vscode",
+    "vnc"
+  ],
+  "homepage": "https://cmux.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karlorz/cloudrouter.git"
+  },
+  "license": "MIT",
+  "author": "Manaflow",
+  "bin": {
+    "cloudrouter": "bin/cloudrouter",
+    "cr": "bin/cloudrouter"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "optionalDependencies": {
+    "@karlorz/cloudrouter-darwin-arm64": "0.9.22",
+    "@karlorz/cloudrouter-darwin-x64": "0.9.22",
+    "@karlorz/cloudrouter-linux-arm64": "0.9.22",
+    "@karlorz/cloudrouter-linux-x64": "0.9.22",
+    "@karlorz/cloudrouter-win32-x64": "0.9.22"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

@@ -35,7 +35,7 @@ export default function ManaflowPage() {
                 cmux.dev
               </a>
               <a
-                href="https://github.com/manaflow-ai/cmux"
+                href="https://github.com/manaflow-ai/manaflow"
                 target="_blank"
                 className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
               >
@@ -45,6 +45,28 @@ export default function ManaflowPage() {
             <p className="text-neutral-600 text-sm mt-1">
               Coding agent manager that supports Claude Code, Codex, Gemini CLI,
               Amp, Opencode, and other coding CLIs.
+            </p>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://cloudrouter.dev"
+                target="_blank"
+                className="text-black underline hover:text-neutral-600"
+              >
+                cloudrouter.dev
+              </a>
+              <a
+                href="https://github.com/karlorz/cloudrouter"
+                target="_blank"
+                className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
+              >
+                [github]
+              </a>
+            </div>
+            <p className="text-neutral-600 text-sm mt-1">
+              Skill that lets Claude Code/Codex spin up VMs and GPUs.
             </p>
           </div>
 
@@ -124,7 +146,7 @@ export default function ManaflowPage() {
             github
           </a>
           <a
-            href="https://discord.gg/FVevu78A"
+            href="https://discord.gg/SDbQmzQhRK"
             target="_blank"
             className="text-neutral-500 hover:text-black hover:underline"
           >
