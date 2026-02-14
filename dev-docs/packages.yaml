@@ -94,3 +94,9 @@ packages:
     source: https://context7.com/anomalyco/opencode/llms.txt
     tokens: 12000
     output: opencode/llms.txt
+
+  - name: manaflow
+    description: "Manaflow - autonomous agent platform and workflows"
+    source: https://context7.com/manaflow-ai/manaflow/llms.txt
+    tokens: 12000
+    output: manaflow/llms.txt

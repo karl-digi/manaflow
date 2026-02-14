@@ -21,6 +21,7 @@ Auto-fetched LLM-optimized documentation from context7.com for cmux development.
 | beads | Graph-based issue tracker for AI agents |
 | vercel-workflow | Durable async functions |
 | opencode | AI coding agent for terminal |
+| manaflow | Autonomous agent platform and workflows |
 
 ## Usage
 
