@@ -474,11 +474,16 @@ function formatExecError(error: unknown): string {
   return message;
 }
 
-async function listPveTemplateVmids(
+type PvePresetTemplate = {
+  vmid: number;
+  hostname: string;
+};
+
+async function listPvePresetTemplates(
   apiUrl: string,
   apiToken: string,
   node: string,
-): Promise<Set<number>> {
+): Promise<PvePresetTemplate[]> {
   const containers = await pveApiRequest<PveContainer[]>(
     apiUrl,
     apiToken,
@@ -486,13 +491,21 @@ async function listPveTemplateVmids(
     `/api2/json/nodes/${node}/lxc`,
   );
 
-  const vmids = new Set<number>();
+  const templates: PvePresetTemplate[] = [];
   for (const container of containers) {
-    if (container.template === 1 && container.vmid >= PVE_TEMPLATE_MIN_VMID) {
-      vmids.add(container.vmid);
+    // Preset templates: VMID >= 9000, is a template, has pvelxc-* hostname
+    if (
+      container.template === 1 &&
+      container.vmid >= PVE_TEMPLATE_MIN_VMID &&
+      container.name?.startsWith("pvelxc-")
+    ) {
+      templates.push({
+        vmid: container.vmid,
+        hostname: container.name,
+      });
     }
   }
-  return vmids;
+  return templates;
 }
 
 type PveCustomEnvTemplate = {
@@ -583,6 +596,7 @@ function analyzeCustomEnvVersions(
   versions: CustomEnvVersion[],
   keep: number,
   pveTemplates: PveCustomEnvTemplate[],
+  presetVmidsToDelete: ReadonlySet<number>,
 ): CustomEnvCleanupPlan {
   // Build set of VMIDs that exist on PVE
   const pveTemplateVmids = new Set(pveTemplates.map((t) => t.vmid));
@@ -655,9 +669,13 @@ function analyzeCustomEnvVersions(
 
   // Find orphan templates: exist on PVE but NOT tracked in Convex
   // These are likely created by dev server or failed operations
+  // Also exclude VMIDs that are already being deleted by preset cleanup
   const orphanTemplates: Array<{ vmid: number; hostname: string }> = [];
   for (const template of pveTemplates) {
-    if (!convexReferencedVmids.has(template.vmid)) {
+    if (
+      !convexReferencedVmids.has(template.vmid) &&
+      !presetVmidsToDelete.has(template.vmid)
+    ) {
       orphanTemplates.push(template);
     }
   }
@@ -689,8 +707,10 @@ function analyzeManifest(
   manifest: PveLxcTemplateManifest,
   keep: number,
   usedVmids: ReadonlySet<number>,
-  pveTemplateVmids: ReadonlySet<number>,
+  pvePresetTemplates: PvePresetTemplate[],
 ): CleanupPlan {
+  // Build set of VMIDs that exist on PVE as pvelxc-* templates
+  const pveTemplateVmids = new Set(pvePresetTemplates.map((t) => t.vmid));
   const versionsToDelete: VersionToDelete[] = [];
   const protectedVersions: VersionToDelete[] = [];
   const presetPlans: PresetPlan[] = [];
@@ -1204,15 +1224,17 @@ async function main(): Promise<void> {
   // Analyze normal preset versions
   if (!options.customOnly) {
     manifest = readManifest();
-    const pveTemplateVmids = await listPveTemplateVmids(apiUrl, apiToken, node);
-    presetPlan = analyzeManifest(manifest, options.keep, usedVmids, pveTemplateVmids);
+    const pvePresetTemplates = await listPvePresetTemplates(apiUrl, apiToken, node);
+    presetPlan = analyzeManifest(manifest, options.keep, usedVmids, pvePresetTemplates);
   }
 
   // Analyze custom environment versions
   if (!options.presetsOnly) {
     const customEnvVersions = fetchCustomEnvVersions();
     const pveCustomEnvTemplates = await listPveCustomEnvTemplates(apiUrl, apiToken, node);
-    customEnvPlan = analyzeCustomEnvVersions(customEnvVersions, options.keep, pveCustomEnvTemplates);
+    // Exclude VMIDs already being deleted by preset cleanup to avoid double-delete errors
+    const presetVmidsToDelete = new Set(presetPlan?.vmidsToDelete ?? []);
+    customEnvPlan = analyzeCustomEnvVersions(customEnvVersions, options.keep, pveCustomEnvTemplates, presetVmidsToDelete);
   }
 
   printDryRunReport(options, node, usedVmids, presetPlan, customEnvPlan);
