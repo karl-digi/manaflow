@@ -61,7 +61,7 @@ type ActivityInfo = {
 };
 
 const PAUSE_HOURS_THRESHOLD = 20;
-const STOP_DAYS_THRESHOLD = 14;
+const STOP_DAYS_THRESHOLD = 7;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 
 function parseArgs(argv: string[]): Options {

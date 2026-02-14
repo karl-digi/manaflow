@@ -33,8 +33,8 @@ const PAUSE_HOURS_THRESHOLD = 20;
 // Provider-specific threshold for PVE LXC
 // PVE LXC doesn't preserve memory state on pause, so use longer pause threshold
 const PAUSE_DAYS_THRESHOLD_PVE = 3;
-const STOP_DAYS_THRESHOLD = 14; // 2 weeks
-const ORPHAN_MIN_AGE_DAYS = 7;
+const STOP_DAYS_THRESHOLD = 7;
+const ORPHAN_MIN_AGE_DAYS = 5;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 const BATCH_SIZE = 5;
 
@@ -705,12 +705,43 @@ export const cleanupOrphanedContainers = internalAction({
             continue;
           }
 
+          // For PVE-LXC without creation time, add extra safety:
+          // keep any instance tracked in devboxInfo, only clean truly untracked orphans.
           if (orphan.created === 0) {
-            console.warn(
-              `[sandboxMaintenance:orphanCleanup] Skipping orphan with unknown creation time: ${orphan.id} (provider=${config.provider})`
-            );
-            totalSkipped++;
-            continue;
+            if (config.provider === "pve-lxc") {
+              const devboxRecord = await ctx.runQuery(
+                internal.devboxInstances.getByProviderInstanceIdInternal,
+                { providerInstanceId: orphan.id }
+              );
+              if (devboxRecord) {
+                console.warn(
+                  `[sandboxMaintenance:orphanCleanup] Skipping PVE orphan with devbox record: ${orphan.id}`
+                );
+                totalSkipped++;
+                continue;
+              }
+              // PVE orphan verified: no activity record, no devbox record, stopped status
+              // Delete immediately (skip age check since created=0 would miscalculate)
+              try {
+                console.log(
+                  `[sandboxMaintenance:orphanCleanup] Deleting verified PVE orphan (no activity, no devbox): ${orphan.id}`
+                );
+                await config.client.stopInstance(orphan.id);
+                totalCleaned++;
+              } catch (error) {
+                console.error(
+                  `[sandboxMaintenance:orphanCleanup] Failed to delete PVE orphan ${orphan.id}:`,
+                  error
+                );
+              }
+              continue;
+            } else {
+              console.warn(
+                `[sandboxMaintenance:orphanCleanup] Skipping orphan with unknown creation time: ${orphan.id} (provider=${config.provider})`
+              );
+              totalSkipped++;
+              continue;
+            }
           }
 
           const ageMs = now - orphan.created * 1000;

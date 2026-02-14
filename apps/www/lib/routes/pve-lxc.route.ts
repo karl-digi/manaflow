@@ -10,10 +10,11 @@ import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getConvex } from "../utils/get-convex";
-import { api } from "@cmux/convex/api";
+import { api, internal } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { getPveLxcClient } from "@/lib/utils/pve-lxc-client";
+import { ConvexHttpClient } from "convex/browser";
 
 export const pveLxcRouter = new OpenAPIHono();
 
@@ -258,6 +259,43 @@ pveLxcRouter.openapi(
         ttlAction: body.ttlAction ?? "stop",
         metadata: body.metadata,
       });
+
+      // Record activity for maintenance tracking (best effort).
+      // This endpoint is called by internal preview workers, so we use admin auth.
+      try {
+        const deployKey = process.env.CONVEX_DEPLOY_KEY;
+        if (!deployKey) {
+          console.warn(
+            "[pve-lxc.preview.start] CONVEX_DEPLOY_KEY not configured; skipping activity record"
+          );
+        } else {
+          type ConvexAdminClient = {
+            setAdminAuth: (token: string) => void;
+            mutation: (mutationRef: unknown, args: unknown) => Promise<unknown>;
+          };
+          const convex = new ConvexHttpClient(
+            env.NEXT_PUBLIC_CONVEX_URL
+          ) as unknown as ConvexAdminClient;
+          convex.setAdminAuth(deployKey);
+          await convex.mutation(internal.sandboxInstances.recordCreateInternal, {
+            instanceId: instance.id,
+            provider: "pve-lxc",
+            vmid: instance.vmid,
+            hostname: instance.networking.hostname,
+            snapshotId: body.snapshotId,
+            snapshotProvider: "pve-lxc",
+            templateVmid: body.templateVmid,
+            teamId: body.metadata?.teamId,
+            userId: body.metadata?.userId,
+          });
+        }
+      } catch (error) {
+        // Non-fatal: preview flow should continue even if tracking write fails.
+        console.error(
+          "[pve-lxc.preview.start] Failed to record instance creation (non-fatal):",
+          error
+        );
+      }
 
       return c.json({
         instanceId: instance.id,

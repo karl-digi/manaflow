@@ -11,7 +11,7 @@ crons.daily(
   internal.sandboxInstanceMaintenance.pauseOldSandboxInstances
 );
 
-// Stop inactive sandbox instances (paused for >14 days)
+// Stop inactive sandbox instances (paused for >7 days)
 // Runs daily at 21:20 UTC (5:20 AM HKT)
 crons.daily(
   "stop old sandbox instances",

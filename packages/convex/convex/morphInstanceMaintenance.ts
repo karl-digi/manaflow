@@ -147,12 +147,12 @@ export const pauseOldMorphInstances = internalAction({
   },
 });
 
-const STOP_DAYS_THRESHOLD = 14; // 2 weeks
+const STOP_DAYS_THRESHOLD = 7; // 7 days
 const STOP_BATCH_SIZE = 5;
 
 /**
- * Stops (deletes) Morph instances that have been inactive for more than 2 weeks.
- * Only stops instances where lastResumedAt is older than 2 weeks (or never resumed).
+ * Stops (deletes) Morph instances that have been inactive for more than 7 days.
+ * Only stops instances where lastResumedAt is older than 7 days (or never resumed).
  * Called by the daily cron job at 5 AM Pacific Time.
  */
 export const stopOldMorphInstances = internalAction({
