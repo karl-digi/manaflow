@@ -48,7 +48,8 @@ all: build
 # Development build (default for local dev)
 build-dev:
 	@echo "Building cloudrouter for development (Mode=dev)..."
-	@echo "  Dev defaults: localhost:9779, famous-camel-162.convex.site"
+	@echo "  API URL: $$(grep 'DevCmuxURL.*=' internal/auth/auth.go | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+	@echo "  Convex:  $$(grep 'DevConvexSiteURL.*=' internal/auth/auth.go | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
 	go build -ldflags "$(DEV_LDFLAGS)" -o bin/cloudrouter ./cmd/cmux
 	@echo "Dev build complete: bin/cloudrouter"
 
@@ -122,7 +123,8 @@ npm-build-dev:
 	@cp npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter
 	@chmod +x npm/cloudrouter/lib/cloudrouter npm/cloudrouter/bin/cloudrouter 2>/dev/null || true
 	@echo "Done! Dev binaries built in npm/cloudrouter-*/bin/"
-	@echo "Dev defaults: localhost:9779, famous-camel-162.convex.site"
+	@echo "  API URL: $$(grep 'DevCmuxURL.*=' internal/auth/auth.go | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+	@echo "  Convex:  $$(grep 'DevConvexSiteURL.*=' internal/auth/auth.go | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
 
 # Build npm packages for production
 # Usage: make npm-build STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...
