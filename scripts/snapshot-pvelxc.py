@@ -2902,10 +2902,11 @@ async def task_setup_claude_oauth_wrappers(ctx: PveTaskContext) -> None:
 
 @registry.task(
     name="configure-zsh",
-    deps=("install-base-packages",),
+    deps=("upload-repo", "install-base-packages"),
     description="Install zsh configuration and default prompt",
 )
 async def task_configure_zsh(ctx: PveTaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
         r"""
         set -eux
@@ -2974,13 +2975,14 @@ export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
 export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 EOF
-        install -Dm0644 {repo}/configs/profile.d/cmux-env.sh /etc/profile.d/cmux-env.sh
         if ! grep -q "alias g='git'" /root/.bashrc 2>/dev/null; then
           echo "alias g='git'" >> /root/.bashrc
         fi
         """
     )
-    await ctx.run("configure-zsh", cmd)
+    # Install cmux-env.sh from repo (separate command to allow f-string substitution)
+    install_cmd = f"install -Dm0644 {repo}/configs/profile.d/cmux-env.sh /etc/profile.d/cmux-env.sh"
+    await ctx.run("configure-zsh", cmd + "\n" + install_cmd)
 
 
 @registry.task(
