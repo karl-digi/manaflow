@@ -11,6 +11,13 @@
 # Logs
 - PVE snapshot helper writes to `logs/snapshot-pvelxc.log`
 
+# Cloudrouter Dev Setup (local or remote workspace)
+```bash
+# Requires CLOUDROUTER_REFRESH_TOKEN in .env
+bun install && make install-cloudrouter-dev && cloudrouter whoami
+# Then: make dev (terminal 1), cloudrouter start . (terminal 2)
+```
+
 # Config for Host Machine (not Devcontainer)
 - `make convex-fresh`: Fresh Convex setup and start concex service via docker compose, it will delete convex data volume
 - `make convex-init`: Init Convex DB using .env
