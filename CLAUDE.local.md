@@ -16,6 +16,9 @@
 # Requires CLOUDROUTER_REFRESH_TOKEN in .env
 bun install && make install-cloudrouter-dev && cloudrouter whoami
 # Then: make dev (terminal 1), cloudrouter start . (terminal 2)
+
+# Set default sandbox provider in Convex env (optional, default: e2b)
+# SANDBOX_PROVIDER=pve-lxc  # or: morph, e2b, modal
 ```
 
 # Config for Host Machine (not Devcontainer)

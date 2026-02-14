@@ -815,9 +815,12 @@ export const getConfig = httpAction(async (ctx) => {
   const { error } = await getAuthenticatedUser(ctx);
   if (error) return error;
 
+  // Read default provider from env var, fallback to "e2b"
+  const defaultProvider = (process.env.SANDBOX_PROVIDER as SandboxProvider) || "e2b";
+
   return jsonResponse({
     providers: ["e2b", "modal", "pve-lxc"],
-    defaultProvider: "e2b",
+    defaultProvider,
     e2b: {
       defaultTemplateId: DEFAULT_E2B_TEMPLATE_ID,
     },
