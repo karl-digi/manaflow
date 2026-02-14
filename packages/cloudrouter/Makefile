@@ -1,4 +1,5 @@
 # Makefile for cloudrouter CLI
+# Primary npm package: @karlorz/cloudrouter
 
 VERSION ?= 0.1.0
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -25,153 +26,82 @@ LDFLAGS := -s -w \
            -X '$(AUTH_PKG).CmuxURL=$(CMUX_API_URL)' \
            -X '$(AUTH_PKG).ConvexSiteURL=$(CONVEX_SITE_URL)'
 
-.PHONY: build build-dev build-prod build-all build-npm build-npm-dev build-npm-cloudrouter build-npm-cloudrouter-dev clean test install install-dev deps npm-version npm-publish npm-publish-dry npm-publish-cloudrouter npm-publish-cloudrouter-dry
-
-# =============================================================================
-# Development builds
-# =============================================================================
-
-build-dev:
-	@echo "Building for development (Mode=dev)..."
-	@echo "  Dev defaults: localhost:9779, famous-camel-162.convex.site"
-	go build -ldflags "-X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME) -X main.Mode=dev" \
-		-o bin/cmux ./cmd/cmux
-	@echo "Dev build complete: bin/cmux"
-
-install-dev: build-dev
-	cp bin/cmux /usr/local/bin/cmux
-
-# =============================================================================
-# Production builds
-# =============================================================================
-
-build: build-prod
-
-build-prod:
-	@echo "Building for production (Mode=prod)..."
-	@if [ -z "$(STACK_PROJECT_ID)" ]; then echo "Error: STACK_PROJECT_ID is required"; exit 1; fi
-	@if [ -z "$(STACK_PUBLISHABLE_CLIENT_KEY)" ]; then echo "Error: STACK_PUBLISHABLE_CLIENT_KEY is required"; exit 1; fi
-	@if [ -z "$(CMUX_API_URL)" ]; then echo "Error: CMUX_API_URL is required"; exit 1; fi
-	@if [ -z "$(CONVEX_SITE_URL)" ]; then echo "Error: CONVEX_SITE_URL is required"; exit 1; fi
-	go build -ldflags "$(LDFLAGS)" -o bin/cmux ./cmd/cmux
-	@echo "Production build complete: bin/cmux"
-
-install: build
-	cp bin/cmux /usr/local/bin/cmux
-
-# =============================================================================
-# Cross-platform builds
-# =============================================================================
-
-build-all:
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-darwin-amd64 ./cmd/cmux
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-darwin-arm64 ./cmd/cmux
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-linux-amd64 ./cmd/cmux
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-linux-arm64 ./cmd/cmux
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cmux-windows-amd64.exe ./cmd/cmux
-
-# =============================================================================
-# NPM package builds
-# =============================================================================
-
-# Dev ldflags for npm packages (uses Mode=dev which enables hardcoded dev defaults)
+# Dev ldflags (uses Mode=dev which enables hardcoded dev defaults)
 DEV_LDFLAGS := -s -w \
                -X main.Version=$(VERSION) \
                -X main.Commit=$(COMMIT) \
                -X main.BuildTime=$(BUILD_TIME) \
                -X main.Mode=dev
 
-# Build npm packages with dev mode (no credentials needed - uses hardcoded dev defaults)
-build-npm-dev:
-	@echo "Building npm packages with dev mode..."
-	@mkdir -p npm/darwin-arm64/bin npm/darwin-x64/bin npm/linux-arm64/bin npm/linux-x64/bin npm/win32-x64/bin
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/darwin-arm64/bin/cmux ./cmd/cmux
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/darwin-x64/bin/cmux ./cmd/cmux
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/linux-arm64/bin/cmux ./cmd/cmux
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/linux-x64/bin/cmux ./cmd/cmux
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/win32-x64/bin/cmux.exe ./cmd/cmux
-	@echo "Done! Dev binaries built in npm/*/bin/"
-	@echo "Dev defaults: localhost:9779, famous-camel-162.convex.site"
+.PHONY: all build build-dev build-prod build-all \
+        install install-dev clean test deps \
+        npm-build npm-build-dev npm-version npm-publish npm-publish-dry \
+        build-npm-cloudrouter build-npm-cloudrouter-dev npm-publish-cloudrouter npm-publish-cloudrouter-dry
 
-# Build binaries for npm packages (production)
-# Usage: make build-npm STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...
-build-npm:
-	@echo "Building npm packages..."
+# Default target
+all: build
+
+# =============================================================================
+# Local Development Builds
+# =============================================================================
+
+# Development build (default for local dev)
+build-dev:
+	@echo "Building cloudrouter for development (Mode=dev)..."
+	@echo "  Dev defaults: localhost:9779, famous-camel-162.convex.site"
+	go build -ldflags "$(DEV_LDFLAGS)" -o bin/cloudrouter ./cmd/cmux
+	@echo "Dev build complete: bin/cloudrouter"
+
+# Install dev build to system
+install-dev: build-dev
+	@echo "Installing cloudrouter to /usr/local/bin..."
+	cp bin/cloudrouter /usr/local/bin/cloudrouter
+	@echo "Installed! Run 'cloudrouter --version' to verify."
+
+# =============================================================================
+# Production Builds
+# =============================================================================
+
+# Production build (requires credentials)
+build: build-prod
+
+build-prod:
+	@echo "Building cloudrouter for production (Mode=prod)..."
 	@if [ -z "$(STACK_PROJECT_ID)" ]; then echo "Error: STACK_PROJECT_ID is required"; exit 1; fi
 	@if [ -z "$(STACK_PUBLISHABLE_CLIENT_KEY)" ]; then echo "Error: STACK_PUBLISHABLE_CLIENT_KEY is required"; exit 1; fi
 	@if [ -z "$(CMUX_API_URL)" ]; then echo "Error: CMUX_API_URL is required"; exit 1; fi
 	@if [ -z "$(CONVEX_SITE_URL)" ]; then echo "Error: CONVEX_SITE_URL is required"; exit 1; fi
-	@mkdir -p npm/darwin-arm64/bin npm/darwin-x64/bin npm/linux-arm64/bin npm/linux-x64/bin npm/win32-x64/bin npm/cmux/lib
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/darwin-arm64/bin/cmux ./cmd/cmux
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/darwin-x64/bin/cmux ./cmd/cmux
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/linux-arm64/bin/cmux ./cmd/cmux
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/linux-x64/bin/cmux ./cmd/cmux
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/win32-x64/bin/cmux.exe ./cmd/cmux
-	@# Copy darwin-arm64 binary to lib/cmux as fallback for bunx/npx
-	@cp npm/darwin-arm64/bin/cmux npm/cmux/lib/cmux
-	@chmod +x npm/cmux/lib/cmux npm/cmux/bin/cmux 2>/dev/null || true
-	@echo "Done! Binaries built in npm/*/bin/"
-	@# Verify all binaries report same version
-	@echo "Verifying binary versions..."
-	@EXPECTED="cloudrouter version $(VERSION)"; \
-	for bin in npm/darwin-arm64/bin/cmux npm/darwin-x64/bin/cmux npm/cmux/lib/cmux; do \
-		ACTUAL=$$($$bin --version 2>/dev/null || echo "failed"); \
-		if [ "$$ACTUAL" != "$$EXPECTED" ]; then \
-			echo "ERROR: $$bin reports '$$ACTUAL' but expected '$$EXPECTED'"; \
-			exit 1; \
-		fi; \
-	done
-	@echo "All binaries verified at version $(VERSION)"
+	go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter ./cmd/cmux
+	@echo "Production build complete: bin/cloudrouter"
 
-# Update version in all npm package.json files
-npm-version:
-	@echo "Updating npm package versions to $(VERSION)..."
-	@for pkg in cmux darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do \
-		if [ -f "npm/$$pkg/package.json" ]; then \
-			sed -i '' 's/"version": "[^"]*"/"version": "$(VERSION)"/' npm/$$pkg/package.json; \
-			if [ "$$pkg" = "cmux" ]; then \
-				sed -i '' 's/"cmux-darwin-arm64": "[^"]*"/"cmux-darwin-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"cmux-darwin-x64": "[^"]*"/"cmux-darwin-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"cmux-linux-arm64": "[^"]*"/"cmux-linux-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"cmux-linux-x64": "[^"]*"/"cmux-linux-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
-				sed -i '' 's/"cmux-win32-x64": "[^"]*"/"cmux-win32-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
-			fi; \
-		fi; \
-	done
-	@echo "Done!"
+# Install production build to system
+install: build
+	cp bin/cloudrouter /usr/local/bin/cloudrouter
 
-# Publish to npm (run build-npm first)
-npm-publish: build-npm
-	@echo "Publishing to npm..."
-	@echo "1. Publishing platform packages..."
-	cd npm/darwin-arm64 && npm publish --access public
-	cd npm/darwin-x64 && npm publish --access public
-	cd npm/linux-arm64 && npm publish --access public
-	cd npm/linux-x64 && npm publish --access public
-	cd npm/win32-x64 && npm publish --access public
-	@echo "2. Publishing main package..."
-	cd npm/cmux && npm publish --access public
-	@echo "Done!"
-
-# Dry-run publish (for testing)
-npm-publish-dry: build-npm
-	@echo "Dry-run publishing to npm..."
-	cd npm/darwin-arm64 && npm publish --access public --dry-run
-	cd npm/darwin-x64 && npm publish --access public --dry-run
-	cd npm/linux-arm64 && npm publish --access public --dry-run
-	cd npm/linux-x64 && npm publish --access public --dry-run
-	cd npm/win32-x64 && npm publish --access public --dry-run
-	cd npm/cmux && npm publish --access public --dry-run
-	@echo "Done!"
+# Cross-platform production builds
+build-all:
+	@echo "Building cloudrouter for all platforms..."
+	@if [ -z "$(STACK_PROJECT_ID)" ]; then echo "Error: STACK_PROJECT_ID is required"; exit 1; fi
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter-darwin-amd64 ./cmd/cmux
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter-darwin-arm64 ./cmd/cmux
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter-linux-amd64 ./cmd/cmux
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter-linux-arm64 ./cmd/cmux
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/cloudrouter-windows-amd64.exe ./cmd/cmux
+	@echo "Done! Binaries in bin/"
 
 # =============================================================================
-# Cloudrouter NPM package builds (@karlorz/cloudrouter)
+# NPM Package Builds (@karlorz/cloudrouter)
 # =============================================================================
 
-# Build cloudrouter npm packages with dev mode (no credentials needed)
-build-npm-cloudrouter-dev:
-	@echo "Building cloudrouter npm packages with dev mode..."
-	@mkdir -p npm/cloudrouter-darwin-arm64/bin npm/cloudrouter-darwin-x64/bin npm/cloudrouter-linux-arm64/bin npm/cloudrouter-linux-x64/bin npm/cloudrouter-win32-x64/bin npm/cloudrouter/lib
+# Build npm packages with dev mode (no credentials needed)
+npm-build-dev:
+	@echo "Building @karlorz/cloudrouter npm packages (dev mode)..."
+	@mkdir -p npm/cloudrouter-darwin-arm64/bin \
+	          npm/cloudrouter-darwin-x64/bin \
+	          npm/cloudrouter-linux-arm64/bin \
+	          npm/cloudrouter-linux-x64/bin \
+	          npm/cloudrouter-win32-x64/bin \
+	          npm/cloudrouter/lib
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-darwin-arm64/bin/cloudrouter ./cmd/cmux
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-darwin-x64/bin/cloudrouter ./cmd/cmux
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-linux-arm64/bin/cloudrouter ./cmd/cmux
@@ -180,18 +110,23 @@ build-npm-cloudrouter-dev:
 	@# Copy darwin-arm64 binary to lib/cloudrouter as fallback for bunx/npx
 	@cp npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter
 	@chmod +x npm/cloudrouter/lib/cloudrouter npm/cloudrouter/bin/cloudrouter 2>/dev/null || true
-	@echo "Done! Cloudrouter dev binaries built in npm/cloudrouter-*/bin/"
+	@echo "Done! Dev binaries built in npm/cloudrouter-*/bin/"
 	@echo "Dev defaults: localhost:9779, famous-camel-162.convex.site"
 
-# Build cloudrouter npm packages (production)
-# Usage: make build-npm-cloudrouter STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...
-build-npm-cloudrouter:
-	@echo "Building cloudrouter npm packages..."
+# Build npm packages for production
+# Usage: make npm-build STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...
+npm-build:
+	@echo "Building @karlorz/cloudrouter npm packages (production)..."
 	@if [ -z "$(STACK_PROJECT_ID)" ]; then echo "Error: STACK_PROJECT_ID is required"; exit 1; fi
 	@if [ -z "$(STACK_PUBLISHABLE_CLIENT_KEY)" ]; then echo "Error: STACK_PUBLISHABLE_CLIENT_KEY is required"; exit 1; fi
 	@if [ -z "$(CMUX_API_URL)" ]; then echo "Error: CMUX_API_URL is required"; exit 1; fi
 	@if [ -z "$(CONVEX_SITE_URL)" ]; then echo "Error: CONVEX_SITE_URL is required"; exit 1; fi
-	@mkdir -p npm/cloudrouter-darwin-arm64/bin npm/cloudrouter-darwin-x64/bin npm/cloudrouter-linux-arm64/bin npm/cloudrouter-linux-x64/bin npm/cloudrouter-win32-x64/bin npm/cloudrouter/lib
+	@mkdir -p npm/cloudrouter-darwin-arm64/bin \
+	          npm/cloudrouter-darwin-x64/bin \
+	          npm/cloudrouter-linux-arm64/bin \
+	          npm/cloudrouter-linux-x64/bin \
+	          npm/cloudrouter-win32-x64/bin \
+	          npm/cloudrouter/lib
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-darwin-arm64/bin/cloudrouter ./cmd/cmux
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-darwin-x64/bin/cloudrouter ./cmd/cmux
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o npm/cloudrouter-linux-arm64/bin/cloudrouter ./cmd/cmux
@@ -200,7 +135,7 @@ build-npm-cloudrouter:
 	@# Copy darwin-arm64 binary to lib/cloudrouter as fallback for bunx/npx
 	@cp npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter
 	@chmod +x npm/cloudrouter/lib/cloudrouter npm/cloudrouter/bin/cloudrouter 2>/dev/null || true
-	@echo "Done! Cloudrouter binaries built in npm/cloudrouter-*/bin/"
+	@echo "Done! Production binaries built in npm/cloudrouter-*/bin/"
 	@# Verify binaries report correct version
 	@echo "Verifying binary versions..."
 	@EXPECTED="cloudrouter version $(VERSION)"; \
@@ -211,31 +146,62 @@ build-npm-cloudrouter:
 			exit 1; \
 		fi; \
 	done
-	@echo "All cloudrouter binaries verified at version $(VERSION)"
+	@echo "All binaries verified at version $(VERSION)"
 
-# Publish cloudrouter to npm
-npm-publish-cloudrouter: build-npm-cloudrouter
-	@echo "Publishing @karlorz/cloudrouter to npm..."
-	@echo "1. Publishing platform packages..."
+# Update version in all npm package.json files
+npm-version:
+	@echo "Updating @karlorz/cloudrouter package versions to $(VERSION)..."
+	@for pkg in cloudrouter cloudrouter-darwin-arm64 cloudrouter-darwin-x64 cloudrouter-linux-arm64 cloudrouter-linux-x64 cloudrouter-win32-x64; do \
+		if [ -f "npm/$$pkg/package.json" ]; then \
+			sed -i '' 's/"version": "[^"]*"/"version": "$(VERSION)"/' npm/$$pkg/package.json; \
+			if [ "$$pkg" = "cloudrouter" ]; then \
+				sed -i '' 's/"@karlorz\/cloudrouter-darwin-arm64": "[^"]*"/"@karlorz\/cloudrouter-darwin-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"@karlorz\/cloudrouter-darwin-x64": "[^"]*"/"@karlorz\/cloudrouter-darwin-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"@karlorz\/cloudrouter-linux-arm64": "[^"]*"/"@karlorz\/cloudrouter-linux-arm64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"@karlorz\/cloudrouter-linux-x64": "[^"]*"/"@karlorz\/cloudrouter-linux-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+				sed -i '' 's/"@karlorz\/cloudrouter-win32-x64": "[^"]*"/"@karlorz\/cloudrouter-win32-x64": "$(VERSION)"/' npm/$$pkg/package.json; \
+			fi; \
+		fi; \
+	done
+	@echo "Done! Updated to version $(VERSION)"
+
+# Publish @karlorz/cloudrouter to npm (requires npm-build first)
+npm-publish: npm-build
+	@echo "Publishing @karlorz/cloudrouter v$(VERSION) to npm..."
+	@echo ""
+	@echo "Step 1/2: Publishing platform packages..."
 	cd npm/cloudrouter-darwin-arm64 && npm publish --access public
 	cd npm/cloudrouter-darwin-x64 && npm publish --access public
 	cd npm/cloudrouter-linux-arm64 && npm publish --access public
 	cd npm/cloudrouter-linux-x64 && npm publish --access public
 	cd npm/cloudrouter-win32-x64 && npm publish --access public
-	@echo "2. Publishing main package..."
+	@echo ""
+	@echo "Step 2/2: Publishing main package..."
 	cd npm/cloudrouter && npm publish --access public
-	@echo "Done! Published @karlorz/cloudrouter"
+	@echo ""
+	@echo "Published @karlorz/cloudrouter v$(VERSION)"
+	@echo "Install with: npm install -g @karlorz/cloudrouter"
 
-# Dry-run publish cloudrouter (for testing)
-npm-publish-cloudrouter-dry: build-npm-cloudrouter
-	@echo "Dry-run publishing @karlorz/cloudrouter to npm..."
+# Dry-run publish (for testing)
+npm-publish-dry: npm-build
+	@echo "Dry-run publishing @karlorz/cloudrouter v$(VERSION)..."
 	cd npm/cloudrouter-darwin-arm64 && npm publish --access public --dry-run
 	cd npm/cloudrouter-darwin-x64 && npm publish --access public --dry-run
 	cd npm/cloudrouter-linux-arm64 && npm publish --access public --dry-run
 	cd npm/cloudrouter-linux-x64 && npm publish --access public --dry-run
 	cd npm/cloudrouter-win32-x64 && npm publish --access public --dry-run
 	cd npm/cloudrouter && npm publish --access public --dry-run
-	@echo "Done!"
+	@echo "Dry-run complete!"
+
+# =============================================================================
+# Aliases (for compatibility with root Makefile)
+# =============================================================================
+
+# These aliases allow the root Makefile targets to work unchanged
+build-npm-cloudrouter: npm-build
+build-npm-cloudrouter-dev: npm-build-dev
+npm-publish-cloudrouter: npm-publish
+npm-publish-cloudrouter-dry: npm-publish-dry
 
 # =============================================================================
 # Utilities
@@ -243,7 +209,8 @@ npm-publish-cloudrouter-dry: build-npm-cloudrouter
 
 clean:
 	rm -rf bin/
-	rm -rf npm/*/bin/cmux npm/*/bin/cmux.exe npm/cmux/lib/cmux
+	rm -f npm/cloudrouter-*/bin/cloudrouter npm/cloudrouter-*/bin/cloudrouter.exe
+	rm -f npm/cloudrouter/lib/cloudrouter
 
 test:
 	go test -v ./...
@@ -251,3 +218,47 @@ test:
 deps:
 	go mod download
 	go mod tidy
+
+# Show current configuration
+info:
+	@echo "cloudrouter Makefile"
+	@echo "===================="
+	@echo "VERSION:  $(VERSION)"
+	@echo "COMMIT:   $(COMMIT)"
+	@echo "BUILD:    $(BUILD_TIME)"
+	@echo ""
+	@echo "Production config (from env):"
+	@echo "  STACK_PROJECT_ID:             $(if $(STACK_PROJECT_ID),set,NOT SET)"
+	@echo "  STACK_PUBLISHABLE_CLIENT_KEY: $(if $(STACK_PUBLISHABLE_CLIENT_KEY),set,NOT SET)"
+	@echo "  CMUX_API_URL:                 $(if $(CMUX_API_URL),$(CMUX_API_URL),NOT SET)"
+	@echo "  CONVEX_SITE_URL:              $(if $(CONVEX_SITE_URL),$(CONVEX_SITE_URL),NOT SET)"
+
+# Help
+help:
+	@echo "cloudrouter Makefile targets:"
+	@echo ""
+	@echo "Local Development:"
+	@echo "  make build-dev     Build dev binary (uses hardcoded dev defaults)"
+	@echo "  make install-dev   Install dev binary to /usr/local/bin"
+	@echo ""
+	@echo "Production:"
+	@echo "  make build-prod    Build production binary (requires env vars)"
+	@echo "  make build-all     Build for all platforms"
+	@echo "  make install       Install production binary"
+	@echo ""
+	@echo "NPM Publishing (@karlorz/cloudrouter):"
+	@echo "  make npm-build-dev   Build npm packages (dev mode)"
+	@echo "  make npm-build       Build npm packages (production)"
+	@echo "  make npm-version     Update version in package.json files"
+	@echo "  make npm-publish-dry Dry-run npm publish"
+	@echo "  make npm-publish     Publish to npm"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make clean         Remove built binaries"
+	@echo "  make test          Run tests"
+	@echo "  make deps          Download and tidy dependencies"
+	@echo "  make info          Show build configuration"
+	@echo ""
+	@echo "Required env vars for production builds:"
+	@echo "  STACK_PROJECT_ID, STACK_PUBLISHABLE_CLIENT_KEY,"
+	@echo "  CMUX_API_URL, CONVEX_SITE_URL"
