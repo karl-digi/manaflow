@@ -54,6 +54,8 @@ GPU options (--gpu, auto-selects Modal provider):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
+
+  The following GPUs require approval (contact founders@manaflow.ai):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models

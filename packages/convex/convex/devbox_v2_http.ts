@@ -207,7 +207,7 @@ export const createInstance = httpAction(async (ctx, req) => {
         return jsonResponse(
           {
             code: 403,
-            message: `GPU type "${body.gpu}" requires approval. Please contact the Manaflow team at founders@manaflow.com for inquiry.`,
+            message: `GPU type "${body.gpu}" requires approval. Please contact founders@manaflow.ai to get this GPU enabled for your account.`,
           },
           403,
         );
