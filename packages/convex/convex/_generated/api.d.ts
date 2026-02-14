@@ -66,6 +66,8 @@ import type * as preview_jobs from "../preview_jobs.js";
 import type * as preview_jobs_http from "../preview_jobs_http.js";
 import type * as preview_jobs_worker from "../preview_jobs_worker.js";
 import type * as preview_screenshots_http from "../preview_screenshots_http.js";
+import type * as pveLxcInstances from "../pveLxcInstances.js";
+import type * as pve_lxc_actions from "../pve_lxc_actions.js";
 import type * as sandboxInstanceMaintenance from "../sandboxInstanceMaintenance.js";
 import type * as sandboxInstances from "../sandboxInstances.js";
 import type * as screenshots_http from "../screenshots_http.js";
@@ -156,6 +158,8 @@ declare const fullApi: ApiFromModules<{
   preview_jobs_http: typeof preview_jobs_http;
   preview_jobs_worker: typeof preview_jobs_worker;
   preview_screenshots_http: typeof preview_screenshots_http;
+  pveLxcInstances: typeof pveLxcInstances;
+  pve_lxc_actions: typeof pve_lxc_actions;
   sandboxInstanceMaintenance: typeof sandboxInstanceMaintenance;
   sandboxInstances: typeof sandboxInstances;
   screenshots_http: typeof screenshots_http;

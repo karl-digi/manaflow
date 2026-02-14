@@ -223,6 +223,14 @@ Examples:
 							}
 						}
 					}
+				} else if provider == "pve-lxc" {
+					// PVE LXC provider - pick first pve-lxc template
+					for _, t := range templates {
+						if t.Provider == "pve-lxc" {
+							templateID = t.ID
+							break
+						}
+					}
 				} else {
 					// E2B provider (always uses docker template)
 					for _, t := range templates {
@@ -236,7 +244,7 @@ Examples:
 
 			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
-			if templateID == "" && provider != "modal" {
+			if templateID == "" && provider != "modal" && provider != "pve-lxc" {
 				templateID = defaultTemplateName
 			}
 		}
@@ -333,7 +341,7 @@ Examples:
 			jupyterAuthURL = resp.JupyterURL
 		}
 
-		// Build type label: "Docker" for e2b, "GPU (type)" for modal
+		// Build type label: "Docker" for e2b, "GPU (type)" for modal, "PVE LXC" for pve-lxc
 		typeLabel := "Docker"
 		if resp.Provider == "modal" {
 			if resp.GPU != "" {
@@ -341,6 +349,8 @@ Examples:
 			} else {
 				typeLabel = "GPU"
 			}
+		} else if resp.Provider == "pve-lxc" {
+			typeLabel = "PVE LXC"
 		}
 
 		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
@@ -386,7 +396,7 @@ func init() {
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
 
 	// Provider selection (internal: e2b = Docker, modal = GPU)
-	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
+	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal, pve-lxc")
 
 	// GPU and resource options
 	startCmd.Flags().StringVar(&startFlagGPU, "gpu", "", "GPU type (T4, L4, A10G, L40S, A100, H100, H200, B200)")

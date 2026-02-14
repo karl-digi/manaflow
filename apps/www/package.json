@@ -25,6 +25,7 @@
     "@asteasolutions/zod-to-openapi": "^8.1.0",
     "@base-ui-components/react": "^1.0.0-beta.7",
     "@cmux/convex": "workspace:*",
+    "@cmux/pve-lxc-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@cmux/www-openapi-client": "workspace:*",
     "@convex-dev/react-query": "^0.0.0-alpha.11",

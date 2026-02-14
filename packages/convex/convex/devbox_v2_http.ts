@@ -19,8 +19,12 @@ import {
   getModalTemplateByPresetId,
   isModalGpuGated,
 } from "@cmux/shared/modal-templates";
+import {
+  DEFAULT_PVE_LXC_SNAPSHOT_ID,
+  PVE_LXC_SNAPSHOT_PRESETS,
+} from "@cmux/shared/pve-lxc-snapshots";
 
-type SandboxProvider = "e2b" | "modal";
+type SandboxProvider = "e2b" | "modal" | "pve-lxc";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -115,6 +119,24 @@ const modalInstancesApi = (internal as any).modalInstances as {
   recordStopInternal: FunctionReference<"mutation", "internal">;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pveLxcActionsApi = (internal as any).pve_lxc_actions as {
+  startInstance: FunctionReference<"action", "internal">;
+  getInstance: FunctionReference<"action", "internal">;
+  execCommand: FunctionReference<"action", "internal">;
+  pauseInstance: FunctionReference<"action", "internal">;
+  extendTimeout: FunctionReference<"action", "internal">;
+  stopInstance: FunctionReference<"action", "internal">;
+  resumeInstance: FunctionReference<"action", "internal">;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pveLxcInstancesApi = (internal as any).pveLxcInstances as {
+  recordResumeInternal: FunctionReference<"mutation", "internal">;
+  recordPauseInternal: FunctionReference<"mutation", "internal">;
+  recordStopInternal: FunctionReference<"mutation", "internal">;
+};
+
 /**
  * Record activity for a provider instance
  */
@@ -126,7 +148,11 @@ async function recordProviderActivity(
 ): Promise<void> {
   try {
     const activityApi =
-      provider === "modal" ? modalInstancesApi : e2bInstancesApi;
+      provider === "modal"
+        ? modalInstancesApi
+        : provider === "pve-lxc"
+          ? pveLxcInstancesApi
+          : e2bInstancesApi;
     if (action === "resume") {
       await ctx.runMutation(activityApi.recordResumeInternal, {
         instanceId: providerInstanceId,
@@ -142,6 +168,20 @@ async function recordProviderActivity(
     }
   } catch (error) {
     console.error("[devbox_v2] Failed to record activity:", error);
+  }
+}
+
+/**
+ * Get the actions API for a given provider.
+ */
+function getActionsApiForProvider(provider: SandboxProvider) {
+  switch (provider) {
+    case "modal":
+      return modalActionsApi;
+    case "pve-lxc":
+      return pveLxcActionsApi;
+    default:
+      return e2bActionsApi;
   }
 }
 
@@ -268,6 +308,50 @@ export const createInstance = httpAction(async (ctx, req) => {
         vscodeUrl: result.vscodeUrl,
         workerUrl: result.workerUrl,
         vncUrl: result.vncUrl,
+      });
+    }
+
+    if (provider === "pve-lxc") {
+      const snapshotId = body.templateId ?? DEFAULT_PVE_LXC_SNAPSHOT_ID;
+
+      const result = (await ctx.runAction(pveLxcActionsApi.startInstance, {
+        snapshotId,
+        ttlSeconds: body.ttlSeconds ?? 60 * 60,
+        metadata: {
+          app: "cmux-devbox-v2",
+          userId: identity!.subject,
+          ...(body.metadata || {}),
+        },
+      })) as {
+        instanceId: string;
+        status: string;
+        vscodeUrl?: string;
+        workerUrl?: string;
+        vncUrl?: string;
+        xtermUrl?: string;
+      };
+
+      const instanceResult = (await ctx.runMutation(devboxApi.create, {
+        teamSlugOrId: body.teamSlugOrId,
+        providerInstanceId: result.instanceId,
+        provider: "pve-lxc",
+        name: body.name,
+        templateId: snapshotId,
+        vscodeUrl: result.vscodeUrl,
+        workerUrl: result.workerUrl,
+        metadata: body.metadata,
+        source: "cli",
+      })) as { id: string; isExisting: boolean };
+
+      return jsonResponse({
+        id: instanceResult.id,
+        provider: "pve-lxc",
+        status: result.status,
+        templateId: snapshotId,
+        vscodeUrl: result.vscodeUrl,
+        workerUrl: result.workerUrl,
+        vncUrl: result.vncUrl,
+        xtermUrl: result.xtermUrl,
       });
     }
 
@@ -413,8 +497,7 @@ async function handleGetInstance(
     }
 
     const { provider, providerInstanceId } = providerInfo;
-    const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+    const actionsApi = getActionsApiForProvider(provider);
 
     const providerResult = (await ctx.runAction(actionsApi.getInstance, {
       instanceId: providerInstanceId,
@@ -480,7 +563,7 @@ async function handleExecCommand(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      getActionsApiForProvider(provider);
 
     const commandStr = Array.isArray(command) ? command.join(" ") : command;
     const result = await ctx.runAction(actionsApi.execCommand, {
@@ -527,11 +610,16 @@ async function handlePauseInstance(
 
     const { provider, providerInstanceId } = providerInfo;
 
-    // Neither E2B nor Modal has native pause
+    // No provider has native pause; E2B extends timeout, PVE-LXC stops, Modal is a no-op
     if (provider === "e2b") {
       await ctx.runAction(e2bActionsApi.extendTimeout, {
         instanceId: providerInstanceId,
         timeoutMs: 60 * 60 * 1000,
+      });
+    } else if (provider === "pve-lxc") {
+      // PVE LXC doesn't support hibernate; stop (not delete) the container
+      await ctx.runAction(pveLxcActionsApi.pauseInstance, {
+        instanceId: providerInstanceId,
       });
     }
 
@@ -543,13 +631,16 @@ async function handlePauseInstance(
 
     await recordProviderActivity(ctx, provider, providerInstanceId, "pause");
 
+    const noteMap: Record<SandboxProvider, string> = {
+      "modal": "Modal status updated (no true pause)",
+      "e2b": "E2B timeout extended (no true pause)",
+      "pve-lxc": "PVE LXC container stopped (no true pause)",
+    };
+
     return jsonResponse({
       paused: true,
       provider,
-      note:
-        provider === "modal"
-          ? "Modal status updated (no true pause)"
-          : "E2B timeout extended (no true pause)",
+      note: noteMap[provider],
     });
   } catch (error) {
     console.error("[devbox_v2.pause] Error:", error);
@@ -588,6 +679,14 @@ async function handleResumeInstance(
 
     const { provider, providerInstanceId } = providerInfo;
 
+    // For PVE-LXC, we need to actually restart the container
+    // since pause stops it (PVE LXC doesn't have true pause/hibernate)
+    if (provider === "pve-lxc") {
+      await ctx.runAction(pveLxcActionsApi.resumeInstance, {
+        instanceId: providerInstanceId,
+      });
+    }
+
     await ctx.runMutation(devboxApi.updateStatus, {
       teamSlugOrId,
       id,
@@ -596,10 +695,16 @@ async function handleResumeInstance(
 
     await recordProviderActivity(ctx, provider, providerInstanceId, "resume");
 
+    const noteMap: Record<SandboxProvider, string> = {
+      "modal": "Modal status updated (already running)",
+      "e2b": "E2B status updated (already running)",
+      "pve-lxc": "PVE LXC container restarted",
+    };
+
     return jsonResponse({
       resumed: true,
       provider,
-      note: `${provider} status updated (already running)`,
+      note: noteMap[provider],
     });
   } catch (error) {
     console.error("[devbox_v2.resume] Error:", error);
@@ -638,7 +743,7 @@ async function handleStopInstance(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      getActionsApiForProvider(provider);
 
     await ctx.runAction(actionsApi.stopInstance, {
       instanceId: providerInstanceId,
@@ -711,7 +816,7 @@ export const getConfig = httpAction(async (ctx) => {
   if (error) return error;
 
   return jsonResponse({
-    providers: ["e2b", "modal"],
+    providers: ["e2b", "modal", "pve-lxc"],
     defaultProvider: "e2b",
     e2b: {
       defaultTemplateId: DEFAULT_E2B_TEMPLATE_ID,
@@ -719,6 +824,9 @@ export const getConfig = httpAction(async (ctx) => {
     modal: {
       defaultTemplateId: DEFAULT_MODAL_TEMPLATE_ID,
       gpuOptions: ["T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200", "B200"],
+    },
+    "pve-lxc": {
+      defaultSnapshotId: DEFAULT_PVE_LXC_SNAPSHOT_ID,
     },
   });
 });
@@ -824,7 +932,7 @@ async function handleGetAuthToken(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      getActionsApiForProvider(provider);
 
     const result = (await ctx.runAction(actionsApi.execCommand, {
       instanceId: providerInstanceId,
@@ -994,7 +1102,20 @@ export const listTemplates = httpAction(async (ctx, req) => {
         }))
       : [];
 
+  const pveLxcTemplates =
+    !providerFilter || providerFilter === "pve-lxc"
+      ? PVE_LXC_SNAPSHOT_PRESETS.map((preset) => ({
+          provider: "pve-lxc" as const,
+          templateId: preset.id,
+          name: preset.label,
+          description: preset.description,
+          cpu: preset.cpu,
+          memory: preset.memory,
+          disk: preset.disk,
+        }))
+      : [];
+
   return jsonResponse({
-    templates: [...e2bTemplates, ...modalTemplates],
+    templates: [...e2bTemplates, ...modalTemplates, ...pveLxcTemplates],
   });
 });

@@ -23,7 +23,7 @@ import {
   stopInstanceInstanceInstanceIdDelete,
 } from "@cmux/morphcloud-openapi-client";
 import type { SandboxProvider } from "./sandboxInstances";
-import { Agent, fetch as undiciFetch } from "undici";
+import { PveLxcClient } from "@cmux/pve-lxc-client";
 
 // ============================================================================
 // Configuration
@@ -105,203 +105,46 @@ function createMorphProviderClient(apiKey: string): ProviderClient {
 }
 
 // ============================================================================
-// PVE LXC Provider Client
+// PVE LXC Provider Client (delegates to @cmux/pve-lxc-client)
 // ============================================================================
-
-interface PveContainerStatus {
-  vmid: number;
-  status: string;
-  name?: string;
-  template?: number; // 1 if container is a template
-}
-
-interface PveApiResponse<T> {
-  data: T;
-}
-
-async function pveApiRequest<T>(
-  apiUrl: string,
-  apiToken: string,
-  method: string,
-  path: string,
-  dispatcher?: Agent
-): Promise<T> {
-  const url = `${apiUrl}${path}`;
-  const response = await undiciFetch(url, {
-    method,
-    headers: {
-      Authorization: `PVEAPIToken=${apiToken}`,
-    },
-    dispatcher,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`PVE API error ${response.status}: ${text}`);
-  }
-
-  const json = (await response.json()) as PveApiResponse<T>;
-  return json.data;
-}
-
-async function pveWaitForTask(
-  apiUrl: string,
-  apiToken: string,
-  node: string,
-  upid: string,
-  timeoutMs: number = 60000,
-  dispatcher?: Agent
-): Promise<void> {
-  const startTime = Date.now();
-  const pollInterval = 2000;
-
-  while (Date.now() - startTime < timeoutMs) {
-    const status = await pveApiRequest<{ status: string; exitstatus?: string }>(
-      apiUrl,
-      apiToken,
-      "GET",
-      `/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`,
-      dispatcher
-    );
-
-    if (status.status === "stopped") {
-      if (status.exitstatus !== "OK") {
-        throw new Error(`PVE task failed: ${status.exitstatus}`);
-      }
-      return;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollInterval));
-  }
-
-  throw new Error("PVE task timeout");
-}
 
 function createPveLxcProviderClient(
   apiUrl: string,
   apiToken: string,
   node?: string
 ): ProviderClient {
-  let resolvedNode: string | null = node || null;
-  const verifyTls =
-    process.env.PVE_VERIFY_TLS === "1" ||
-    process.env.PVE_VERIFY_TLS?.toLowerCase() === "true";
-  const dispatcher = verifyTls
-    ? undefined
-    : new Agent({ connect: { rejectUnauthorized: false } });
-
-  async function getNode(): Promise<string> {
-    if (resolvedNode) return resolvedNode;
-
-    const nodes = await pveApiRequest<Array<{ node: string }>>(
-      apiUrl,
-      apiToken,
-      "GET",
-      "/api2/json/nodes",
-      dispatcher
-    );
-
-    if (!nodes || nodes.length === 0) {
-      throw new Error("No PVE nodes found");
-    }
-
-    resolvedNode = nodes[0].node;
-    return resolvedNode;
-  }
+  const pveClient = new PveLxcClient({
+    apiUrl,
+    apiToken,
+    node,
+    verifyTls:
+      process.env.PVE_VERIFY_TLS === "1" ||
+      process.env.PVE_VERIFY_TLS?.toLowerCase() === "true",
+  });
 
   return {
     async listInstances(): Promise<ProviderInstance[]> {
-      const nodeName = await getNode();
-      const containers = await pveApiRequest<PveContainerStatus[]>(
-        apiUrl,
-        apiToken,
-        "GET",
-        `/api2/json/nodes/${nodeName}/lxc`,
-        dispatcher
-      );
-
-      // Filter to cmux containers (hostname starts with "cmux-" or "pvelxc-")
-      // Exclude templates and high VMID ranges (>=9000) used for templates
-      // Note: PVE doesn't have native metadata, so we rely on hostname convention
-      return containers
-        .filter((c) => c.name?.startsWith("cmux-") || c.name?.startsWith("pvelxc-"))
-        .filter((c) => c.template !== 1) // Exclude PVE templates
-        .filter((c) => c.vmid < 9000) // Exclude template VMID range (9000-9999)
-        .map((c) => ({
-          id: c.name!,
-          status: c.status === "running" ? "ready" : c.status,
-          // PVE doesn't track creation time easily, use 0 as fallback
-          // The activity table will have the actual creation time
-          created: 0,
-          metadata: {
-            app: "cmux", // Assume cmux for now
-          },
+      const instances = await pveClient.instances.list();
+      return instances
+        .filter((inst) => inst.vmid < 9000) // Exclude template VMID range
+        .map((inst) => ({
+          id: inst.id,
+          status: inst.status === "running" ? "ready" : inst.status,
+          created: 0, // Activity table has actual creation time
+          metadata: { app: "cmux" },
         }));
     },
 
     async pauseInstance(instanceId: string): Promise<void> {
-      const vmid = await resolveVmid(instanceId);
-      const nodeName = await getNode();
-
-      // PVE LXC doesn't support hibernate, so we stop the container
-      const upid = await pveApiRequest<string>(
-        apiUrl,
-        apiToken,
-        "POST",
-        `/api2/json/nodes/${nodeName}/lxc/${vmid}/status/stop`,
-        dispatcher
-      );
-
-      await pveWaitForTask(apiUrl, apiToken, nodeName, upid, 60000, dispatcher);
+      const inst = await pveClient.instances.get({ instanceId });
+      await inst.pause();
     },
 
     async stopInstance(instanceId: string): Promise<void> {
-      const vmid = await resolveVmid(instanceId);
-      const nodeName = await getNode();
-
-      // First stop, then delete
-      try {
-        const stopUpid = await pveApiRequest<string>(
-          apiUrl,
-          apiToken,
-          "POST",
-          `/api2/json/nodes/${nodeName}/lxc/${vmid}/status/stop`,
-          dispatcher
-        );
-        await pveWaitForTask(apiUrl, apiToken, nodeName, stopUpid, 60000, dispatcher);
-      } catch {
-        // May already be stopped
-      }
-
-      const deleteUpid = await pveApiRequest<string>(
-        apiUrl,
-        apiToken,
-        "DELETE",
-        `/api2/json/nodes/${nodeName}/lxc/${vmid}`,
-        dispatcher
-      );
-
-      await pveWaitForTask(apiUrl, apiToken, nodeName, deleteUpid, 60000, dispatcher);
+      const inst = await pveClient.instances.get({ instanceId });
+      await inst.delete();
     },
   };
-
-  async function resolveVmid(instanceId: string): Promise<string> {
-    if (instanceId.startsWith("pvelxc-") || instanceId.startsWith("cmux-")) {
-      const nodeName = await getNode();
-      const containers = await pveApiRequest<PveContainerStatus[]>(
-        apiUrl,
-        apiToken,
-        "GET",
-        `/api2/json/nodes/${nodeName}/lxc`,
-        dispatcher
-      );
-      const match = containers.find((c) => c.name === instanceId);
-      if (match) {
-        return String(match.vmid);
-      }
-    }
-    throw new Error(`Invalid PVE LXC instance ID: ${instanceId}`);
-  }
 }
 
 // ============================================================================

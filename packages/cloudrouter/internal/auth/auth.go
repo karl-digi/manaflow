@@ -20,11 +20,12 @@ const (
 	ConfigDirName   = "cloudrouter"
 	StackAuthAPIURL = "https://api.stack-auth.com"
 
-	// Dev defaults
-	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"
-	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
+	// Dev defaults (fork uses .env auto-loading, these are fallbacks)
+	// Upstream: 1467bed0-8522-45ee-a8d8-055de324118c / famous-camel-162.convex.site
+	DevProjectID      = "83284430-ba13-44be-ba8c-7430b8207c91"
+	DevPublishableKey = "pck_bpq62qtst4yj2skdckbf136qr8wsgmkxahrfg40smpbrr"
 	DevCmuxURL        = "http://localhost:9779"
-	DevConvexSiteURL  = "https://famous-camel-162.convex.site"
+	DevConvexSiteURL  = "https://bold-bandicoot-96.convex.site"
 )
 
 // Prod defaults (set via ldflags) - must be var not const for ldflags to work
@@ -89,11 +90,21 @@ type Config struct {
 func GetConfig() Config {
 	defaultProjectID, defaultPublishableKey, defaultCmuxURL, defaultConvexSiteURL := getDefaultsForMode()
 
-	resolve := func(cliVal, envKey, buildVal, defaultVal string) string {
+	// resolveEnv checks multiple env var names (for compatibility with .env files)
+	resolveEnv := func(envKeys ...string) string {
+		for _, key := range envKeys {
+			if val := os.Getenv(key); val != "" {
+				return val
+			}
+		}
+		return ""
+	}
+
+	resolve := func(cliVal string, envKeys []string, buildVal, defaultVal string) string {
 		if cliVal != "" {
 			return cliVal
 		}
-		if envVal := os.Getenv(envKey); envVal != "" {
+		if envVal := resolveEnv(envKeys...); envVal != "" {
 			return envVal
 		}
 		if buildVal != "" {
@@ -102,10 +113,19 @@ func GetConfig() Config {
 		return defaultVal
 	}
 
-	projectID := resolve(cliProjectID, "STACK_PROJECT_ID", ProjectID, defaultProjectID)
-	publishableKey := resolve(cliPublishableKey, "STACK_PUBLISHABLE_CLIENT_KEY", PublishableKey, defaultPublishableKey)
-	cmuxURL := resolve(cliCmuxURL, "CMUX_API_URL", CmuxURL, defaultCmuxURL)
-	convexSiteURL := resolve(cliConvexSiteURL, "CONVEX_SITE_URL", ConvexSiteURL, defaultConvexSiteURL)
+	// Support both STACK_* (CLI convention) and NEXT_PUBLIC_STACK_* (.env convention)
+	projectID := resolve(cliProjectID, []string{"STACK_PROJECT_ID", "NEXT_PUBLIC_STACK_PROJECT_ID"}, ProjectID, defaultProjectID)
+	publishableKey := resolve(cliPublishableKey, []string{"STACK_PUBLISHABLE_CLIENT_KEY", "NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"}, PublishableKey, defaultPublishableKey)
+	cmuxURL := resolve(cliCmuxURL, []string{"CMUX_API_URL", "BASE_APP_URL"}, CmuxURL, defaultCmuxURL)
+	// CONVEX_SITE_URL is for HTTP routes (.convex.site), NEXT_PUBLIC_CONVEX_URL is for API (.convex.cloud)
+	// If only NEXT_PUBLIC_CONVEX_URL is set, transform .convex.cloud -> .convex.site
+	convexSiteURL := resolve(cliConvexSiteURL, []string{"CONVEX_SITE_URL"}, ConvexSiteURL, defaultConvexSiteURL)
+	if convexSiteURL == "" || convexSiteURL == defaultConvexSiteURL {
+		if convexCloudURL := resolveEnv("NEXT_PUBLIC_CONVEX_URL"); convexCloudURL != "" {
+			// Transform https://xxx.convex.cloud -> https://xxx.convex.site
+			convexSiteURL = strings.Replace(convexCloudURL, ".convex.cloud", ".convex.site", 1)
+		}
+	}
 
 	stackAuthURL := os.Getenv("AUTH_API_URL")
 	if stackAuthURL == "" {

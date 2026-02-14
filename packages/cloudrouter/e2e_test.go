@@ -93,8 +93,8 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("version command failed: %v", err)
 	}
 
-	if !strings.Contains(stdout, "cmux") {
-		t.Errorf("version output should contain 'cmux', got: %s", stdout)
+	if !strings.Contains(stdout, "cloudrouter") {
+		t.Errorf("version output should contain 'cloudrouter', got: %s", stdout)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestHelp(t *testing.T) {
 		t.Fatalf("help command failed: %v", err)
 	}
 
-	expectedCommands := []string{"start", "stop", "delete", "exec", "status", "sync", "upload"}
+	expectedCommands := []string{"start", "stop", "delete", "ssh", "status", "sync", "upload"}
 	for _, cmd := range expectedCommands {
 		if !strings.Contains(stdout, cmd) {
 			t.Errorf("help output should contain '%s', got: %s", cmd, stdout)

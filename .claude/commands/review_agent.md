@@ -13,7 +13,7 @@ User focus (optional): $ARGUMENTS
 ## Auto-collected context
 
 ### Codex review output (mandatory)
-!`cd "$CLAUDE_PROJECT_DIR" && codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.2 -c model_reasoning_effort="high" review --base main 2>&1 || true`
+!`cd "$CLAUDE_PROJECT_DIR" && script -q /dev/null codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.2-codex -c model_reasoning_effort="high" -c model_reasoning_summary="concise" review --base main 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true`
 
 ### Divergence vs upstream/main
 !`cd "$CLAUDE_PROJECT_DIR" && git fetch origin --prune >/dev/null 2>&1 && git fetch upstream --prune >/dev/null 2>&1 && git rev-list --left-right --count main...upstream/main | awk '{print "ahead=" $1 " behind=" $2}'`

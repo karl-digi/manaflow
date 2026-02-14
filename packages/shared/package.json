@@ -137,6 +137,10 @@
     "./modal-snapshots": {
       "import": "./src/modal-snapshots.ts",
       "types": "./src/modal-snapshots.ts"
+    },
+    "./pve-lxc-snapshots": {
+      "import": "./src/pve-lxc-snapshots.ts",
+      "types": "./src/pve-lxc-snapshots.ts"
     }
   },
   "peerDependencies": {

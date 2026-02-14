@@ -22,6 +22,12 @@ import {
   wrapMorphInstance,
   wrapPveLxcInstance,
 } from "@/lib/utils/sandbox-instance";
+import {
+  isPveLxcInstanceId,
+  getInstanceById,
+  tryGetInstanceById,
+  getInstanceTeamId,
+} from "./sandboxes/provider-dispatch";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
@@ -52,6 +58,17 @@ function getMorphClient(): MorphCloudClient {
   return new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
 }
 
+/**
+ * Get MorphCloudClient if configured, or null for PVE-only deployments.
+ * Use with getInstanceById() which handles null Morph client for PVE instances.
+ */
+function getMorphClientOrNull(): MorphCloudClient | null {
+  if (!env.MORPH_API_KEY) {
+    return null;
+  }
+  return new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+}
+
 function concatConfigBlocks(
   blocks: Array<string | null | undefined>,
   separator: string,
@@ -65,12 +82,7 @@ function concatConfigBlocks(
   return normalizedBlocks.join(separator);
 }
 
-function isPveLxcInstanceId(instanceId: string): boolean {
-  return (
-    instanceId.startsWith("pvelxc-") ||
-    instanceId.startsWith("cmux-")
-  );
-}
+// Provider dispatch helpers imported from ./sandboxes/provider-dispatch
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -664,15 +676,7 @@ sandboxesRouter.openapi(
       // Re-fetch instance to get the actual networking data
       let refreshedInstance: SandboxInstance = instance;
       if (instance.networking.httpServices.length === 0) {
-        if (provider === "morph") {
-          refreshedInstance = wrapMorphInstance(
-            await getMorphClient().instances.get({ instanceId: instance.id }),
-          );
-        } else if (provider === "pve-lxc") {
-          refreshedInstance = wrapPveLxcInstance(
-            await getPveLxcClient().instances.get({ instanceId: instance.id }),
-          );
-        }
+        refreshedInstance = await getInstanceById(instance.id, getMorphClientOrNull());
       }
 
       const exposed = refreshedInstance.networking.httpServices;
@@ -1408,43 +1412,25 @@ sandboxesRouter.openapi(
     }
 
     try {
-      if (provider === "morph") {
-        const morphClient = getMorphClient();
-        const instance = await morphClient.instances.get({ instanceId: id });
-
-        const metadataTeamId = (
-          instance as unknown as { metadata?: { teamId?: string } }
-        ).metadata?.teamId;
-        if (metadataTeamId && metadataTeamId !== team.uuid) {
-          return c.text("Forbidden", 403);
-        }
-
-        if (instance.status === "paused") {
-          return c.text("Instance is paused - resume it first", 409);
-        }
-
-        await configureGithubAccess(wrapMorphInstance(instance), gitAuthToken);
-      } else if (provider === "pve-lxc") {
-        if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
-          return c.text("PVE LXC provider not configured", 503);
-        }
-
-        const pveClient = getPveLxcClient();
-        const instance = await pveClient.instances.get({ instanceId: id });
-
-        const metadataTeamId = instance.metadata?.teamId;
-        if (metadataTeamId && metadataTeamId !== team.uuid) {
-          return c.text("Forbidden", 403);
-        }
-
-        if (instance.status !== "running") {
-          return c.text("Container is stopped - resume it first", 409);
-        }
-
-        await configureGithubAccess(wrapPveLxcInstance(instance), gitAuthToken);
-      } else {
+      if (provider !== "morph" && provider !== "pve-lxc") {
         return c.text("Unsupported sandbox provider", 400);
       }
+
+      const instance = await getInstanceById(id, getMorphClientOrNull());
+
+      const metadataTeamId = getInstanceTeamId(instance);
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Check instance is active (Morph uses "paused", PVE LXC uses "running" check)
+      if (provider === "morph" && instance.status === "paused") {
+        return c.text("Instance is paused - resume it first", 409);
+      } else if (provider === "pve-lxc" && instance.status !== "running") {
+        return c.text("Container is stopped - resume it first", 409);
+      }
+
+      await configureGithubAccess(instance, gitAuthToken);
 
       console.log(
         `[sandboxes.refresh-github-auth] Successfully refreshed GitHub auth for sandbox ${id}`
@@ -1507,12 +1493,8 @@ sandboxesRouter.openapi(
       });
       const convex = getConvex({ accessToken });
 
-      // Detect provider based on instance ID prefix
-      const isPveLxc = isPveLxcInstanceId(id);
-
-      let instance: SandboxInstance;
-
-      if (isPveLxc) {
+      // For PVE LXC, verify via activity record (metadata not persisted reliably)
+      if (isPveLxcInstanceId(id)) {
         const activity = await convex.query(api.sandboxInstances.getActivity, {
           instanceId: id,
         });
@@ -1522,48 +1504,20 @@ sandboxesRouter.openapi(
         if (activity.teamId !== team.uuid) {
           return c.text("Forbidden", 403);
         }
+      }
 
-        // PVE LXC instance
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances
-          .get({ instanceId: id })
-          .catch((error) => {
-            console.error("[sandboxes.env] Failed to load PVE LXC instance", error);
-            return null;
-          });
+      // Get instance via provider dispatch (use nullable client for PVE-only deployments)
+      const instance = await tryGetInstanceById(id, getMorphClientOrNull(), "sandboxes.env");
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
 
-        if (!pveLxcInstance) {
-          return c.text("Sandbox not found", 404);
-        }
-
-        // PVE LXC uses in-memory metadata, so we can't verify team ownership reliably
-        // The caller must be authorized to access the team (verified above)
-        instance = wrapPveLxcInstance(pveLxcInstance);
-      } else {
-        // Morph instance (default)
-        const client = getMorphClient();
-        const morphInstance = await client.instances
-          .get({ instanceId: id })
-          .catch((error) => {
-            console.error("[sandboxes.env] Failed to load Morph instance", error);
-            return null;
-          });
-
-        if (!morphInstance) {
-          return c.text("Sandbox not found", 404);
-        }
-
-        const metadataTeamId = (
-          morphInstance as unknown as {
-            metadata?: { teamId?: string };
-          }
-        ).metadata?.teamId;
-
+      // For Morph instances, verify team ownership via metadata
+      if (!isPveLxcInstanceId(id)) {
+        const metadataTeamId = getInstanceTeamId(instance);
         if (metadataTeamId && metadataTeamId !== team.uuid) {
           return c.text("Forbidden", 403);
         }
-
-        instance = wrapMorphInstance(morphInstance);
       }
 
       const encodedEnv = encodeEnvContentForEnvctl(envVarsContent);
@@ -1655,51 +1609,18 @@ sandboxesRouter.openapi(
         teamSlugOrId,
       });
 
-      // Detect provider based on instance ID prefix
-      const isPveLxc = isPveLxcInstanceId(id);
+      // Get instance via provider dispatch (use nullable client for PVE-only deployments)
+      const instance = await tryGetInstanceById(id, getMorphClientOrNull(), "sandboxes.run-scripts");
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
 
-      let instance: SandboxInstance;
-
-      if (isPveLxc) {
-        // PVE LXC instance
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances
-          .get({ instanceId: id })
-          .catch((error) => {
-            console.error("[sandboxes.run-scripts] Failed to load PVE LXC instance", error);
-            return null;
-          });
-
-        if (!pveLxcInstance) {
-          return c.text("Sandbox not found", 404);
-        }
-
-        instance = wrapPveLxcInstance(pveLxcInstance);
-      } else {
-        // Morph instance (default)
-        const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-        const morphInstance = await client.instances
-          .get({ instanceId: id })
-          .catch((error) => {
-            console.error("[sandboxes.run-scripts] Failed to load Morph instance", error);
-            return null;
-          });
-
-        if (!morphInstance) {
-          return c.text("Sandbox not found", 404);
-        }
-
-        const metadataTeamId = (
-          morphInstance as unknown as {
-            metadata?: { teamId?: string };
-          }
-        ).metadata?.teamId;
-
+      // For Morph instances, verify team ownership via metadata
+      if (!isPveLxcInstanceId(id)) {
+        const metadataTeamId = getInstanceTeamId(instance);
         if (metadataTeamId && metadataTeamId !== team.uuid) {
           return c.text("Forbidden", 403);
         }
-
-        instance = wrapMorphInstance(morphInstance);
       }
 
       // Allocate script identifiers for tracking
@@ -1756,23 +1677,12 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     try {
-      // Determine provider based on instance ID prefix
-      const isPveLxc = isPveLxcInstanceId(id);
-
-      if (isPveLxc) {
-        // PVE LXC instance
-        // Note: LXC doesn't support hibernate, so pause() actually stops the container
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
-        await pveLxcInstance.pause();
+      // Get instance via provider dispatch and pause it
+      // Morph preserves RAM state; PVE LXC pause() stops the container
+      const instance = await getInstanceById(id, getMorphClientOrNull());
+      await instance.pause();
+      if (isPveLxcInstanceId(id)) {
         console.log(`[sandboxes.stop] PVE LXC container ${id} stopped`);
-      } else {
-        // Morph instance (default)
-        const client = getMorphClient();
-        const instance = await client.instances.get({ instanceId: id });
-        // Pause the VM directly - Morph preserves RAM state so processes resume exactly where they left off.
-        // No need to kill processes; doing so would terminate agent sessions that should persist across pause/resume.
-        await instance.pause();
       }
       return c.body(null, 204);
     } catch (error) {
@@ -1815,44 +1725,24 @@ sandboxesRouter.openapi(
     const token = await getAccessTokenFromRequest(c.req.raw);
     if (!token) return c.text("Unauthorized", 401);
     try {
-      // Determine provider based on instance ID prefix
+      // Get instance via provider dispatch
       const isPveLxc = isPveLxcInstanceId(id);
-
-      if (isPveLxc) {
-        // PVE LXC instance
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
-        const vscodeService = pveLxcInstance.networking.httpServices.find(
-          (s) => s.port === 39378,
-        );
-        const workerService = pveLxcInstance.networking.httpServices.find(
-          (s) => s.port === 39377,
-        );
-        const running = pveLxcInstance.status === "running" && Boolean(vscodeService);
-        return c.json({
-          running,
-          vscodeUrl: vscodeService?.url,
-          workerUrl: workerService?.url,
-          provider: "pve-lxc" as const,
-        });
-      } else {
-        // Morph instance (default)
-        const client = getMorphClient();
-        const instance = await client.instances.get({ instanceId: id });
-        const vscodeService = instance.networking.httpServices.find(
-          (s) => s.port === 39378,
-        );
-        const workerService = instance.networking.httpServices.find(
-          (s) => s.port === 39377,
-        );
-        const running = Boolean(vscodeService);
-        return c.json({
-          running,
-          vscodeUrl: vscodeService?.url,
-          workerUrl: workerService?.url,
-          provider: "morph" as const,
-        });
-      }
+      const instance = await getInstanceById(id, getMorphClientOrNull());
+      const vscodeService = instance.networking.httpServices.find(
+        (s) => s.port === 39378,
+      );
+      const workerService = instance.networking.httpServices.find(
+        (s) => s.port === 39377,
+      );
+      const running = isPveLxc
+        ? instance.status === "running" && Boolean(vscodeService)
+        : Boolean(vscodeService);
+      return c.json({
+        running,
+        vscodeUrl: vscodeService?.url,
+        workerUrl: workerService?.url,
+        provider: isPveLxc ? ("pve-lxc" as const) : ("morph" as const),
+      });
     } catch (error) {
       console.error("Failed to get sandbox status:", error);
       return c.text("Failed to get status", 500);
@@ -1907,21 +1797,10 @@ sandboxesRouter.openapi(
     const { id } = c.req.valid("param");
     const { teamSlugOrId, taskRunId } = c.req.valid("json");
     try {
-      // Determine provider based on instance ID prefix
-      const isPveLxc = isPveLxcInstanceId(id);
-      let instance: SandboxInstance;
+      // Get instance via provider dispatch
+      const instance = await getInstanceById(id, getMorphClientOrNull());
 
-      if (isPveLxc) {
-        // PVE LXC instance
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
-        instance = wrapPveLxcInstance(pveLxcInstance);
-      } else {
-        // Morph instance (default)
-        const morphClient = getMorphClient();
-        const morphInstance = await morphClient.instances.get({ instanceId: id });
-        instance = wrapMorphInstance(morphInstance);
-      }
+      const isPveLxc = isPveLxcInstanceId(id);
 
       const reservedPorts = RESERVED_CMUX_PORT_SET;
 
@@ -1992,15 +1871,7 @@ sandboxesRouter.openapi(
 
       let workingInstance = instance;
       const reloadInstance = async () => {
-        if (isPveLxc) {
-          const pveClient = getPveLxcClient();
-          const pveLxcInstance = await pveClient.instances.get({ instanceId: instance.id });
-          workingInstance = wrapPveLxcInstance(pveLxcInstance);
-        } else {
-          const morphClient = getMorphClient();
-          const morphInstance = await morphClient.instances.get({ instanceId: instance.id });
-          workingInstance = wrapMorphInstance(morphInstance);
-        }
+        workingInstance = await getInstanceById(instance.id, getMorphClientOrNull());
       };
 
       await reloadInstance();
@@ -2606,20 +2477,8 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     try {
-      // Determine provider based on instance ID prefix
-      const isPveLxc = isPveLxcInstanceId(id);
-
-      let sandbox: SandboxInstance;
-
-      if (isPveLxc) {
-        const pveClient = getPveLxcClient();
-        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
-        sandbox = wrapPveLxcInstance(pveLxcInstance);
-      } else {
-        const morphClient = getMorphClient();
-        const instance = await morphClient.instances.get({ instanceId: id });
-        sandbox = wrapMorphInstance(instance);
-      }
+      // Get instance via provider dispatch
+      const sandbox = await getInstanceById(id, getMorphClientOrNull());
 
       // Find all .git directories in the workspace
       const findResult = await sandbox.exec(

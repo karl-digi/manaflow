@@ -35,6 +35,7 @@
     "@ai-sdk/provider-utils": "^3.0.9",
     "@cmux/e2b-client": "workspace:*",
     "@cmux/morphcloud-openapi-client": "workspace:*",
+    "@cmux/pve-lxc-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@convex-dev/migrations": "^0.2.9",
     "@octokit/request": "^10.0.7",

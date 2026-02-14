@@ -340,6 +340,7 @@
         "@asteasolutions/zod-to-openapi": "^8.1.0",
         "@base-ui-components/react": "^1.0.0-beta.7",
         "@cmux/convex": "workspace:*",
+        "@cmux/pve-lxc-client": "workspace:*",
         "@cmux/shared": "workspace:*",
         "@cmux/www-openapi-client": "workspace:*",
         "@convex-dev/react-query": "^0.0.0-alpha.11",
@@ -442,6 +443,7 @@
         "@ai-sdk/provider-utils": "^3.0.9",
         "@cmux/e2b-client": "workspace:*",
         "@cmux/morphcloud-openapi-client": "workspace:*",
+        "@cmux/pve-lxc-client": "workspace:*",
         "@cmux/shared": "workspace:*",
         "@convex-dev/migrations": "^0.2.9",
         "@octokit/request": "^10.0.7",
@@ -499,6 +501,20 @@
         "@eslint/js": "^9.34.0",
         "@hey-api/client-fetch": "^0.13.1",
         "@hey-api/openapi-ts": "^0.82.1",
+        "@types/node": "^24.9.1",
+        "eslint": "^9.34.0",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.41.0",
+      },
+    },
+    "packages/pve-lxc-client": {
+      "name": "@cmux/pve-lxc-client",
+      "version": "0.1.0",
+      "dependencies": {
+        "undici": "^6.21.3",
+      },
+      "devDependencies": {
+        "@eslint/js": "^9.34.0",
         "@types/node": "^24.9.1",
         "eslint": "^9.34.0",
         "typescript": "^5.9.3",
@@ -904,6 +920,8 @@
     "@cmux/host-screenshot-collector": ["@cmux/host-screenshot-collector@workspace:packages/host-screenshot-collector"],
 
     "@cmux/morphcloud-openapi-client": ["@cmux/morphcloud-openapi-client@workspace:packages/morphcloud-openapi-client"],
+
+    "@cmux/pve-lxc-client": ["@cmux/pve-lxc-client@workspace:packages/pve-lxc-client"],
 
     "@cmux/scripts": ["@cmux/scripts@workspace:scripts"],
 
