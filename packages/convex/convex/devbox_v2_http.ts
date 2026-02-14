@@ -113,6 +113,11 @@ const modalInstancesApi = (internal as any).modalInstances as {
   recordStopInternal: FunctionReference<"mutation", "internal">;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cloudRouterSubscriptionApi = (internal as any).cloudRouterSubscription as {
+  checkConcurrencyLimit: FunctionReference<"query", "internal">;
+};
+
 /**
  * Record activity for a provider instance
  */
@@ -199,6 +204,22 @@ export const createInstance = httpAction(async (ctx, req) => {
   }
 
   const provider: SandboxProvider = body.provider ?? "e2b";
+
+  // Check concurrency limit before creating a new instance
+  const concurrency = await ctx.runQuery(
+    cloudRouterSubscriptionApi.checkConcurrencyLimit,
+    { userId: identity!.subject },
+  ) as { allowed: boolean; limit: number; current: number };
+
+  if (!concurrency.allowed) {
+    return jsonResponse(
+      {
+        code: 429,
+        message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
+      },
+      429,
+    );
+  }
 
   try {
     if (provider === "modal") {
@@ -587,6 +608,23 @@ async function handleResumeInstance(
 
     if (!instance) {
       return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+
+    // Check concurrency limit before resuming (resuming makes it running)
+    const resumeIdentity = await ctx.auth.getUserIdentity();
+    const concurrency = await ctx.runQuery(
+      cloudRouterSubscriptionApi.checkConcurrencyLimit,
+      { userId: resumeIdentity!.subject },
+    ) as { allowed: boolean; limit: number; current: number };
+
+    if (!concurrency.allowed) {
+      return jsonResponse(
+        {
+          code: 429,
+          message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
+        },
+        429,
+      );
     }
 
     const providerInfo = await getProviderInfo(ctx, id);

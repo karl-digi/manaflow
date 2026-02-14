@@ -147,11 +147,6 @@ const devboxInternalApi = (internal as any).devboxInstances as {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const cloudRouterSubscriptionApi = (internal as any).cloudRouterSubscription as {
-  checkConcurrencyLimit: FunctionReference<"query", "internal">;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const morphInstancesApi = (internal as any).morphInstances as {
   recordResumeInternal: FunctionReference<"mutation", "internal">;
   recordPauseInternal: FunctionReference<"mutation", "internal">;
@@ -238,22 +233,6 @@ export const createInstance = httpAction(async (ctx, req) => {
     return jsonResponse(
       { code: 503, message: "Morph API not configured" },
       503
-    );
-  }
-
-  // Check concurrency limit before creating a new instance
-  const concurrency = await ctx.runQuery(
-    cloudRouterSubscriptionApi.checkConcurrencyLimit,
-    { userId: identity!.subject },
-  ) as { allowed: boolean; limit: number; current: number };
-
-  if (!concurrency.allowed) {
-    return jsonResponse(
-      {
-        code: 429,
-        message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
-      },
-      429,
     );
   }
 
@@ -772,23 +751,6 @@ async function handleResumeInstance(
 
     if (!instance) {
       return jsonResponse({ code: 404, message: "Instance not found" }, 404);
-    }
-
-    // Check concurrency limit before resuming (resuming makes it running)
-    const resumeIdentity = await ctx.auth.getUserIdentity();
-    const concurrency = await ctx.runQuery(
-      cloudRouterSubscriptionApi.checkConcurrencyLimit,
-      { userId: resumeIdentity!.subject },
-    ) as { allowed: boolean; limit: number; current: number };
-
-    if (!concurrency.allowed) {
-      return jsonResponse(
-        {
-          code: 429,
-          message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
-        },
-        429,
-      );
     }
 
     // Get provider instance ID
