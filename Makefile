@@ -8,7 +8,7 @@ PROJECT_NAME := cmux-convex
 ENV_FILE ?= .env
 ENV_FILE_PROD ?= .env.production
 
-.PHONY: convex-up convex-down convex-restart convex-clean convex-init convex-init-prod convex-clear convex-clear-prod convex-reset convex-reset-prod convex-fresh dev dev-electron sync-upstream-tags chrome-debug
+.PHONY: convex-up convex-down convex-restart convex-clean convex-init convex-init-prod convex-clear convex-clear-prod convex-reset convex-reset-prod convex-fresh dev dev-electron install-cloudrouter-dev sync-upstream-tags chrome-debug
 .PHONY: clone-proxy-linux-amd64 clone-proxy-linux-arm64 screenshot-collector-upload screenshot-collector-upload-prod
 .PHONY: cloudrouter-npm-republish-prod cloudrouter-npm-republish-prod-dry
 
@@ -106,6 +106,25 @@ dev:
 
 dev-electron:
 	./scripts/dev.sh --electron --electron-debug
+
+# Build and install cloudrouter CLI (dev mode)
+# cloudrouter auto-loads CLOUDROUTER_REFRESH_TOKEN from .env (no interactive login needed)
+install-cloudrouter-dev:
+	@echo "Building and installing cloudrouter (dev mode)..."
+	$(MAKE) -C packages/cloudrouter install-dev
+	@echo ""
+	@echo "Verifying auth..."
+	@if cloudrouter whoami 2>/dev/null | grep -q "User:"; then \
+		cloudrouter whoami; \
+		echo ""; \
+		echo "cloudrouter ready. Run: cloudrouter start ."; \
+	else \
+		echo "Not logged in."; \
+		echo ""; \
+		echo "Options:"; \
+		echo "  1. Add CLOUDROUTER_REFRESH_TOKEN to .env (recommended for dev)"; \
+		echo "  2. Or run 'cloudrouter login' (requires dev server: make dev)"; \
+	fi
 
 # Start Chrome with remote debugging on port 9222 (for CDP/MCP)
 chrome-debug:

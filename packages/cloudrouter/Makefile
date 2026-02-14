@@ -52,11 +52,22 @@ build-dev:
 	go build -ldflags "$(DEV_LDFLAGS)" -o bin/cloudrouter ./cmd/cmux
 	@echo "Dev build complete: bin/cloudrouter"
 
-# Install dev build to system
+# Install dev build to user directory (no sudo needed)
 install-dev: build-dev
-	@echo "Installing cloudrouter to /usr/local/bin..."
-	cp bin/cloudrouter /usr/local/bin/cloudrouter
-	@echo "Installed! Run 'cloudrouter --version' to verify."
+	@mkdir -p ~/.local/bin
+	@cp bin/cloudrouter ~/.local/bin/cloudrouter
+	@echo "Installed to ~/.local/bin/cloudrouter"
+	@# Check if ~/.local/bin is in PATH
+	@if ! echo "$$PATH" | grep -q "$$HOME/.local/bin"; then \
+		echo ""; \
+		echo "Add to your shell profile (~/.zshrc or ~/.bashrc):"; \
+		echo '  export PATH="$$HOME/.local/bin:$$PATH"'; \
+		echo ""; \
+		echo "Or run now:"; \
+		echo '  export PATH="$$HOME/.local/bin:$$PATH"'; \
+	else \
+		echo "Run 'cloudrouter --version' to verify."; \
+	fi
 
 # =============================================================================
 # Production Builds

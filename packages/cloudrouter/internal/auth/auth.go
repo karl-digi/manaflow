@@ -184,7 +184,31 @@ func StoreRefreshToken(token string) error {
 	return storeInFile(token)
 }
 
+// getRefreshTokenFromEnv checks .env file first, then falls back to env var
+func getRefreshTokenFromEnv() string {
+	// Try loading from .env file first (same pattern as GetConfig)
+	if data, err := os.ReadFile(".env"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "CLOUDROUTER_REFRESH_TOKEN=") {
+				token := strings.TrimPrefix(line, "CLOUDROUTER_REFRESH_TOKEN=")
+				// Remove quotes if present
+				token = strings.Trim(token, "\"'")
+				if token != "" {
+					return token
+				}
+			}
+		}
+	}
+	// Fall back to environment variable
+	return os.Getenv("CLOUDROUTER_REFRESH_TOKEN")
+}
+
 func GetRefreshToken() (string, error) {
+	// Check .env file and env var first (for CI/automation - bypasses interactive login)
+	if token := getRefreshTokenFromEnv(); token != "" {
+		return token, nil
+	}
 	if runtime.GOOS == "darwin" {
 		return getFromKeychain()
 	}
@@ -331,6 +355,10 @@ func ClearCachedAccessToken() error {
 }
 
 func IsLoggedIn() bool {
+	// .env file or env var counts as logged in (for CI/automation)
+	if getRefreshTokenFromEnv() != "" {
+		return true
+	}
 	_, err := GetRefreshToken()
 	return err == nil
 }
@@ -351,6 +379,11 @@ type RefreshTokenResponse struct {
 
 func Login() error {
 	cfg := GetConfig()
+	// If using .env or env var, no need to login interactively
+	if getRefreshTokenFromEnv() != "" {
+		fmt.Println("Using CLOUDROUTER_REFRESH_TOKEN from .env or environment (no login needed).")
+		return nil
+	}
 	if IsLoggedIn() {
 		fmt.Println("Already logged in. Run 'cloudrouter logout' first to re-authenticate.")
 		return nil
