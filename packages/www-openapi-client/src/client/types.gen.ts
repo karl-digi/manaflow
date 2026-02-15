@@ -447,7 +447,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_40tltpm1' | 'snapshot_ychnckx4');
+    snapshotId?: string | ('snapshot_mgmhjyrd' | 'snapshot_fe0cgqlw');
 };
 
 export type InstanceInfo = {
@@ -519,7 +519,7 @@ export type PveLxcCheckTaskRunStoppedBody = {
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
-    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
 };
 
 export type CreateEnvironmentBody = {
@@ -538,7 +538,7 @@ export type GetEnvironmentResponse = {
     id: string;
     name: string;
     snapshotId: string;
-    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
     templateVmid?: number;
     dataVaultKey: string;
     selectedRepos?: Array<string>;
@@ -589,7 +589,7 @@ export type SnapshotVersionResponse = {
     id: string;
     version: number;
     snapshotId: string;
-    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
     templateVmid?: number;
     createdAt: number;
     createdByUserId: string;
@@ -604,7 +604,7 @@ export type ListSnapshotVersionsResponse = Array<SnapshotVersionResponse>;
 export type CreateSnapshotVersionResponse = {
     snapshotVersionId: string;
     snapshotId: string;
-    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
     version: number;
 };
 
@@ -619,7 +619,7 @@ export type CreateSnapshotVersionBody = {
 
 export type ActivateSnapshotVersionResponse = {
     snapshotId: string;
-    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
     templateVmid?: number;
     version: number;
 };

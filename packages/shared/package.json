@@ -18,6 +18,10 @@
       "import": "./src/socket-client.ts",
       "types": "./src/socket-client.ts"
     },
+    "./provider-types": {
+      "import": "./src/provider-types.ts",
+      "types": "./src/provider-types.ts"
+    },
     "./node/socket": {
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"

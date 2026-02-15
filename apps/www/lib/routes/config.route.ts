@@ -1,8 +1,5 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import {
-  getActiveSandboxProvider,
-  type SandboxProvider,
-} from "@/lib/utils/sandbox-provider";
+import { getActiveSandboxProvider } from "@/lib/utils/sandbox-provider";
 import {
   DEFAULT_MORPH_SNAPSHOT_ID,
   MORPH_SNAPSHOT_PRESETS,
@@ -19,13 +16,14 @@ import {
   type SandboxPreset,
   type SandboxProviderType,
 } from "@cmux/shared";
+import { CONFIG_PROVIDERS } from "@cmux/shared/provider-types";
 
 export const configRouter = new OpenAPIHono();
 
 /**
  * Map internal provider name to API provider type
  */
-function toProviderType(provider: SandboxProvider): SandboxProviderType {
+function toProviderType(provider: string): SandboxProviderType {
   switch (provider) {
     case "pve-lxc":
       return "pve-lxc";
@@ -110,7 +108,7 @@ const SandboxProviderCapabilitiesSchema = z
 
 const SandboxConfigSchema = z
   .object({
-    provider: z.enum(["morph", "pve-lxc", "pve-vm"]),
+    provider: z.enum(CONFIG_PROVIDERS),
     providerDisplayName: z.string(),
     presets: z.array(SandboxPresetSchema),
     defaultPresetId: z.string(),

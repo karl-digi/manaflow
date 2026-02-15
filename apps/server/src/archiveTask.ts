@@ -1,5 +1,6 @@
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
+import type { VSCodeProvider } from "@cmux/shared/provider-types";
 import type { FunctionReturnType } from "convex/server";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -18,7 +19,7 @@ interface DockerPortMapping {
   vnc: string;
 }
 
-export type VSCodeProvider = "docker" | "morph" | "daytona" | "pve-lxc" | "other";
+export type { VSCodeProvider };
 
 export interface StopResult {
   success: boolean;

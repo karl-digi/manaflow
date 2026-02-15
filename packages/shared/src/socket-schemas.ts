@@ -1,6 +1,7 @@
 import type { Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
 import { typedZid } from "./utils/typed-zid";
+import { RUNTIME_PROVIDERS } from "./provider-types";
 import type {
   AggregatePullRequestSummary,
   PullRequestActionResult,
@@ -292,7 +293,7 @@ export const VSCodeSpawnedSchema = z.object({
   workspaceUrl: z.string(),
   vncUrl: z.string().optional(),
   xtermUrl: z.string().optional(),
-  provider: z.enum(["docker", "morph", "daytona", "pve-lxc", "other"]),
+  provider: z.enum(RUNTIME_PROVIDERS),
 });
 
 

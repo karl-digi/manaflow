@@ -1,5 +1,6 @@
 import { useSocket } from "@/contexts/socket/use-socket";
 import type { Doc } from "@cmux/convex/dataModel";
+import type { VSCodeProvider } from "@cmux/shared/provider-types";
 import { editorIcons, type EditorType } from "@/components/ui/dropdown-types";
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -7,13 +8,6 @@ import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
-type VSCodeProvider =
-  | "docker"
-  | "morph"
-  | "daytona"
-  | "pve-lxc"
-  | "other"
-  | undefined;
 
 type OpenWithAction = {
   id: EditorType;
@@ -28,7 +22,7 @@ type PortAction = {
 
 type UseOpenWithActionsArgs = {
   vscodeUrl?: string | null;
-  vscodeProvider?: VSCodeProvider;
+  vscodeProvider?: VSCodeProvider | string;
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;

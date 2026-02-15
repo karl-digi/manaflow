@@ -23,8 +23,9 @@ import {
   DEFAULT_PVE_LXC_SNAPSHOT_ID,
   PVE_LXC_SNAPSHOT_PRESETS,
 } from "@cmux/shared/pve-lxc-snapshots";
+import { DEFAULT_SANDBOX_PROVIDER, type DevboxProvider } from "@cmux/shared/provider-types";
 
-type SandboxProvider = "e2b" | "modal" | "pve-lxc";
+type SandboxProvider = Extract<DevboxProvider, "e2b" | "modal" | "pve-lxc">;
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -892,8 +893,8 @@ export const getConfig = httpAction(async (ctx) => {
   const { error } = await getAuthenticatedUser(ctx);
   if (error) return error;
 
-  // Read default provider from env var, fallback to "e2b"
-  const defaultProvider = (process.env.SANDBOX_PROVIDER as SandboxProvider) || "e2b";
+  // Read default provider from env var, fallback to shared constant
+  const defaultProvider = (process.env.SANDBOX_PROVIDER as SandboxProvider) || DEFAULT_SANDBOX_PROVIDER;
 
   return jsonResponse({
     providers: ["e2b", "modal", "pve-lxc"],

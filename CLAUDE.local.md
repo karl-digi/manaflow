@@ -17,7 +17,7 @@
 bun install && make install-cloudrouter-dev && cloudrouter whoami
 # Then: make dev (terminal 1), cloudrouter start . (terminal 2)
 
-# Set default sandbox provider in Convex env (optional, default: e2b)
+# Set default sandbox provider in Convex env (optional, default: pve-lxc)
 # SANDBOX_PROVIDER=pve-lxc  # or: morph, e2b, modal
 ```
 

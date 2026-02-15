@@ -7,8 +7,8 @@ import {
   getActiveSandboxProvider,
   isMorphAvailable,
   isProxmoxAvailable,
-  type SandboxProvider,
 } from "@/lib/utils/sandbox-provider";
+import type { ConfigProvider } from "@cmux/shared/provider-types";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
 import { MORPH_SNAPSHOT_PRESETS } from "@cmux/shared";
@@ -22,8 +22,8 @@ export type ConvexClient = ReturnType<typeof getConvex>;
 export interface SnapshotResolution {
   team: Awaited<ReturnType<typeof verifyTeamAccess>>;
   resolvedSnapshotId: string;
-  /** The sandbox provider to use */
-  provider: SandboxProvider;
+  /** The sandbox provider to use (may be an unknown/external provider) */
+  provider: string;
   resolvedTemplateVmid?: number;
   environmentDataVaultKey?: string;
   environmentMaintenanceScript?: string;
@@ -35,7 +35,7 @@ export interface SnapshotResolution {
 /**
  * Get the default snapshot ID based on the active provider
  */
-function getDefaultSnapshotId(provider: SandboxProvider): string {
+function getDefaultSnapshotId(provider: string): string {
   switch (provider) {
     case "pve-lxc":
       return DEFAULT_PVE_LXC_SNAPSHOT_ID;
@@ -69,7 +69,7 @@ function isKnownDefaultSnapshot(snapshotId: string): boolean {
 
 function resolveProviderForSnapshotId(
   snapshotId: string
-): SandboxProvider | null {
+): ConfigProvider | null {
   const isMorphSnapshot = MORPH_SNAPSHOT_PRESETS.some((preset) =>
     preset.versions.some((v) => v.snapshotId === snapshotId)
   );
@@ -86,7 +86,7 @@ function resolveProviderForSnapshotId(
   return null;
 }
 
-function ensureProviderAvailable(provider: SandboxProvider): void {
+function ensureProviderAvailable(provider: string): void {
   if (provider === "pve-vm") {
     throw new HTTPException(501, {
       message: "PVE VM provider is not supported yet",
@@ -102,9 +102,11 @@ function ensureProviderAvailable(provider: SandboxProvider): void {
       message: "PVE LXC provider is not configured",
     });
   }
+  // Unknown providers (e.g. "e2b") -- no startup validation needed,
+  // credentials are managed elsewhere.
 }
 
-function isSandboxProvider(value: string | undefined): value is SandboxProvider {
+function isSandboxProvider(value: string | undefined): value is ConfigProvider {
   return value === "morph" || value === "pve-lxc" || value === "pve-vm";
 }
 

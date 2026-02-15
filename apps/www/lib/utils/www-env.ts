@@ -34,10 +34,10 @@ export const env = createEnv({
     // GitHub App
     CMUX_GITHUB_APP_ID: z.string().min(1),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1),
-    // Sandbox providers (at least one required)
-    // Explicit provider selection: "morph", "pve-lxc", or "pve-vm"
-    // If not set, defaults to "morph"
-    SANDBOX_PROVIDER: z.enum(["morph", "pve-lxc", "pve-vm"]).optional(),
+    // Sandbox provider override.  Known: "morph", "pve-lxc", "pve-vm".
+    // Any string accepted so external providers (e.g. "e2b") don't crash startup.
+    // When unset, auto-detects from credentials or falls back to DEFAULT_SANDBOX_PROVIDER.
+    SANDBOX_PROVIDER: z.string().min(1).optional(),
     // Morph Cloud - required if SANDBOX_PROVIDER is "morph" or unset
     MORPH_API_KEY: sandboxProviderSchema.MORPH_API_KEY,
     // Proxmox VE LXC - required if SANDBOX_PROVIDER is "pve-lxc" or "pve-vm"

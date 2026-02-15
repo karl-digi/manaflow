@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
+import { runtimeProviderValidator } from "../_shared/provider-validators";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -1066,13 +1067,7 @@ export const updateVSCodeInstance = authMutation({
     teamSlugOrId: v.string(),
     id: v.id("taskRuns"),
     vscode: v.object({
-      provider: v.union(
-        v.literal("docker"),
-        v.literal("morph"),
-        v.literal("daytona"),
-        v.literal("pve-lxc"),
-        v.literal("other"),
-      ),
+      provider: runtimeProviderValidator,
       containerName: v.optional(v.string()),
       status: v.union(
         v.literal("starting"),
@@ -1597,13 +1592,7 @@ export const updateVSCodeMetadataInternal = internalMutation({
     vscode: v.optional(
       v.object({
         provider: v.optional(
-          v.union(
-            v.literal("docker"),
-            v.literal("morph"),
-            v.literal("daytona"),
-            v.literal("pve-lxc"),
-            v.literal("other"),
-          ),
+          runtimeProviderValidator,
         ),
         containerName: v.optional(v.string()),
         status: v.optional(

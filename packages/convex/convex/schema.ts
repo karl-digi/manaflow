@@ -1,5 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+  devboxProviderValidator,
+  runtimeProviderValidator,
+  snapshotProviderValidator,
+} from "../_shared/provider-validators";
 
 const convexSchema = defineSchema({
   teams: defineTable({
@@ -283,13 +288,7 @@ const convexSchema = defineSchema({
     // VSCode instance information
     vscode: v.optional(
       v.object({
-        provider: v.union(
-          v.literal("docker"),
-          v.literal("morph"),
-          v.literal("daytona"),
-          v.literal("pve-lxc"),
-          v.literal("other")
-        ), // Extensible for future providers
+        provider: runtimeProviderValidator, // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
         status: v.union(
           v.literal("starting"),
@@ -844,16 +843,7 @@ const convexSchema = defineSchema({
     teamId: v.string(), // Team that owns this environment
     userId: v.string(), // User who created the environment
     snapshotId: v.optional(v.string()), // Canonical snapshot identifier (snapshot_*)
-    snapshotProvider: v.optional(
-      v.union(
-        v.literal("morph"),
-        v.literal("pve-lxc"),
-        v.literal("pve-vm"),
-        v.literal("docker"),
-        v.literal("daytona"),
-        v.literal("other")
-      )
-    ),
+    snapshotProvider: v.optional(snapshotProviderValidator),
     templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     dataVaultKey: v.string(), // Key for StackAuth DataBook (stores encrypted env vars)
     selectedRepos: v.optional(v.array(v.string())), // List of repository full names
@@ -873,16 +863,7 @@ const convexSchema = defineSchema({
     teamId: v.string(),
     morphSnapshotId: v.optional(v.string()), // Legacy field for backfill
     snapshotId: v.optional(v.string()),
-    snapshotProvider: v.optional(
-      v.union(
-        v.literal("morph"),
-        v.literal("pve-lxc"),
-        v.literal("pve-vm"),
-        v.literal("docker"),
-        v.literal("daytona"),
-        v.literal("other")
-      )
-    ),
+    snapshotProvider: v.optional(snapshotProviderValidator),
     templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     version: v.number(),
     createdAt: v.number(),
@@ -1248,26 +1229,11 @@ const convexSchema = defineSchema({
   // Supports: morph, pve-lxc, docker, daytona, and future providers
   sandboxInstanceActivity: defineTable({
     instanceId: v.string(), // Instance ID (morphvm_xxx, pvelxc-xxx, etc.)
-    provider: v.union(
-      v.literal("morph"),
-      v.literal("pve-lxc"),
-      v.literal("docker"),
-      v.literal("daytona"),
-      v.literal("other")
-    ),
+    provider: runtimeProviderValidator,
     vmid: v.optional(v.number()), // PVE VMID
     hostname: v.optional(v.string()), // PVE hostname (instanceId for new instances)
     snapshotId: v.optional(v.string()),
-    snapshotProvider: v.optional(
-      v.union(
-        v.literal("morph"),
-        v.literal("pve-lxc"),
-        v.literal("pve-vm"),
-        v.literal("docker"),
-        v.literal("daytona"),
-        v.literal("other")
-      )
-    ),
+    snapshotProvider: v.optional(snapshotProviderValidator),
     templateVmid: v.optional(v.number()),
     // Activity timestamps
     lastPausedAt: v.optional(v.number()), // When instance was last paused by cron
@@ -1312,7 +1278,7 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona"), v.literal("pve-lxc")), // Provider name (extensible for future providers)
+    provider: devboxProviderValidator, // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),

@@ -12,6 +12,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import { SNAPSHOT_PROVIDERS } from "@cmux/shared/provider-types";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
@@ -110,7 +111,7 @@ const CreateEnvironmentResponse = z
   .object({
     id: z.string(),
     snapshotId: z.string(),
-    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
   })
   .openapi("CreateEnvironmentResponse");
 
@@ -119,7 +120,7 @@ const GetEnvironmentResponse = z
     id: z.string(),
     name: z.string(),
     snapshotId: z.string(),
-    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
     templateVmid: z.number().optional(),
     dataVaultKey: z.string(),
     selectedRepos: z.array(z.string()).optional(),
@@ -194,7 +195,7 @@ const SnapshotVersionResponse = z
     id: z.string(),
     version: z.number(),
     snapshotId: z.string(),
-    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
     templateVmid: z.number().optional(),
     createdAt: z.number(),
     createdByUserId: z.string(),
@@ -224,7 +225,7 @@ const CreateSnapshotVersionResponse = z
   .object({
     snapshotVersionId: z.string(),
     snapshotId: z.string(),
-    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
     version: z.number(),
   })
   .openapi("CreateSnapshotVersionResponse");
@@ -238,7 +239,7 @@ const ActivateSnapshotVersionBody = z
 const ActivateSnapshotVersionResponse = z
   .object({
     snapshotId: z.string(),
-    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
     templateVmid: z.number().optional(),
     version: z.number(),
   })

@@ -1,6 +1,5 @@
 import { toProxyWorkspaceUrl } from "./toProxyWorkspaceUrl";
-
-type VSCodeProvider = "docker" | "morph" | "daytona" | "pve-lxc" | "other" | undefined;
+import type { VSCodeProvider } from "@cmux/shared/provider-types";
 
 /**
  * Get the workspace URL with appropriate serve-web handling based on provider.
@@ -11,7 +10,7 @@ type VSCodeProvider = "docker" | "morph" | "daytona" | "pve-lxc" | "other" | und
  */
 export function getWorkspaceUrl(
   rawWorkspaceUrl: string | null | undefined,
-  provider: VSCodeProvider,
+  provider: VSCodeProvider | undefined,
   localServeWebBaseUrl: string | null | undefined
 ): string | null {
   if (!rawWorkspaceUrl) {
