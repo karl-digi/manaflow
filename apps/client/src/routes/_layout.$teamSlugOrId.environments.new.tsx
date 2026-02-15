@@ -7,11 +7,6 @@ import {
   persistEnvironmentDraftMetadata,
   useEnvironmentDraft,
 } from "@/state/environment-draft-store";
-import {
-  DEFAULT_MORPH_SNAPSHOT_ID,
-  MORPH_SNAPSHOT_PRESETS,
-  type MorphSnapshotId,
-} from "@cmux/shared";
 import { postApiMorphSetupInstanceMutation } from "@cmux/www-openapi-client/react-query";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -25,17 +20,14 @@ import {
 } from "react";
 import { z } from "zod";
 
-const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
-  (preset) => preset.id
-) as [MorphSnapshotId, ...MorphSnapshotId[]];
-
 const searchSchema = z.object({
   step: z.enum(["select", "configure"]).default("select"),
   selectedRepos: z.array(z.string()).default([]),
   instanceId: z.string().optional(),
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
-  snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
+  // snapshotId is now optional - will be set to provider's default when undefined
+  snapshotId: z.string().optional(),
 });
 
 const haveSameRepos = (
@@ -75,8 +67,8 @@ function EnvironmentsPage() {
   const stepFromSearch = searchParams.step ?? "select";
   const urlSelectedRepos = searchParams.selectedRepos ?? [];
   const urlInstanceId = searchParams.instanceId;
-  const searchSnapshotId =
-    searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
+  // snapshotId is optional - will be set dynamically from sandbox config API
+  const searchSnapshotId = searchParams.snapshotId;
   const { teamSlugOrId } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
@@ -192,7 +184,7 @@ function EnvironmentsPage() {
     (payload: {
       selectedRepos: string[];
       instanceId?: string;
-      snapshotId?: MorphSnapshotId;
+      snapshotId?: string;
     }) => {
       const existingRepos = draft?.selectedRepos ?? [];
       const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);

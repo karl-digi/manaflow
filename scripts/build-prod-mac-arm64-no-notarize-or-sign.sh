@@ -162,6 +162,8 @@ start_step "Build native addon (release)"
 end_step
 
 start_step "Build Electron app"
+# Clean previous build output to ensure config changes (like base path) take effect
+rm -rf "$CLIENT_DIR/out"
 (cd "$CLIENT_DIR" && bunx electron-vite build -c electron.vite.config.ts)
 end_step
 
@@ -171,12 +173,9 @@ start_step "Package DMG"
 export CSC_IDENTITY_AUTO_DISCOVERY=false
 (cd "$CLIENT_DIR" && \
   bunx electron-builder \
-    --config electron-builder.json \
+    --config electron-builder.fork.local.json \
     --mac dmg --arm64 \
-    --publish never \
-    --config.mac.identity=null \
-    --config.dmg.sign=false \
-    --config.mac.notarize=false)
+    --publish never)
 end_step
 
 echo "==> Done. Outputs in: $DIST_DIR"

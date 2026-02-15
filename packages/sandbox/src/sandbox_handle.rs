@@ -155,6 +155,7 @@ impl SandboxHandle {
             command,
             workdir: workdir.map(String::from),
             env: exec_env,
+            timeout_ms: None,
         };
 
         let response = self.service.exec(self.id.clone(), req).await?;

@@ -97,10 +97,11 @@ function getCommonPaths(variant: VSCodeVariant): string[] {
 
     const apps = appNames[variant];
     const paths: string[] = [];
+    const cliBinary = CLI_NAMES[variant].unix;
 
     for (const app of apps) {
-      // Standard locations - all VS Code variants use the same CLI path structure
-      const cliPath = `${app}/Contents/Resources/app/bin/code`;
+      // Standard locations - use variant-specific CLI binary name
+      const cliPath = `${app}/Contents/Resources/app/bin/${cliBinary}`;
       paths.push(`/Applications/${cliPath}`);
       paths.push(path.join(home, `Applications/${cliPath}`));
     }

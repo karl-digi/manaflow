@@ -185,29 +185,27 @@ export function MentionPlugin({
   // Fetch all files once when repository URL is available
   useEffect(() => {
     if ((repoUrl || environmentId) && socket) {
+      let cancelled = false;
       setIsLoading(true);
-      socket.emit("list-files", {
-        ...(repoUrl ? { repoPath: repoUrl } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(branch ? { branch } : {}),
-      });
-
-      const handleFilesResponse = (data: {
-        files: FileInfo[];
-        error?: string;
-      }) => {
-        setIsLoading(false);
-        if (!data.error) {
-          setFiles(data.files);
-        } else {
-          setFiles([]);
+      socket.emit(
+        "list-files",
+        {
+          ...(repoUrl ? { repoPath: repoUrl } : {}),
+          ...(environmentId ? { environmentId } : {}),
+          ...(branch ? { branch } : {}),
+        },
+        (resp) => {
+          if (cancelled) return;
+          setIsLoading(false);
+          if (resp.ok) {
+            setFiles(resp.files);
+          } else {
+            setFiles([]);
+          }
         }
-      };
-
-      socket.on("list-files-response", handleFilesResponse);
-
+      );
       return () => {
-        socket.off("list-files-response", handleFilesResponse);
+        cancelled = true;
       };
     }
 

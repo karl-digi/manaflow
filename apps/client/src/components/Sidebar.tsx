@@ -22,7 +22,7 @@ import {
   type ComponentType,
   type CSSProperties,
 } from "react";
-import CmuxLogo from "./logo/cmux-logo";
+import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
@@ -257,11 +257,14 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
           activeOptions={{ exact: true }}
-          className="flex items-center gap-2 select-none cursor-pointer"
+          className="flex items-center gap-1.5 select-none cursor-pointer whitespace-nowrap"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
           {/* <Terminals */}
-          <CmuxLogo height={32} />
+          <CmuxLogoMark height={20} label="cmux-next" />
+          <span className="text-xs font-semibold tracking-wide text-neutral-900 dark:text-neutral-100 whitespace-nowrap">
+            cmux-next
+          </span>
         </Link>
         <div className="grow"></div>
         <Link
@@ -327,9 +330,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
               ) : tasks && tasks.length > 0 ? (
                 <>
                   {/* Pinned items at the top */}
-                  {pinnedData && pinnedData.length > 0 && (
+                  {pinnedData && pinnedData.filter(t => !t.isArchived).length > 0 && (
                     <>
-                      {pinnedData.map((task) => (
+                      {pinnedData.filter(t => !t.isArchived).map((task) => (
                         <TaskTree
                           key={task._id}
                           task={task}
@@ -347,8 +350,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                   {/* Regular (non-pinned) tasks */}
                   {tasks
                     .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
+                      // Filter out pinned tasks (shown separately above) and archived tasks
+                      // (defensive filter in case query returns stale data)
+                      return !task.pinned && !task.isArchived;
                     })
                     .map((task) => (
                       <TaskTree

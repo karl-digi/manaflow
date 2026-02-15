@@ -7,13 +7,13 @@ Cloud sandboxes for development. Spin up a sandbox from your local directory, ru
 Install cloudrouter as a skill for Claude Code, Codex, or other coding agents:
 
 ```bash
-npx skills add manaflow-ai/cloudrouter
+npx skills add karlorz/cloudrouter
 ```
 
 Or install as a standalone CLI:
 
 ```bash
-npm install -g @manaflow-ai/cloudrouter
+npm install -g @karlorz/cloudrouter
 ```
 
 Then authenticate:

@@ -1,0 +1,146 @@
+name: Weekly PVE LXC Snapshot
+
+on:
+  schedule:
+    - cron: "0 22 * * *" # Every day 6am HKT
+  workflow_dispatch:
+
+concurrency:
+  group: pve-lxc-snapshot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: "24"
+  BUN_VERSION: "1.2.21"
+  GO_VERSION: "1.23"
+  IDE_DEPS_CHANNEL: ${{ vars.IDE_DEPS_CHANNEL || 'stable' }}
+
+jobs:
+  pve-lxc-snapshot:
+    name: Build PVE LXC Snapshot
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-install-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-install-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run PVE LXC snapshot (with retry)
+        env:
+          PVE_API_URL: ${{ secrets.PVE_API_URL }}
+          PVE_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
+          PVE_PUBLIC_DOMAIN: ${{ secrets.PVE_PUBLIC_DOMAIN }}
+          PVE_NODE: ${{ secrets.PVE_NODE }}
+          TEMPLATE_VMID: ${{ vars.PVE_TEMPLATE_VMID || '9000' }}
+          STANDARD_VCPUS: ${{ vars.PVE_STANDARD_VCPUS || '4' }}
+          STANDARD_MEMORY: ${{ vars.PVE_STANDARD_MEMORY || '8192' }}
+          STANDARD_DISK_SIZE: ${{ vars.PVE_STANDARD_DISK_SIZE || '32768' }}
+          BOOSTED_VCPUS: ${{ vars.PVE_BOOSTED_VCPUS || '6' }}
+          BOOSTED_MEMORY: ${{ vars.PVE_BOOSTED_MEMORY || '8192' }}
+          BOOSTED_DISK_SIZE: ${{ vars.PVE_BOOSTED_DISK_SIZE || '40960' }}
+        run: |
+          max_attempts=3
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts"
+            if uv run ./scripts/snapshot-pvelxc.py \
+              --template-vmid "$TEMPLATE_VMID" \
+              --standard-vcpus "$STANDARD_VCPUS" \
+              --standard-memory "$STANDARD_MEMORY" \
+              --standard-disk-size "$STANDARD_DISK_SIZE" \
+              --boosted-vcpus "$BOOSTED_VCPUS" \
+              --boosted-memory "$BOOSTED_MEMORY" \
+              --boosted-disk-size "$BOOSTED_DISK_SIZE" \
+              --ide-deps-channel "$IDE_DEPS_CHANNEL"; then
+              echo "Snapshot completed successfully"
+              exit 0
+            fi
+            echo "Attempt $attempt failed"
+            if [ $attempt -lt $max_attempts ]; then
+              echo "Waiting 30 seconds before retry..."
+              sleep 30
+            fi
+            attempt=$((attempt + 1))
+          done
+          echo "All $max_attempts attempts failed"
+          exit 1
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes detected"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changes detected"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git user
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create branch and commit
+        if: steps.changes.outputs.has_changes == 'true'
+        id: commit
+        run: |
+          BRANCH_NAME="pve-lxc-snapshot-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH_NAME"
+          git add configs/ide-deps.json packages/shared/src/pve-lxc-snapshots.json
+          git commit -m "chore: weekly PVE LXC snapshot update"
+          git push -u origin "$BRANCH_NAME"
+          echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "chore: weekly PVE LXC snapshot update" \
+            --body "Automated weekly PVE LXC snapshot update.
+
+          ## Changes
+          - Updated PVE LXC templates to latest version
+          - Updated IDE extension and CLI package versions
+
+          ## Test plan
+          - [ ] Verify new templates work by cloning and starting a container" \
+            --head "${{ steps.commit.outputs.branch }}" \
+            --base main

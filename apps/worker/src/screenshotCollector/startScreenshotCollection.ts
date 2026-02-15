@@ -466,9 +466,6 @@ export async function startScreenshotCollection(
     await logToScreenshotCollector(
       "Using taskRun JWT for Claude Code screenshot collection"
     );
-    await logToScreenshotCollector(
-      `JWT details: present=${!!trimmedTaskRunJwt}, length=${trimmedTaskRunJwt?.length ?? 0}, first 20 chars=${trimmedTaskRunJwt?.substring(0, 20) ?? "N/A"}`
-    );
   } else if (trimmedAnthropicApiKey) {
     claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicApiKey } };
     await logToScreenshotCollector(

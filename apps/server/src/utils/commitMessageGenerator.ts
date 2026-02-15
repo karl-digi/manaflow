@@ -2,7 +2,12 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { api } from "@cmux/convex/api";
-import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+  normalizeAnthropicBaseUrl,
+} from "@cmux/shared";
 import { generateText, type LanguageModel } from "ai";
 import { getConvex } from "../utils/convexClient";
 import { serverLogger } from "./fileLogger";
@@ -10,19 +15,32 @@ import { serverLogger } from "./fileLogger";
 function getModelAndProvider(
   apiKeys: Record<string, string>
 ): { model: LanguageModel; providerName: string } | null {
+  // Note: AIGATEWAY_* accessed via process.env to support custom AI gateway configurations
+  if (apiKeys.GEMINI_API_KEY) {
+    const google = createGoogleGenerativeAI({
+      apiKey: apiKeys.GEMINI_API_KEY,
+      baseURL:
+        process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
+    });
+    return { model: google("gemini-2.5-flash"), providerName: "Gemini" };
+  }
   if (apiKeys.OPENAI_API_KEY) {
     const openai = createOpenAI({
       apiKey: apiKeys.OPENAI_API_KEY,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      baseURL:
+        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
     return { model: openai("gpt-5-nano"), providerName: "OpenAI" };
   }
-  if (apiKeys.GEMINI_API_KEY) {
-    const google = createGoogleGenerativeAI({ apiKey: apiKeys.GEMINI_API_KEY });
-    return { model: google("gemini-2.5-flash"), providerName: "Gemini" };
-  }
   if (apiKeys.ANTHROPIC_API_KEY) {
-    const anthropic = createAnthropic({ apiKey: apiKeys.ANTHROPIC_API_KEY });
+    const rawAnthropicBaseUrl =
+      apiKeys.ANTHROPIC_BASE_URL?.trim() ||
+      process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+      CLOUDFLARE_ANTHROPIC_BASE_URL;
+    const anthropic = createAnthropic({
+      apiKey: apiKeys.ANTHROPIC_API_KEY,
+      baseURL: normalizeAnthropicBaseUrl(rawAnthropicBaseUrl).forAiSdk,
+    });
     return {
       model: anthropic("claude-3-5-haiku-20241022"),
       providerName: "Anthropic",

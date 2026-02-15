@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/auth"
+	"github.com/karlorz/cloudrouter/internal/auth"
 )
 
 type Client struct {

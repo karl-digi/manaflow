@@ -1,0 +1,16 @@
+name = "alphasolves-edge-router"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+account_id = "331b116e6a1d98ccf73b5c4f0b2ba56d"  # Uncomment and set your CF account ID
+
+# Catch ALL subdomains, filter at runtime
+# (CF doesn't support infix wildcards like port-*-pvelxc-*)
+routes = [
+  { pattern = "*.alphasolves.com/*", zone_name = "alphasolves.com" },
+]
+
+[observability.logs]
+enabled = true
+
+[placement]
+mode = "smart"

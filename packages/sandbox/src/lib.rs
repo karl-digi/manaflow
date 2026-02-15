@@ -8,6 +8,7 @@ pub mod models;
 pub mod mux;
 pub mod notifications;
 pub mod palette;
+pub mod pve_lxc;
 pub mod sandbox_handle;
 pub mod service;
 pub mod settings;
@@ -29,6 +30,7 @@ pub use keyring::{
     store_claude_token, store_stack_refresh_token,
 };
 pub use mux::run_mux_tui;
+pub use pve_lxc::{PveConfig, PveLxcService};
 pub use sandbox_handle::{ExecOutput, SandboxBuilder, SandboxHandle, SandboxPool};
 
 pub const DEFAULT_HTTP_PORT: u16 = 46831;
@@ -36,7 +38,7 @@ pub const DEFAULT_WS_PORT: u16 = 46832;
 
 // Production version defaults (cmux)
 pub const DEFAULT_CONTAINER: &str = "cmux-sandbox-run";
-pub const DEFAULT_IMAGE: &str = "ghcr.io/manaflow-ai/cmux-sandbox:latest";
+pub const DEFAULT_IMAGE: &str = "ghcr.io/karlorz/cmux-sandbox:latest";
 
 // Debug/dev version defaults (dmux)
 pub const DMUX_DEFAULT_HTTP_PORT: u16 = 46833;

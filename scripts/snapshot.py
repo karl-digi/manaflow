@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import atexit
+import io
 import json
 import os
 import shutil
@@ -532,6 +533,64 @@ def create_repo_archive(repo_root: Path) -> Path:
                 continue
             tar.add(full_path, arcname=str(rel_path))
     return tmp_path
+
+
+def _ensure_bootstrap_presets(
+    console: Console,
+    base_snapshot_id: str,
+    preset_plans: tuple[SnapshotPresetPlan, ...],
+) -> None:
+    """Ensure morph-snapshots.json has bootstrap presets if empty.
+
+    When the manifest has no presets, inject bootstrap entries using the base
+    snapshot ID. This allows the worker to load successfully during initial
+    snapshot builds. The manifest will be updated with real snapshot IDs after
+    the build completes.
+    """
+    if not MORPH_SNAPSHOT_MANIFEST_PATH.exists():
+        console.info("morph-snapshots.json not found; creating with bootstrap presets")
+        manifest_data: dict[str, t.Any] = {
+            "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
+            "updatedAt": _iso_timestamp(),
+            "presets": [],
+        }
+    else:
+        try:
+            manifest_data = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
+        except Exception as exc:
+            console.always(f"Warning: failed to read morph-snapshots.json: {exc}")
+            return
+
+    presets = manifest_data.get("presets", [])
+    if presets:
+        console.info("morph-snapshots.json already has presets; skipping bootstrap injection")
+        return
+
+    console.always(f"Injecting bootstrap presets with base snapshot {base_snapshot_id}")
+    now_iso = _iso_timestamp()
+    bootstrap_presets = []
+    for plan in preset_plans:
+        bootstrap_presets.append({
+            "presetId": plan.preset_id,
+            "label": plan.label,
+            "cpu": plan.cpu_display,
+            "memory": plan.memory_display,
+            "disk": plan.disk_display,
+            "versions": [
+                {
+                    "version": 1,
+                    "snapshotId": base_snapshot_id,
+                    "capturedAt": now_iso,
+                }
+            ],
+        })
+    manifest_data["presets"] = bootstrap_presets
+    manifest_data["updatedAt"] = now_iso
+
+    MORPH_SNAPSHOT_MANIFEST_PATH.write_text(
+        json.dumps(manifest_data, indent=2, sort_keys=False)
+    )
+    console.always(f"Updated {MORPH_SNAPSHOT_MANIFEST_PATH} with bootstrap presets")
 
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1164,7 @@ async def task_install_go_toolchain(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        GO_VERSION="1.25.2"
+        GO_VERSION="1.25.5"
         ARCH="$(uname -m)"
         case "${ARCH}" in
           x86_64)
@@ -1140,20 +1199,24 @@ async def task_install_go_toolchain(ctx: TaskContext) -> None:
 
 @registry.task(
     name="install-uv-python",
-    deps=("apt-bootstrap",),
+    deps=("ensure-docker",),
     description="Install uv CLI and provision default Python runtime",
 )
 async def task_install_uv_python(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        ARCH="$(uname -m)"
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        # Install python3-pip via apt (also installs python3)
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+        # Install uv from PyPI (more reliable than GitHub CDN)
+        python3 -m pip install --break-system-packages uv
         export PATH="${HOME}/.local/bin:/usr/local/cargo/bin:${PATH}"
         uv python install --default
         PIP_VERSION="$(curl -fsSL https://pypi.org/pypi/pip/json | jq -r '.info.version')"
         python3 -m pip install --break-system-packages --upgrade "pip==${PIP_VERSION}"
         ln -sf /usr/bin/python3 /usr/bin/python
+        rm -rf /var/lib/apt/lists/*
         """
     )
     await ctx.run("install-uv-python", cmd)
@@ -1408,27 +1471,33 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
         set -eux
         export HOME=/root
         server_root="{server_root}"
+        echo "[install-ide-extensions] provider={ide_provider} server_root={server_root}"
         bin_path="{bin_path}"
+        echo "[install-ide-extensions] bin_path=${{bin_path}}"
         if [ ! -x "${{bin_path}}" ]; then
           echo "IDE binary not found at ${{bin_path}}" >&2
           exit 1
         fi
         extensions_dir="{extensions_dir}"
         user_data_dir="{user_data_dir}"
+        echo "[install-ide-extensions] extensions_dir=${{extensions_dir}} user_data_dir=${{user_data_dir}}"
         mkdir -p "${{extensions_dir}}" "${{user_data_dir}}"
         cmux_vsix="/tmp/cmux-vscode-extension.vsix"
         if [ ! -f "${{cmux_vsix}}" ]; then
           echo "cmux extension package missing at ${{cmux_vsix}}" >&2
           exit 1
         fi
+        ls -lh "${{cmux_vsix}}"
         install_from_file() {{
           local package_path="$1"
+          echo "[install-ide-extensions] installing ${{package_path}}"
           "${{bin_path}}" \\
             --install-extension "${{package_path}}" \\
             --force \\
             --extensions-dir "${{extensions_dir}}" \\
             --user-data-dir "${{user_data_dir}}"
         }}
+        echo "[install-ide-extensions] installing bundled cmux extension"
         install_from_file "${{cmux_vsix}}"
         rm -f "${{cmux_vsix}}"
         download_dir="$(mktemp -d)"
@@ -1436,6 +1505,7 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           rm -rf "${{download_dir}}"
         }}
         trap cleanup EXIT
+        echo "[install-ide-extensions] downloading marketplace extensions to ${{download_dir}}"
         download_extension() {{
           local publisher="$1"
           local name="$2"
@@ -1447,6 +1517,7 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           local attempt=1
           local max_attempts=3
           while [ "${{attempt}}" -le "${{max_attempts}}" ]; do
+            echo "[install-ide-extensions] fetch ${{publisher}}.${{name}}@${{version}} attempt ${{attempt}}"
             if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${{tmpfile}}" "${{url}}" 2>"${{curl_stderr}}"; then
               rm -f "${{curl_stderr}}"
               break
@@ -1474,19 +1545,27 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
             mv "${{tmpfile}}" "${{destination}}"
           fi
         }}
+        # Disable errexit for the while loop to avoid envctl debug trap interference
+        set +e
+        ext_count=0
         while IFS='|' read -r publisher name version; do
           [ -z "${{publisher}}" ] && continue
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
+          ext_count=$((ext_count + 1))
         done <<'EXTENSIONS'
 {extensions_blob}
 EXTENSIONS
         wait
+        echo "[install-ide-extensions] downloaded ${{ext_count}} extensions"
+        set -e
+        shopt -s nullglob
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
           if [ -f "${{vsix}}" ]; then
             install_from_file "${{vsix}}"
           fi
         done
+        echo "[install-ide-extensions] completed installs"
         """
     )
     await ctx.run("install-ide-extensions", cmd)
@@ -1560,10 +1639,11 @@ async def task_setup_claude_oauth_wrappers(ctx: TaskContext) -> None:
 
 @registry.task(
     name="configure-zsh",
-    deps=("install-base-packages",),
+    deps=("upload-repo", "install-base-packages"),
     description="Install zsh configuration and default prompt",
 )
 async def task_configure_zsh(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
         r"""
         set -eux
@@ -1637,7 +1717,9 @@ EOF
         fi
         """
     )
-    await ctx.run("configure-zsh", cmd)
+    # Install cmux-env.sh from repo (separate command to allow f-string substitution)
+    install_cmd = f"install -Dm0644 {repo}/configs/profile.d/cmux-env.sh /etc/profile.d/cmux-env.sh"
+    await ctx.run("configure-zsh", cmd + "\n" + install_cmd)
 
 
 @registry.task(
@@ -1873,8 +1955,8 @@ async def task_configure_memory_protection(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -euo pipefail
-        CMUX_FORCE_SWAP=1 CMUX_SWAPFILE_SIZE_GIB=6 /usr/local/sbin/cmux-configure-memory
-        expected_kib=$((6 * 1024 * 1024))
+        CMUX_FORCE_SWAP=1 CMUX_SWAPFILE_SIZE_GIB=2 /usr/local/sbin/cmux-configure-memory
+        expected_kib=$((2 * 1024 * 1024))
         tolerance_kib=8
         min_expected_kib=$((expected_kib - tolerance_kib))
         actual_kib="$(awk '$1 == "/var/swap/cmux-swapfile" {print $3}' /proc/swaps 2>/dev/null || true)"
@@ -1891,7 +1973,7 @@ async def task_configure_memory_protection(ctx: TaskContext) -> None:
                 ;;
         esac
         if [ "${actual_kib}" -lt "${min_expected_kib}" ]; then
-            echo "Swapfile size ${actual_kib} KiB is below required ${min_expected_kib} KiB minimum (6 GiB minus tolerance)." >&2
+            echo "Swapfile size ${actual_kib} KiB is below required ${min_expected_kib} KiB minimum (2 GiB minus tolerance)." >&2
             swapon --show=NAME,TYPE,SIZE,USED,PRIO || true
             exit 1
         fi
@@ -1940,6 +2022,15 @@ async def task_build_worker(ctx: TaskContext) -> None:
           echo "Worker build output missing at ./apps/worker/build/index.js" >&2
           exit 1
         fi
+        install -d ./apps/worker/build/node_modules
+        # Install express-compatible path-to-regexp 0.1.x explicitly
+        # bun hoisting can place dependencies differently, so we install directly
+        cd ./apps/worker/build/node_modules
+        npm pack path-to-regexp@0.1.12 --silent
+        tar -xzf path-to-regexp-0.1.12.tgz
+        mv package path-to-regexp
+        rm -f path-to-regexp-0.1.12.tgz
+        cd {repo}
         install -d /builtins
         cat <<'JSON' > /builtins/package.json
 {{"name":"builtins","type":"module","version":"1.0.0"}}
@@ -2645,9 +2736,12 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             raise RuntimeError(
                 "bun not found on host; install bun or rerun with --no-bump-ide-deps."
             )
-        console.always("Bumping IDE deps to latest (bun run bump-ide-deps)...")
+        ide_channel = getattr(args, "ide_deps_channel", "stable")
+        console.always(
+            f"Bumping IDE deps (channel: {ide_channel}) (bun run bump-ide-deps)..."
+        )
         bump_result = subprocess.run(
-            [bun_path, "run", "bump-ide-deps"],
+            [bun_path, "run", "bump-ide-deps", "--channel", ide_channel],
             cwd=str(repo_root),
             text=True,
         )
@@ -2656,6 +2750,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                 f"bun run bump-ide-deps failed with exit code {bump_result.returncode}"
             )
     preset_plans = _build_preset_plans(args)
+    _ensure_bootstrap_presets(console, args.snapshot_id, preset_plans)
 
     console.always(
         "Starting snapshot runs for presets "
@@ -2807,11 +2902,17 @@ def parse_args() -> argparse.Namespace:
         help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
     )
     parser.add_argument(
+        "--ide-deps-channel",
+        choices=("stable", "latest", "beta"),
+        default="stable",
+        help="Dist-tag channel for IDE dependency bumping (default: stable, falls back to latest if missing)",
+    )
+    parser.add_argument(
         "--bump-ide-deps",
         dest="bump_ide_deps",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Update configs/ide-deps.json to latest versions before snapshotting",
+        help="Update configs/ide-deps.json before snapshotting (uses --ide-deps-channel)",
     )
     return parser.parse_args()
 

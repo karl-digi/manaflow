@@ -1,5 +1,9 @@
 FROM node:24-bookworm
 
+# Align with main Dockerfile: allow configurable IDE deps channel (stable by default).
+ARG IDE_DEPS_CHANNEL=stable
+ENV IDE_DEPS_CHANNEL=${IDE_DEPS_CHANNEL}
+
 RUN apt-get update && apt-get install -y \
     python3 \
     make \

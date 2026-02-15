@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const COMMAND = "npx skills add manaflow-ai/cloudrouter";
+const COMMAND = "npx skills add karlorz/cloudrouter";
 
 export function InstallBar() {
   const [copied, setCopied] = useState(false);

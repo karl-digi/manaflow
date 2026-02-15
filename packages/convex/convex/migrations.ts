@@ -12,6 +12,124 @@ import type { DataModel } from "./_generated/dataModel";
 
 export const migrations = new Migrations<DataModel>(components.migrations);
 
+const inferSnapshotProvider = (
+  snapshotId: string | undefined,
+  templateVmid: number | undefined
+): "morph" | "pve-lxc" | "pve-vm" | undefined => {
+  if (!snapshotId) {
+    return templateVmid !== undefined ? "pve-lxc" : undefined;
+  }
+
+  if (snapshotId.startsWith("snapshot_")) {
+    return templateVmid !== undefined ? "pve-lxc" : "morph";
+  }
+
+  return undefined;
+};
+
+const inferSnapshotProviderFromLegacy = (
+  snapshotId: string | undefined,
+  morphSnapshotId: string | undefined,
+  templateVmid: number | undefined
+): "morph" | "pve-lxc" | "pve-vm" | undefined => {
+  if (morphSnapshotId) {
+    if (morphSnapshotId.startsWith("pve_lxc_")) {
+      return "pve-lxc";
+    }
+    if (morphSnapshotId.startsWith("snapshot_")) {
+      return "morph";
+    }
+  }
+
+  return inferSnapshotProvider(snapshotId, templateVmid);
+};
+
+// Backfill snapshotProvider from snapshotId/template metadata where possible.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentsSnapshotFields"}'
+export const backfillEnvironmentsSnapshotFields = migrations.define({
+  table: "environments",
+  migrateOne: (_ctx, doc) => {
+    const updates: Partial<typeof doc> = {};
+    const normalizedSnapshotId = doc.snapshotId;
+
+    if (doc.snapshotProvider === undefined) {
+      const provider = inferSnapshotProvider(
+        normalizedSnapshotId,
+        doc.templateVmid
+      );
+      if (provider) {
+        updates.snapshotProvider = provider;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return;
+    }
+
+    return updates;
+  },
+});
+
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentSnapshotVersionsSnapshotFields"}'
+export const backfillEnvironmentSnapshotVersionsSnapshotFields =
+  migrations.define({
+    table: "environmentSnapshotVersions",
+    migrateOne: (_ctx, doc) => {
+      const updates: Partial<typeof doc> = {};
+      const normalizedSnapshotId = doc.snapshotId;
+
+      if (doc.snapshotProvider === undefined) {
+        const provider = inferSnapshotProvider(
+          normalizedSnapshotId,
+          doc.templateVmid
+        );
+        if (provider) {
+          updates.snapshotProvider = provider;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return;
+      }
+
+      return updates;
+    },
+  });
+
+// Copy legacy morphSnapshotId to snapshotId, infer snapshotProvider, then drop morphSnapshotId.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentSnapshotVersionsMorphSnapshotId"}'
+export const backfillEnvironmentSnapshotVersionsMorphSnapshotId =
+  migrations.define({
+    table: "environmentSnapshotVersions",
+    migrateOne: (_ctx, doc) => {
+      const legacy = doc as typeof doc & { morphSnapshotId?: string };
+      if (legacy.morphSnapshotId === undefined) {
+        return;
+      }
+
+      const updates: Partial<typeof doc> & { morphSnapshotId?: undefined } = {
+        morphSnapshotId: undefined,
+      };
+
+      if (doc.snapshotId === undefined && legacy.morphSnapshotId) {
+        updates.snapshotId = legacy.morphSnapshotId;
+      }
+
+      if (doc.snapshotProvider === undefined) {
+        const provider = inferSnapshotProviderFromLegacy(
+          updates.snapshotId ?? doc.snapshotId,
+          legacy.morphSnapshotId,
+          doc.templateVmid
+        );
+        if (provider) {
+          updates.snapshotProvider = provider;
+        }
+      }
+
+      return updates;
+    },
+  });
+
 // Backfill teams.teamId from legacy teams.uuid when missing
 export const backfillTeamsTeamId = migrations.define({
   table: "teams",
@@ -264,5 +382,45 @@ export const backfillTaskRunPullRequestsContinue = internalMutation({
     }
 
     return { totalProcessed, totalInserted, isDone: results.isDone };
+  },
+});
+
+// Backfill selectedTaskRunId for existing tasks.
+// Sets it to the crowned run if one exists, otherwise the latest non-archived run.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillTasksSelectedTaskRunId"}'
+export const backfillTasksSelectedTaskRunId = migrations.define({
+  table: "tasks",
+  migrateOne: async (ctx, doc) => {
+    // Skip if already set
+    if (doc.selectedTaskRunId !== undefined) {
+      return;
+    }
+
+    // Find crowned run first
+    const crownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", doc._id))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (crownedRun) {
+      return { selectedTaskRunId: crownedRun._id };
+    }
+
+    // Fall back to latest non-archived run
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", doc._id))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .order("desc")
+      .first();
+
+    if (latestRun) {
+      return { selectedTaskRunId: latestRun._id };
+    }
+
+    // No runs found, leave undefined
+    return;
   },
 });

@@ -1,0 +1,957 @@
+# Nitro - Universal JavaScript Server Framework
+
+Nitro is a full-stack server framework that extends Vite applications with production-ready server capabilities. It provides a zero-configuration approach to building and deploying universal JavaScript servers that run anywhere - from Node.js and Bun to serverless platforms like Cloudflare Workers, Netlify, and Vercel. Nitro bridges the gap between frontend and backend development by allowing you to add server routes, API endpoints, and backend logic directly within your Vite project structure.
+
+At its core, Nitro combines filesystem-based routing with compiled routes and code-splitting to eliminate runtime router overhead, resulting in near-zero boot time regardless of project size. The framework includes built-in support for key-value storage (backed by unstorage), SQL databases (via db0), intelligent caching with stale-while-revalidate behavior, WebSocket connections, and scheduled tasks. Its runtime-agnostic design means the same codebase deploys seamlessly across multiple platforms, taking advantage of platform-specific features like ESR, ISR, and SWR without code modifications.
+
+## API Routes and Handlers
+
+### Creating a Basic API Route
+
+API routes are automatically registered from files in the `routes/` or `api/` directories using filesystem-based routing.
+
+```typescript
+// routes/api/hello.ts
+import { defineHandler } from "nitro/h3";
+
+export default defineHandler(() => {
+  return { message: "Hello from Nitro!" };
+});
+
+// Access: GET http://localhost:3000/api/hello
+// Response: {"message":"Hello from Nitro!"}
+```
+
+### Dynamic Route Parameters
+
+Routes support dynamic parameters using bracket notation for capturing URL segments.
+
+```typescript
+// routes/api/users/[id].get.ts
+import { defineHandler } from "nitro/h3";
+
+export default defineHandler((event) => {
+  const { id } = event.context.params;
+
+  return {
+    userId: id,
+    profile: {
+      name: "John Doe",
+      email: `user${id}@example.com`
+    }
+  };
+});
+
+// Access: GET http://localhost:3000/api/users/123
+// Response: {"userId":"123","profile":{"name":"John Doe","email":"user123@example.com"}}
+```
+
+### POST Request with Body Parsing
+
+Handle POST requests with automatic body parsing using h3 utilities.
+
+```typescript
+// routes/api/users.post.ts
+import { defineHandler, readBody } from "nitro/h3";
+
+export default defineHandler(async (event) => {
+  const body = await readBody(event);
+
+  // Validate and process the body
+  if (!body.name || !body.email) {
+    throw createError({
+      statusCode: 400,
+      message: "Name and email are required"
+    });
+  }
+
+  // In a real app, save to database
+  const newUser = {
+    id: Math.random().toString(36).substr(2, 9),
+    name: body.name,
+    email: body.email,
+    createdAt: new Date().toISOString()
+  };
+
+  return {
+    success: true,
+    user: newUser
+  };
+});
+
+// Usage:
+// curl -X POST http://localhost:3000/api/users \
+//   -H "Content-Type: application/json" \
+//   -d '{"name":"Jane Doe","email":"jane@example.com"}'
+// Response: {"success":true,"user":{"id":"abc123","name":"Jane Doe","email":"jane@example.com","createdAt":"2025-01-15T10:30:00.000Z"}}
+```
+
+### Catch-all Routes
+
+Capture multiple path segments using catch-all parameter syntax.
+
+```typescript
+// routes/api/[...slug].ts
+import { defineHandler } from "nitro/h3";
+
+export default defineHandler((event) => {
+  const { slug } = event.context.params;
+
+  return {
+    path: slug,
+    segments: slug.split('/'),
+    url: event.url
+  };
+});
+
+// Access: GET http://localhost:3000/api/products/electronics/laptops
+// Response: {"path":"products/electronics/laptops","segments":["products","electronics","laptops"],"url":"/api/products/electronics/laptops"}
+```
+
+## Database Operations
+
+### Using Built-in SQL Database
+
+Nitro provides integrated SQL database support with SQLite as the default, supporting multiple database connectors.
+
+```typescript
+// server.ts
+import { defineHandler } from "nitro/h3";
+import { useDatabase } from "nitro/database";
+
+export default defineHandler(async () => {
+  const db = useDatabase();
+
+  // Create table
+  await db.sql`CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    price REAL NOT NULL,
+    category TEXT
+  )`;
+
+  // Insert data with parameterized queries (prevents SQL injection)
+  const productId = Math.floor(Math.random() * 10000);
+  const productName = "Laptop Pro";
+  const price = 1299.99;
+
+  await db.sql`INSERT INTO products (id, name, price, category)
+    VALUES (${productId}, ${productName}, ${price}, 'electronics')`;
+
+  // Query data
+  const { rows } = await db.sql`
+    SELECT * FROM products
+    WHERE category = 'electronics'
+    AND price > 1000
+    ORDER BY price DESC
+  `;
+
+  return {
+    message: "Database operations completed",
+    products: rows,
+    count: rows.length
+  };
+});
+
+// Enable database in nitro.config.ts:
+// export default defineNitroConfig({
+//   experimental: { database: true }
+// })
+```
+
+### Multi-Database Configuration
+
+Configure multiple database connections for different data sources.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from "nitro/config";
+
+export default defineNitroConfig({
+  experimental: { database: true },
+  database: {
+    default: {
+      connector: "sqlite",
+      options: { name: "main" }
+    },
+    users: {
+      connector: "postgresql",
+      options: {
+        url: "postgresql://user:pass@localhost:5432/users_db"
+      }
+    },
+    analytics: {
+      connector: "mysql",
+      options: {
+        host: "localhost",
+        database: "analytics",
+        user: "root",
+        password: "secret"
+      }
+    }
+  }
+});
+
+// routes/api/users.ts
+import { defineHandler } from "nitro/h3";
+import { useDatabase } from "nitro/database";
+
+export default defineHandler(async () => {
+  const usersDb = useDatabase("users");
+  const { rows } = await usersDb.sql`SELECT id, username, email FROM users LIMIT 10`;
+
+  return { users: rows };
+});
+```
+
+## Storage and Caching
+
+### Key-Value Storage Operations
+
+Runtime-agnostic storage layer for persistent data across multiple backends.
+
+```typescript
+// routes/api/counter.ts
+import { defineHandler } from "nitro/h3";
+import { useStorage } from "nitro/storage";
+
+export default defineHandler(async (event) => {
+  const storage = useStorage("data");
+
+  // Get current counter value
+  let counter = await storage.getItem<number>("counter") || 0;
+
+  // Increment
+  counter++;
+
+  // Store back
+  await storage.setItem("counter", counter);
+
+  // Store complex objects
+  await storage.setItem("lastAccess", {
+    timestamp: Date.now(),
+    ip: event.node.req.socket.remoteAddress,
+    userAgent: event.headers.get("user-agent")
+  });
+
+  return {
+    counter,
+    message: `Counter incremented to ${counter}`
+  };
+});
+
+// Storage persists to .data/kv directory by default
+// Access: GET http://localhost:3000/api/counter
+// Response: {"counter":1,"message":"Counter incremented to 1"}
+```
+
+### Cached Event Handlers
+
+Cache route responses with configurable TTL and stale-while-revalidate behavior.
+
+```typescript
+// routes/api/expensive.ts
+import { defineCachedHandler } from "nitro/cache";
+
+export default defineCachedHandler(
+  async (event) => {
+    // Simulate expensive operation
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    const data = {
+      timestamp: new Date().toISOString(),
+      random: Math.random(),
+      computation: "expensive result"
+    };
+
+    return data;
+  },
+  {
+    maxAge: 60 * 60, // Cache for 1 hour
+    swr: true, // Enable stale-while-revalidate
+    name: "expensive-operation",
+    // Cache key varies by query parameters
+    getKey: (event) => event.url
+  }
+);
+
+// First request: Takes 2 seconds, result cached
+// Subsequent requests within 1 hour: Returns immediately from cache
+// After 1 hour: Returns stale cache immediately, refreshes in background
+```
+
+### Cached Functions
+
+Cache function results independently from route handlers for reusability.
+
+```typescript
+// routes/api/github/[repo].ts
+import { defineHandler } from "nitro/h3";
+import { defineCachedFunction } from "nitro/cache";
+
+// Define cached function outside handler for reuse
+const getRepoStars = defineCachedFunction(
+  async (repo: string) => {
+    const response = await fetch(`https://api.github.com/repos/${repo}`);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      stars: data.stargazers_count,
+      forks: data.forks_count,
+      openIssues: data.open_issues_count
+    };
+  },
+  {
+    maxAge: 60 * 60, // Cache for 1 hour
+    name: "ghRepoStats",
+    getKey: (repo: string) => repo
+  }
+);
+
+export default defineHandler(async (event) => {
+  const { repo } = event.context.params;
+
+  try {
+    const stats = await getRepoStars(repo);
+    return {
+      repository: repo,
+      ...stats
+    };
+  } catch (error) {
+    return {
+      repository: repo,
+      error: error.message,
+      stars: 0
+    };
+  }
+});
+
+// Access: GET http://localhost:3000/api/github/nitrojs/nitro
+// Response: {"repository":"nitrojs/nitro","stars":5234,"forks":432,"openIssues":45}
+// Subsequent requests return cached data for 1 hour
+```
+
+### Storage Configuration
+
+Configure custom storage drivers for different mount points.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from "nitro/config";
+
+export default defineNitroConfig({
+  storage: {
+    redis: {
+      driver: "redis",
+      host: "localhost",
+      port: 6379,
+      db: 0
+    },
+    s3: {
+      driver: "s3",
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      bucket: "my-app-storage",
+      region: "us-east-1"
+    },
+    fs: {
+      driver: "fs",
+      base: "./.data/custom"
+    }
+  },
+  // Cache uses Redis in production
+  devStorage: {
+    cache: { driver: "fs", base: "./.nitro/cache" }
+  }
+});
+
+// routes/api/storage-demo.ts
+import { defineHandler } from "nitro/h3";
+import { useStorage } from "nitro/storage";
+
+export default defineHandler(async () => {
+  // Use Redis storage
+  const redis = useStorage("redis");
+  await redis.setItem("session:123", { userId: 456, expires: Date.now() + 3600000 });
+
+  // Use S3 storage
+  const s3 = useStorage("s3");
+  await s3.setItem("uploads/file.txt", "file content");
+
+  return { message: "Data stored in Redis and S3" };
+});
+```
+
+## Route Rules and Configuration
+
+### Defining Route Rules
+
+Apply caching, headers, redirects, and proxies using route patterns.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from "nitro/config";
+
+export default defineNitroConfig({
+  routeRules: {
+    // Cache blog posts for 1 hour with SWR
+    "/blog/**": {
+      swr: 3600,
+      headers: { "X-Content-Type": "blog" }
+    },
+
+    // Static generation
+    "/about": { static: true },
+
+    // Custom cache control headers
+    "/assets/**": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
+
+    // CORS configuration
+    "/api/public/**": {
+      cors: true,
+      headers: {
+        "access-control-allow-methods": "GET, POST",
+        "access-control-allow-origin": "*"
+      }
+    },
+
+    // Redirects (supports wildcards)
+    "/old-blog/**": { redirect: "/blog/**" },
+    "/legacy": { redirect: { to: "/new-page", statusCode: 301 } },
+
+    // Proxy external API
+    "/api/external/**": { proxy: "https://api.example.com/**" },
+
+    // Advanced caching with custom base
+    "/api/cached/**": {
+      cache: {
+        maxAge: 600,
+        base: "redis",
+        varies: ["authorization"]
+      }
+    }
+  }
+});
+
+// Routes automatically inherit these rules based on pattern matching
+```
+
+### Runtime Configuration
+
+Environment-aware configuration with automatic environment variable binding.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from "nitro/config";
+
+export default defineNitroConfig({
+  runtimeConfig: {
+    apiSecret: "dev-secret-key",
+    databaseUrl: "sqlite:./dev.db",
+
+    // Nested configuration
+    oauth: {
+      clientId: "dev-client-id",
+      clientSecret: "dev-secret"
+    },
+
+    // Public configuration (available to client)
+    public: {
+      apiBase: "http://localhost:3000",
+      appVersion: "1.0.0"
+    }
+  }
+});
+
+// .env file (overrides config):
+// NITRO_API_SECRET=production-secret-key
+// NITRO_DATABASE_URL=postgresql://user:pass@localhost/prod
+// NITRO_OAUTH_CLIENT_ID=prod-client-id
+// NITRO_OAUTH_CLIENT_SECRET=prod-secret
+
+// routes/api/config.ts
+import { defineHandler } from "nitro/h3";
+import { useRuntimeConfig } from "nitro/runtime-config";
+
+export default defineHandler((event) => {
+  const config = useRuntimeConfig(event);
+
+  // Access configuration (never expose secrets to client!)
+  return {
+    // Safe to return
+    apiBase: config.public.apiBase,
+    version: config.public.appVersion,
+
+    // Never return these
+    // apiSecret: config.apiSecret // ❌ Don't expose secrets
+
+    // Use internally
+    hasValidSecret: config.apiSecret?.length > 0
+  };
+});
+```
+
+## Middleware and Plugins
+
+### Request Middleware
+
+Global middleware runs for all requests, enabling cross-cutting concerns like authentication.
+
+```typescript
+// middleware/auth.ts
+import { defineMiddleware } from "nitro/h3";
+
+export default defineMiddleware((event) => {
+  // Add request context available to all routes
+  const authHeader = event.headers.get("authorization");
+
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    event.context.auth = {
+      userId: "user-123", // In real app, verify token
+      isAuthenticated: true,
+      token
+    };
+  } else {
+    event.context.auth = {
+      isAuthenticated: false
+    };
+  }
+
+  // Log all requests
+  console.log(`[${new Date().toISOString()}] ${event.method} ${event.path}`);
+
+  // Don't return anything to continue to route handlers
+});
+
+// routes/api/protected.ts
+import { defineHandler, createError } from "nitro/h3";
+
+export default defineHandler((event) => {
+  if (!event.context.auth?.isAuthenticated) {
+    throw createError({
+      statusCode: 401,
+      message: "Unauthorized"
+    });
+  }
+
+  return {
+    message: "Protected data",
+    userId: event.context.auth.userId
+  };
+});
+```
+
+### Ordered Middleware Execution
+
+Control middleware execution order using numeric prefixes.
+
+```typescript
+// middleware/1.logger.ts - Runs first
+import { defineMiddleware } from "nitro/h3";
+
+export default defineMiddleware((event) => {
+  event.context.requestId = crypto.randomUUID();
+  event.context.startTime = Date.now();
+  console.log(`[${event.context.requestId}] Request started`);
+});
+
+// middleware/2.auth.ts - Runs second
+import { defineMiddleware } from "nitro/h3";
+
+export default defineMiddleware((event) => {
+  event.context.user = { id: 123, role: "admin" };
+});
+
+// middleware/3.validate.ts - Runs third
+import { defineMiddleware } from "nitro/h3";
+
+export default defineMiddleware((event) => {
+  event.context.validated = true;
+  const duration = Date.now() - event.context.startTime;
+  console.log(`[${event.context.requestId}] Middleware chain: ${duration}ms`);
+});
+```
+
+### Runtime Plugins
+
+Plugins execute once on server startup for initialization and hooking into lifecycle events.
+
+```typescript
+// plugins/database-init.ts
+import { definePlugin } from "nitro";
+
+export default definePlugin(async (nitroApp) => {
+  console.log("Initializing database connections...");
+
+  // Hook into request lifecycle
+  nitroApp.hooks.hook("request", (event) => {
+    console.log(`Request: ${event.method} ${event.path}`);
+  });
+
+  // Hook into response lifecycle
+  nitroApp.hooks.hook("response", (event, { body }) => {
+    const duration = Date.now() - (event.context.startTime || 0);
+    console.log(`Response: ${event.path} (${duration}ms)`);
+  });
+
+  // Hook into error handling
+  nitroApp.hooks.hook("error", (error, { event }) => {
+    console.error(`Error on ${event?.path}:`, error.message);
+
+    // Send to error tracking service
+    // sendToErrorTracking(error, event);
+  });
+
+  // Graceful shutdown
+  nitroApp.hooks.hook("close", async () => {
+    console.log("Closing database connections...");
+    // await db.close();
+  });
+});
+
+// plugins/storage-setup.ts
+import { definePlugin } from "nitro";
+import { useStorage } from "nitro/storage";
+import redisDriver from "unstorage/drivers/redis";
+
+export default definePlugin(() => {
+  const storage = useStorage();
+
+  // Dynamically mount Redis driver with runtime config
+  const driver = redisDriver({
+    base: "redis",
+    host: process.env.REDIS_HOST || "localhost",
+    port: Number(process.env.REDIS_PORT) || 6379,
+    password: process.env.REDIS_PASSWORD
+  });
+
+  storage.mount("redis", driver);
+  console.log("Redis storage mounted");
+});
+```
+
+## WebSocket Support
+
+### WebSocket Handler
+
+Real-time bidirectional communication with publish-subscribe support.
+
+```typescript
+// routes/_ws.ts
+import { defineWebSocketHandler } from "nitro/h3";
+
+export default defineWebSocketHandler({
+  open(peer) {
+    console.log(`[WebSocket] Client connected: ${peer}`);
+
+    // Send welcome message to the connected peer
+    peer.send({
+      type: "welcome",
+      message: `Welcome, ${peer}!`,
+      timestamp: Date.now()
+    });
+
+    // Subscribe to chat room
+    peer.subscribe("chat-room");
+
+    // Notify others about new user
+    peer.publish("chat-room", {
+      type: "user-joined",
+      user: peer.toString(),
+      timestamp: Date.now()
+    });
+  },
+
+  message(peer, message) {
+    console.log(`[WebSocket] Message from ${peer}:`, message.text());
+
+    try {
+      const data = JSON.parse(message.text());
+
+      if (data.type === "ping") {
+        peer.send({ type: "pong", timestamp: Date.now() });
+      } else if (data.type === "chat") {
+        // Broadcast to all subscribers
+        peer.publish("chat-room", {
+          type: "message",
+          user: peer.toString(),
+          message: data.message,
+          timestamp: Date.now()
+        });
+      } else if (data.type === "private") {
+        // Echo back to sender only
+        peer.send({
+          type: "private-response",
+          message: data.message
+        });
+      }
+    } catch (error) {
+      peer.send({
+        type: "error",
+        message: "Invalid message format"
+      });
+    }
+  },
+
+  close(peer, details) {
+    console.log(`[WebSocket] Client disconnected: ${peer}`);
+
+    // Notify others about user leaving
+    peer.publish("chat-room", {
+      type: "user-left",
+      user: peer.toString(),
+      timestamp: Date.now()
+    });
+
+    peer.unsubscribe("chat-room");
+  },
+
+  error(peer, error) {
+    console.error(`[WebSocket] Error for ${peer}:`, error);
+  }
+});
+
+// Client usage:
+// const ws = new WebSocket('ws://localhost:3000/_ws');
+// ws.onmessage = (event) => console.log(JSON.parse(event.data));
+// ws.send(JSON.stringify({ type: 'chat', message: 'Hello!' }));
+```
+
+## Task Scheduling
+
+### Defining Tasks
+
+Create executable tasks for background operations and scheduled jobs.
+
+```typescript
+// tasks/db/migrate.ts
+import { defineTask } from "nitro/task";
+
+export default defineTask({
+  meta: {
+    name: "db:migrate",
+    description: "Run database migrations"
+  },
+  async run({ payload, context }) {
+    console.log("Starting database migration...");
+    console.log("Payload:", payload);
+
+    // Simulate migration steps
+    const migrations = ["001_users", "002_posts", "003_comments"];
+    const results = [];
+
+    for (const migration of migrations) {
+      console.log(`Running migration: ${migration}`);
+      // Run actual migration logic here
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      results.push({ migration, status: "success" });
+    }
+
+    return {
+      success: true,
+      migrationsRun: results.length,
+      results
+    };
+  }
+});
+
+// tasks/cms/update.ts
+import { defineTask } from "nitro/task";
+
+export default defineTask({
+  meta: {
+    name: "cms:update",
+    description: "Update CMS content cache"
+  },
+  async run({ payload }) {
+    console.log("Updating CMS content...");
+
+    // Fetch latest content from CMS
+    const response = await fetch("https://cms.example.com/api/content");
+    const content = await response.json();
+
+    // Store in cache
+    const storage = useStorage("data");
+    await storage.setItem("cms-content", content);
+
+    return {
+      updated: true,
+      itemCount: content.length,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+```
+
+### Scheduled Task Configuration
+
+Automate task execution using cron patterns.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from "nitro/config";
+
+export default defineNitroConfig({
+  experimental: { tasks: true },
+
+  scheduledTasks: {
+    // Every minute
+    "* * * * *": ["cms:update"],
+
+    // Every hour at minute 0
+    "0 * * * *": ["db:backup", "logs:rotate"],
+
+    // Every day at 2:30 AM
+    "30 2 * * *": ["db:migrate", "cache:clear"],
+
+    // Every Monday at 9 AM
+    "0 9 * * 1": ["reports:weekly"],
+
+    // Every 15 minutes
+    "*/15 * * * *": ["health:check"]
+  }
+});
+
+// Programmatically run tasks from API routes:
+// routes/api/admin/migrate.ts
+import { defineHandler } from "nitro/h3";
+import { runTask } from "nitro/task";
+
+export default defineHandler(async (event) => {
+  // Verify admin authentication first
+  if (!event.context.auth?.isAdmin) {
+    throw createError({ statusCode: 403, message: "Forbidden" });
+  }
+
+  const payload = { triggeredBy: "admin", timestamp: Date.now() };
+  const result = await runTask("db:migrate", { payload });
+
+  return {
+    taskCompleted: true,
+    result
+  };
+});
+
+// List available tasks:
+// GET http://localhost:3000/_nitro/tasks
+// Run task via API:
+// POST http://localhost:3000/_nitro/tasks/db:migrate
+// Run task via CLI:
+// nitro task run db:migrate --payload "{}"
+```
+
+## Server Entry
+
+### Custom Server Entry
+
+Create a global middleware or use alternative frameworks as the server entry point.
+
+```typescript
+// server.ts - Using H3
+import { H3 } from "h3";
+
+const app = new H3();
+
+// Add global middleware
+app.use((event) => {
+  event.context.serverStartTime = Date.now();
+  console.log(`Request: ${event.method} ${event.path}`);
+});
+
+// Add routes
+app.get("/", () => ({ message: "Hello from H3!" }));
+
+app.get("/health", () => ({
+  status: "healthy",
+  uptime: process.uptime(),
+  timestamp: Date.now()
+}));
+
+// API routes
+app.post("/api/data", async (event) => {
+  const body = await readBody(event);
+  return { received: body, processed: true };
+});
+
+export default app;
+
+// Alternative: Using Hono
+// import { Hono } from "hono";
+// const app = new Hono();
+// app.get("/", (c) => c.json({ message: "Hello from Hono!" }));
+// export default app;
+
+// Alternative: Using Elysia
+// import { Elysia } from "elysia";
+// const app = new Elysia();
+// app.get("/", () => ({ message: "Hello from Elysia!" }));
+// export default app;
+```
+
+### Event Handler Server Entry
+
+Use defineHandler for type-safe event handling with h3 event context.
+
+```typescript
+// server.ts
+import { defineHandler, createError } from "nitro/h3";
+
+export default defineHandler((event) => {
+  // Add request context
+  event.context.requestId = crypto.randomUUID();
+  event.context.timestamp = Date.now();
+
+  // Custom routing logic
+  const url = new URL(event.node.req.url!, `http://${event.node.req.headers.host}`);
+
+  // Handle specific routes before filesystem routing
+  if (url.pathname === "/health") {
+    return {
+      status: "ok",
+      timestamp: Date.now(),
+      requestId: event.context.requestId
+    };
+  }
+
+  if (url.pathname === "/version") {
+    return { version: "1.0.0", build: "production" };
+  }
+
+  // Rate limiting check
+  const clientIp = event.node.req.socket.remoteAddress;
+  if (isRateLimited(clientIp)) {
+    throw createError({
+      statusCode: 429,
+      message: "Too many requests"
+    });
+  }
+
+  // Add custom headers to all responses
+  event.node.res.setHeader("X-Request-ID", event.context.requestId);
+  event.node.res.setHeader("X-Powered-By", "Nitro");
+
+  // Return nothing to continue to routes/handlers
+});
+
+function isRateLimited(ip: string): boolean {
+  // Implement rate limiting logic
+  return false;
+}
+```
+
+---
+
+## Summary
+
+Nitro provides a comprehensive solution for building full-stack applications with minimal configuration. Its primary use cases include adding server-side functionality to Vite applications, creating API backends for single-page applications, building serverless functions that run on edge networks, developing universal applications with server-side rendering, and creating production-ready servers that deploy anywhere. The framework excels at scenarios requiring intelligent caching strategies, real-time WebSocket communication, scheduled background tasks, and multi-runtime deployment flexibility.
+
+Integration with existing projects is straightforward - install the nitro package, add the Vite plugin, and start creating routes in the `routes/` directory. Nitro's filesystem-based routing automatically maps files to endpoints, while its built-in storage and database layers eliminate the need for additional infrastructure setup during development. The framework's runtime-agnostic architecture means you can develop locally with Node.js and deploy to serverless platforms like Cloudflare Workers or Vercel Edge Functions without changing code. Advanced features like route rules, middleware chaining, and plugin hooks provide extensibility for complex applications, while the zero-config defaults enable rapid prototyping and development.

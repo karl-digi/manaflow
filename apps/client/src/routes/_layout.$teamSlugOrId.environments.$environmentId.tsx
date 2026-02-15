@@ -1,30 +1,40 @@
 import { EditableLabel } from "@/components/editable-label";
+import { EnvVarsKeyValueGrid } from "@/components/EnvVarsKeyValueGrid";
 import { FloatingPane } from "@/components/floating-pane";
 import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { TitleBar } from "@/components/TitleBar";
+import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { queryClient } from "@/query-client";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { parseEnvBlock } from "@/lib/parseEnvBlock";
+import { ensureInitialEnvVars, type EnvVar } from "@/types/environment";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
+import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import type { StartSandboxResponse } from "@cmux/www-openapi-client";
 import {
+  getApiEnvironmentsByIdVarsOptions,
   patchApiEnvironmentsByIdPortsMutation,
   patchApiEnvironmentsByIdMutation,
+  patchApiEnvironmentsByIdVarsMutation,
   postApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateMutation,
   postApiSandboxesStartMutation,
+  deleteApiEnvironmentsByIdMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { convexQuery } from "@convex-dev/react-query";
 import {
   useMutation as useRQMutation,
+  useQuery as useRQQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -33,8 +43,11 @@ import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft,
   Calendar,
+  ChevronDown,
+  ChevronRight,
   Code,
   GitBranch,
+  KeyRound,
   Loader2,
   Package,
   Plus,
@@ -43,7 +56,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute(
@@ -98,10 +111,12 @@ function EnvironmentDetailsPage() {
       teamSlugOrId,
       environmentId,
     }) ?? [];
-  const deleteEnvironment = useMutation(api.environments.remove);
   const deleteSnapshotVersion = useMutation(api.environmentSnapshots.remove);
   const updatePortsMutation = useRQMutation(
     patchApiEnvironmentsByIdPortsMutation()
+  );
+  const deleteEnvironmentMutation = useRQMutation(
+    deleteApiEnvironmentsByIdMutation()
   );
   const updateEnvironmentMutation = useRQMutation(
     patchApiEnvironmentsByIdMutation()
@@ -117,6 +132,15 @@ function EnvironmentDetailsPage() {
   );
   const modifyVmMutation = useRQMutation(postApiSandboxesStartMutation());
   const snapshotLaunchMutation = useRQMutation(postApiSandboxesStartMutation());
+  const envVarsQuery = useRQQuery(
+    getApiEnvironmentsByIdVarsOptions({
+      path: { id: String(environmentId) },
+      query: { teamSlugOrId },
+    })
+  );
+  const updateEnvVarsMutation = useRQMutation(
+    patchApiEnvironmentsByIdVarsMutation()
+  );
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isEditingPorts, setIsEditingPorts] = useState(false);
   const [portsDraft, setPortsDraft] = useState<number[]>(
@@ -139,6 +163,20 @@ function EnvironmentDetailsPage() {
   const [maintenanceScriptDraft, setMaintenanceScriptDraft] = useState(
     environment?.maintenanceScript ?? ""
   );
+  const [envVars, setEnvVars] = useState<EnvVar[]>(() => ensureInitialEnvVars());
+  const hasInitializedEnvVarsRef = useRef(false);
+  const [isEnvVarsExpanded, setIsEnvVarsExpanded] = useState(() => {
+    const saved = localStorage.getItem("env-vars-expanded");
+    return saved === null ? true : saved === "true";
+  });
+
+  const toggleEnvVarsExpanded = useCallback(() => {
+    setIsEnvVarsExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem("env-vars-expanded", String(next));
+      return next;
+    });
+  }, []);
 
   const handleRenameStart = () => {
     updateEnvironmentMutation.reset();
@@ -204,6 +242,64 @@ function EnvironmentDetailsPage() {
       setMaintenanceScriptDraft(environment.maintenanceScript ?? "");
     }
   }, [environment.maintenanceScript, isEditingMaintenanceScript]);
+
+  useEffect(() => {
+    if (hasInitializedEnvVarsRef.current) return;
+    if (envVarsQuery.isPending) return;
+    if (envVarsQuery.error) return;
+    if (envVarsQuery.data === undefined) return;
+
+    const envContent = envVarsQuery.data.envVarsContent ?? "";
+    const parsedEnvVars =
+      envContent.trim().length > 0
+        ? parseEnvBlock(envContent).map((row) => ({
+            name: row.name,
+            value: row.value,
+            isSecret: true,
+          }))
+        : [];
+
+    setEnvVars(ensureInitialEnvVars(parsedEnvVars));
+    hasInitializedEnvVarsRef.current = true;
+  }, [envVarsQuery.data, envVarsQuery.isPending, envVarsQuery.error]);
+
+  const updateEnvVars = useCallback(
+    (updater: (prev: EnvVar[]) => EnvVar[]) => {
+      setEnvVars((prev) => {
+        const updated = updater(prev);
+        // Always ensure at least 1 row exists
+        return updated.length === 0
+          ? [{ name: "", value: "", isSecret: true }]
+          : updated;
+      });
+    },
+    []
+  );
+
+  const currentEnvContent = useMemo(() => {
+    const filtered = envVars
+      .filter(
+        (row) => row.name.trim().length > 0 || row.value.trim().length > 0
+      )
+      .map((row) => ({ name: row.name, value: row.value }));
+    return formatEnvVarsContent(filtered);
+  }, [envVars]);
+
+  const normalizedServerEnvContent = useMemo(() => {
+    const serverContent = envVarsQuery.data?.envVarsContent ?? "";
+    if (serverContent.trim().length === 0) return "";
+    const parsed = parseEnvBlock(serverContent)
+      .filter((row) => row.name.trim().length > 0 || row.value.trim().length > 0)
+      .map((row) => ({ name: row.name, value: row.value }));
+    return formatEnvVarsContent(parsed);
+  }, [envVarsQuery.data?.envVarsContent]);
+
+  const hasEnvVarsChanges = currentEnvContent !== normalizedServerEnvContent;
+
+  const envVarsCount = useMemo(
+    () => envVars.filter((row) => row.name.trim().length > 0).length,
+    [envVars]
+  );
 
   const handleStartEditingPorts = () => {
     setPortsDraft(environment.exposedPorts ?? []);
@@ -292,6 +388,27 @@ function EnvironmentDetailsPage() {
       toast.error(message);
     }
   };
+
+  const handleSaveEnvVars = useCallback(async () => {
+    try {
+      await updateEnvVarsMutation.mutateAsync({
+        path: { id: String(environmentId) },
+        body: {
+          teamSlugOrId,
+          envVarsContent: currentEnvContent,
+        },
+      });
+      toast.success("Environment variables updated");
+      hasInitializedEnvVarsRef.current = false;
+      void envVarsQuery.refetch();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to update environment variables";
+      toast.error(message);
+    }
+  }, [currentEnvContent, environmentId, envVarsQuery, teamSlugOrId, updateEnvVarsMutation]);
 
   const handleAddPort = () => {
     if (portInput.trim().length === 0) {
@@ -402,9 +519,9 @@ function EnvironmentDetailsPage() {
 
     setIsDeleting(true);
     try {
-      await deleteEnvironment({
-        teamSlugOrId,
-        id: environmentId,
+      await deleteEnvironmentMutation.mutateAsync({
+        path: { id: String(environmentId) },
+        query: { teamSlugOrId },
       });
       toast.success("Environment deleted successfully");
       navigate({
@@ -482,7 +599,7 @@ function EnvironmentDetailsPage() {
         instanceId: data.instanceId,
         vscodeUrl: vscodeUrlWithFolder,
         step: "configure",
-        snapshotId: environment.morphSnapshotId ?? undefined,
+        snapshotId: environment.snapshotId ?? undefined,
       },
     });
   };
@@ -509,7 +626,7 @@ function EnvironmentDetailsPage() {
         body: {
           teamSlugOrId,
           environmentId: String(environmentId),
-          snapshotId: environment.morphSnapshotId ?? undefined,
+          snapshotId: environment.snapshotId ?? undefined,
           isCloudWorkspace: true,
         },
       },
@@ -521,7 +638,8 @@ function EnvironmentDetailsPage() {
   };
 
   const handleStartSnapshotVersion = () => {
-    if (!environment.morphSnapshotId) {
+    const activeSnapshotId = environment.snapshotId;
+    if (!activeSnapshotId) {
       toast.error("Environment is missing a snapshot.");
       return;
     }
@@ -531,7 +649,7 @@ function EnvironmentDetailsPage() {
         body: {
           teamSlugOrId,
           environmentId: String(environmentId),
-          snapshotId: environment.morphSnapshotId,
+          snapshotId: activeSnapshotId,
           isCloudWorkspace: true,
         },
       },
@@ -945,6 +1063,141 @@ function EnvironmentDetailsPage() {
                 )}
               </div>
 
+              {/* Environment Variables */}
+              <div>
+                {/* Static title row - matches Maintenance Script / Exposed Ports */}
+                <div className="mb-2 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-neutral-500" />
+                  <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Environment Variables
+                  </h3>
+                  {envVarsQuery.isLoading && (
+                    <Loader2
+                      className="w-3.5 h-3.5 text-neutral-500 animate-spin"
+                      aria-label="Loading"
+                    />
+                  )}
+                </div>
+
+                {/* Collapsible row - matches "Configure workspace for..." */}
+                <div className="mt-2 rounded-2xl relative">
+                  {/* Animated border overlay */}
+                  <div
+                    className={cn(
+                      "absolute inset-0 rounded-2xl border pointer-events-none",
+                      isEnvVarsExpanded
+                        ? "border-neutral-200 dark:border-neutral-700"
+                        : "border-transparent"
+                    )}
+                    style={{
+                      clipPath: isEnvVarsExpanded
+                        ? "inset(0 0 0 0)"
+                        : "inset(0 0 100% 0)",
+                    }}
+                  />
+
+                  {/* Collapsible header */}
+                  <button
+                    type="button"
+                    onClick={toggleEnvVarsExpanded}
+                    className="w-full flex items-start justify-between gap-2 text-left px-2 py-1.5"
+                  >
+                    <div className="inline-flex items-center gap-1.5 pt-1 font-medium text-xs text-neutral-600 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200">
+                      {isEnvVarsExpanded ? (
+                        <ChevronDown className="w-4 h-4 transition-transform duration-300" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4 transition-transform duration-300" />
+                      )}
+                      <span>Configure</span>
+                      {!isEnvVarsExpanded && envVarsCount > 0 && (
+                        <span className="text-neutral-500 dark:text-neutral-500">
+                          ({envVarsCount})
+                        </span>
+                      )}
+                    </div>
+                  </button>
+
+                {/* Collapsible content */}
+                <div
+                  className={cn(
+                    "overflow-hidden",
+                    isEnvVarsExpanded ? "max-h-[2000px]" : "max-h-0"
+                  )}
+                >
+                  <div
+                    style={{
+                      clipPath: isEnvVarsExpanded
+                        ? "inset(0 0 0 0)"
+                        : "inset(0 0 100% 0)",
+                      opacity: isEnvVarsExpanded ? 1 : 0,
+                    }}
+                  >
+                    <div className="pl-[30px] pr-2 pb-1">
+                      {envVarsQuery.isLoading ? (
+                        <p className="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+                          Loading saved configuration...
+                        </p>
+                      ) : (
+                        <div className="mt-1.5">
+                          <EnvVarsKeyValueGrid
+                            envVars={envVars}
+                            onUpdate={updateEnvVars}
+                            disabled={updateEnvVarsMutation.isPending}
+                            title="Environment variables"
+                            description="Stored securely and injected when your setup script runs. Paste directly from .env files."
+                            footerRight={
+                              <div className="flex items-center gap-2">
+                                {hasEnvVarsChanges && !updateEnvVarsMutation.isPending && (
+                                  <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                                    Unsaved changes
+                                  </span>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="!h-7 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
+                                  onClick={handleSaveEnvVars}
+                                  disabled={
+                                    !hasEnvVarsChanges || updateEnvVarsMutation.isPending
+                                  }
+                                >
+                                  {updateEnvVarsMutation.isPending ? "Saving..." : "Save setup"}
+                                </Button>
+                              </div>
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                </div>
+              </div>
+
+              {/* Per-Repository Workspace Configuration */}
+              {environment.selectedRepos && environment.selectedRepos.length > 0 && (
+                <div>
+                  <div className="mb-2">
+                    <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Per-Repository Configuration
+                    </h3>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
+                      Repository settings are applied alongside environment-level
+                      scripts and variables.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    {environment.selectedRepos.map((repo) => (
+                      <WorkspaceSetupPanel
+                        key={repo}
+                        teamSlugOrId={teamSlugOrId}
+                        projectFullName={repo}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Snapshot Versions */}
               <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
                 <div className="flex items-center justify-between mb-3">
@@ -1000,7 +1253,7 @@ function EnvironmentDetailsPage() {
                               )}
                             </p>
                             <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                              Snapshot ID: {version.morphSnapshotId}
+                              Snapshot ID: {version.snapshotId}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">

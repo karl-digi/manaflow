@@ -3,6 +3,7 @@ import {
   getUserFromRequest,
 } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
+import { generateGitHubInstallationToken } from "@/lib/utils/github-app-token";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
@@ -14,12 +15,25 @@ import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { type Instance, MorphCloudClient } from "morphcloud";
+import { MorphCloudClient } from "morphcloud";
+import { getPveLxcClient, type PveLxcInstance } from "@/lib/utils/pve-lxc-client";
+import {
+  type SandboxInstance,
+  wrapMorphInstance,
+  wrapPveLxcInstance,
+} from "@/lib/utils/sandbox-instance";
+import {
+  isPveLxcInstanceId,
+  getInstanceById,
+  tryGetInstanceById,
+  getInstanceTeamId,
+} from "./sandboxes/provider-dispatch";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
   configureGitIdentity,
   fetchGitIdentityInputs,
+  getFreshGitHubToken,
 } from "./sandboxes/git";
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
 import { hydrateWorkspace } from "./sandboxes/hydration";
@@ -32,7 +46,43 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
-import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+
+/**
+ * Create a MorphCloudClient instance.
+ * Throws if MORPH_API_KEY is not configured.
+ */
+function getMorphClient(): MorphCloudClient {
+  if (!env.MORPH_API_KEY) {
+    throw new Error("Morph API key not configured");
+  }
+  return new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+}
+
+/**
+ * Get MorphCloudClient if configured, or null for PVE-only deployments.
+ * Use with getInstanceById() which handles null Morph client for PVE instances.
+ */
+function getMorphClientOrNull(): MorphCloudClient | null {
+  if (!env.MORPH_API_KEY) {
+    return null;
+  }
+  return new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+}
+
+function concatConfigBlocks(
+  blocks: Array<string | null | undefined>,
+  separator: string,
+): string | null {
+  const normalizedBlocks = blocks
+    .map((block) => block?.trim())
+    .filter((block): block is string => Boolean(block && block.length > 0));
+  if (normalizedBlocks.length === 0) {
+    return null;
+  }
+  return normalizedBlocks.join(separator);
+}
+
+// Provider dispatch helpers imported from ./sandboxes/provider-dispatch
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -54,6 +104,39 @@ async function waitForVSCodeReady(
       });
       // OpenVSCode server returns 200 for the root path when ready
       if (response.ok || response.status === 302 || response.status === 301) {
+        return true;
+      }
+    } catch {
+      // Connection refused or timeout - server not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return false;
+}
+
+/**
+ * Wait for the Worker socket server to be ready by polling the socket.io endpoint.
+ * This prevents "Worker socket not available" errors when the agent spawner tries to connect
+ * before the worker service is actually listening.
+ */
+async function waitForWorkerReady(
+  workerUrl: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<boolean> {
+  const { timeoutMs = 15_000, intervalMs = 500 } = options;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Worker service uses socket.io - check if the HTTP endpoint responds
+      // Socket.io exposes a polling transport at /socket.io/?EIO=4&transport=polling
+      const response = await fetch(`${workerUrl}/socket.io/?EIO=4&transport=polling`, {
+        method: "GET",
+        signal: AbortSignal.timeout(3_000),
+      });
+      // Socket.io returns 200 with polling data when ready
+      if (response.ok) {
         return true;
       }
     } catch {
@@ -250,7 +333,9 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph"]).default("morph"),
+    vncUrl: z.string().optional(),
+    xtermUrl: z.string().optional(),
+    provider: z.enum(["morph", "pve-lxc"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -345,10 +430,13 @@ sandboxesRouter.openapi(
 
       const {
         team,
+        provider,
         resolvedSnapshotId,
+        resolvedTemplateVmid,
         environmentDataVaultKey,
         environmentMaintenanceScript,
         environmentDevScript,
+        environmentSelectedRepos,
       } = await resolveTeamAndSnapshot({
         req: c.req.raw,
         convex,
@@ -361,36 +449,81 @@ sandboxesRouter.openapi(
         ? loadEnvironmentEnvVars(environmentDataVaultKey)
         : Promise.resolve<string | null>(null);
 
+      // Use body.repoUrl if provided, otherwise fall back to first selectedRepo from environment
+      const repoUrl = body.repoUrl ?? environmentSelectedRepos?.[0] ?? null;
+      if (!body.repoUrl && environmentSelectedRepos?.[0]) {
+        console.log(`[sandboxes.start] Using environment selectedRepo: ${repoUrl}`);
+      }
       // Parse repo URL once if provided
-      const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
+      const parsedRepoUrl = repoUrl ? parseGithubRepoUrl(repoUrl) : null;
 
-      // Load workspace config if we're in cloud mode with a repository (not an environment)
-      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
-      if (parsedRepoUrl && !body.environmentId) {
-        try {
-          const config = await convex.query(api.workspaceConfigs.get, {
-            teamSlugOrId: body.teamSlugOrId,
-            projectFullName: parsedRepoUrl.fullName,
-          });
-          if (config) {
+      const workspaceConfigRepoInputs = body.environmentId
+        ? environmentSelectedRepos ?? []
+        : parsedRepoUrl
+          ? [parsedRepoUrl.fullName]
+          : [];
+      const workspaceConfigRepos = Array.from(
+        new Set(
+          workspaceConfigRepoInputs.flatMap((repoInput) => {
+            const parsedRepo = parseGithubRepoUrl(repoInput);
+            if (!parsedRepo) {
+              console.warn(
+                `[sandboxes.start] Skipping invalid workspace config repo "${repoInput}"`,
+              );
+              return [];
+            }
+            return [parsedRepo.fullName];
+          }),
+        ),
+      );
+
+      const workspaceConfigs = await Promise.all(
+        workspaceConfigRepos.map(async (projectFullName) => {
+          try {
+            const config = await convex.query(api.workspaceConfigs.get, {
+              teamSlugOrId: body.teamSlugOrId,
+              projectFullName,
+            });
+            if (!config) {
+              return null;
+            }
             const envVarsContent = config.dataVaultKey
               ? await loadEnvironmentEnvVars(config.dataVaultKey)
               : null;
-            workspaceConfig = {
+            console.log(`[sandboxes.start] Loaded workspace config for ${projectFullName}`, {
+              hasMaintenanceScript: Boolean(config.maintenanceScript),
+              hasEnvVars: Boolean(envVarsContent),
+            });
+            return {
+              projectFullName,
               maintenanceScript: config.maintenanceScript ?? undefined,
               envVarsContent: envVarsContent ?? undefined,
             };
-            console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
-              hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
-              hasEnvVars: Boolean(workspaceConfig.envVarsContent),
-            });
+          } catch (error) {
+            console.error(
+              `[sandboxes.start] Failed to load workspace config for ${projectFullName}`,
+              error,
+            );
+            return null;
           }
-        } catch (error) {
-          console.error(`[sandboxes.start] Failed to load workspace config for ${parsedRepoUrl.fullName}`, error);
-        }
-      }
+        }),
+      );
+      const loadedWorkspaceConfigs = workspaceConfigs.flatMap((config) =>
+        config ? [config] : [],
+      );
+      const workspaceMaintenanceScript = concatConfigBlocks(
+        loadedWorkspaceConfigs.map((config) => config.maintenanceScript),
+        "\n\n",
+      );
+      const workspaceEnvVarsContent = concatConfigBlocks(
+        loadedWorkspaceConfigs.map((config) => config.envVarsContent),
+        "\n",
+      );
 
-      const maintenanceScript = environmentMaintenanceScript ?? workspaceConfig?.maintenanceScript ?? null;
+      const maintenanceScript = concatConfigBlocks(
+        [workspaceMaintenanceScript, environmentMaintenanceScript],
+        "\n\n",
+      );
       const devScript = environmentDevScript ?? null;
 
       const isCloudWorkspace =
@@ -412,276 +545,154 @@ sandboxesRouter.openapi(
         },
       );
 
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-
-      // Try to claim a prewarmed instance from the warm pool
-      let instance: Instance | undefined;
-      let vscodeService: { url: string; port: number } | undefined;
-      let workerService: { url: string; port: number } | undefined;
+      // Start the sandbox using the appropriate provider
+      let instance: SandboxInstance | null = null;
+      let rawPveLxcInstance: PveLxcInstance | null = null;
       let usedWarmPool = false;
       let warmPoolRepoUrl: string | undefined;
+      let warmPoolBranch: string | undefined;
 
-      if (!body.environmentId) {
-        try {
-          const claimed = await convex.mutation(api.warmPool.claimInstance, {
-            teamId: team.uuid,
-            repoUrl: body.repoUrl,
-            taskRunId: body.taskRunId || "",
-          });
-
-          if (claimed) {
-            console.log(
-              `[sandboxes.start] Claimed warm pool instance ${claimed.instanceId}`,
-            );
-            instance = await client.instances.get({
-              instanceId: claimed.instanceId,
-            });
-            usedWarmPool = true;
-            warmPoolRepoUrl = claimed.repoUrl;
-
-            void (async () => {
-              await instance.setWakeOn(true, true);
-            })();
-
-            const exposed = instance.networking.httpServices;
-            vscodeService = exposed.find((s) => s.port === 39378);
-            workerService = exposed.find((s) => s.port === 39377);
-
-            if (!vscodeService || !workerService) {
-              console.warn(
-                `[sandboxes.start] Warm pool instance ${claimed.instanceId} missing services, falling back to on-demand`,
-              );
-              usedWarmPool = false;
-            }
-          }
-        } catch (error) {
-          console.error(
-            "[sandboxes.start] Warm pool claim failed, falling back to on-demand",
-            error,
-          );
-        }
-      }
-
-      if (!usedWarmPool) {
-        // On-demand instance creation (original path)
-        instance = await client.instances.start({
+      if (provider === "pve-lxc") {
+        // Proxmox VE LXC provider
+        console.log(`[sandboxes.start] Starting PVE LXC sandbox with snapshot ${resolvedSnapshotId}`);
+        const pveClient = getPveLxcClient();
+        rawPveLxcInstance = await pveClient.instances.start({
           snapshotId: resolvedSnapshotId,
+          templateVmid: resolvedTemplateVmid,
           ttlSeconds: body.ttlSeconds ?? 60 * 60,
           ttlAction: "pause",
           metadata: {
             app: "cmux",
             teamId: team.uuid,
-            ...(body.environmentId
-              ? { environmentId: body.environmentId }
-              : {}),
+            userId: user.id,
+            ...(body.environmentId ? { environmentId: body.environmentId } : {}),
             ...(body.metadata || {}),
           },
         });
-        void (async () => {
-          await instance.setWakeOn(true, true);
-        })();
+        instance = wrapPveLxcInstance(rawPveLxcInstance);
+        console.log(`[sandboxes.start] PVE LXC sandbox started: ${instance.id}`);
+      } else {
+        // Morph provider (default)
+        const client = getMorphClient();
 
-        // SDK bug: instances.start() returns empty httpServices array
-        // Re-fetch instance to get the actual networking data
-        const refreshedInstance =
-          instance.networking.httpServices.length === 0
-            ? await client.instances.get({ instanceId: instance.id })
-            : instance;
-
-        const exposed = refreshedInstance.networking.httpServices;
-        vscodeService = exposed.find((s) => s.port === 39378);
-        workerService = exposed.find((s) => s.port === 39377);
-        if (!vscodeService || !workerService) {
-          await instance.stop().catch(() => {});
-          return c.text("VSCode or worker service not found", 500);
-        }
-      }
-
-      if (!vscodeService || !workerService || !instance) {
-        return c.text("VSCode or worker service not found", 500);
-      }
-
-      // --- Fast path for prewarmed instances ---
-      // Skip VSCode ready check (already verified during prewarm) and run all
-      // instance.exec() calls in parallel to minimize latency.
-      if (usedWarmPool) {
-        console.log(
-          `[sandboxes.start] Fast path: warm pool instance ${instance.id}`,
-        );
-
-        // Persist VSCode info immediately (don't wait for VSCode ready check)
-        let vscodePersisted = false;
-        const persistPromise = body.taskRunId
-          ? convex
-              .mutation(api.taskRuns.updateVSCodeInstance, {
-                teamSlugOrId: body.teamSlugOrId,
-                id: body.taskRunId as Id<"taskRuns">,
-                vscode: {
-                  provider: "morph",
-                  containerName: instance.id,
-                  status: "starting",
-                  url: vscodeService.url,
-                  workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
-                  startedAt: Date.now(),
-                },
-              })
-              .then(() => {
-                vscodePersisted = true;
-                console.log(
-                  `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
-                );
-              })
-              .catch((error: unknown) => {
-                console.error(
-                  "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
-                  error,
-                );
-              })
-          : Promise.resolve();
-
-        // Prepare env vars content
-        const environmentEnvVarsContent = await environmentEnvVarsPromise;
-        let envVarsToApply =
-          environmentEnvVarsContent ||
-          workspaceConfig?.envVarsContent ||
-          "";
-        if (body.taskRunId) {
-          envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
-        }
-        if (body.taskRunJwt) {
-          envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
-        }
-
-        // Run all instance config in parallel: env vars, GitHub access, git identity, persist
-        const { githubAccessToken, githubAccessTokenError } =
-          await githubAccessTokenPromise;
-        if (githubAccessTokenError) {
-          console.error(
-            `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
-          );
-          return c.text("Failed to resolve GitHub credentials", 401);
-        }
-
-        await Promise.all([
-          // Apply env vars
-          envVarsToApply.trim().length > 0
-            ? (async () => {
-                const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
-                const loadRes = await instance.exec(
-                  envctlLoadCommand(encodedEnv),
-                );
-                if (loadRes.exit_code === 0) {
-                  console.log(
-                    `[sandboxes.start] Applied environment variables via envctl`,
-                  );
-                } else {
-                  console.error(
-                    `[sandboxes.start] Env var bootstrap failed exit=${loadRes.exit_code}`,
-                  );
-                }
-              })()
-            : Promise.resolve(),
-          // Configure GitHub access (fresh token for the user's session)
-          configureGithubAccess(instance, githubAccessToken),
-          // Configure git identity
-          gitIdentityPromise
-            .then(([who, gh]) => {
-              const { name, email } = selectGitIdentity(who, gh);
-              return configureGitIdentity(instance, { name, email });
-            })
-            .catch((error) => {
-              console.log(
-                `[sandboxes.start] Failed to configure git identity; continuing...`,
-                error,
-              );
-            }),
-          // Persist VSCode info
-          persistPromise,
-        ]);
-
-        // Skip hydration - repo already cloned during prewarm
-        const skipHydration = warmPoolRepoUrl === body.repoUrl && !!body.repoUrl;
-        if (skipHydration) {
-          console.log(
-            `[sandboxes.start] Skipping hydration - repo already cloned in warm pool instance ${instance.id}`,
-          );
-        } else if (body.repoUrl) {
-          if (!parsedRepoUrl) {
-            return c.text("Unsupported repo URL; expected GitHub URL", 400);
-          }
+        if (!body.environmentId) {
           try {
-            await hydrateWorkspace({
-              instance,
-              repo: {
-                owner: parsedRepoUrl.owner,
-                name: parsedRepoUrl.repo,
-                repoFull: parsedRepoUrl.fullName,
-                cloneUrl: parsedRepoUrl.gitUrl,
-                maskedCloneUrl: parsedRepoUrl.gitUrl,
-                depth: Math.max(1, Math.floor(body.depth ?? 1)),
-                baseBranch: body.branch || "main",
-                newBranch: body.newBranch ?? "",
-              },
+            const claimed = await convex.mutation(api.warmPool.claimInstance, {
+              teamId: team.uuid,
+              repoUrl: repoUrl ?? undefined,
+              branch: body.branch ?? undefined,
+              taskRunId: body.taskRunId || "",
             });
-          } catch (error) {
-            console.error(`[sandboxes.start] Hydration failed:`, error);
-            await instance.stop().catch(() => {});
-            return c.text("Failed to hydrate sandbox", 500);
-          }
-        }
 
-        // Update status + maintenance scripts (fire-and-forget)
-        if (body.taskRunId && vscodePersisted) {
-          void convex
-            .mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              status: "running",
-            })
-            .catch((error) => {
-              console.error(
-                "[sandboxes.start] Failed to update VSCode status to running:",
-                error,
+            if (claimed) {
+              console.log(
+                `[sandboxes.start] Claimed warm pool instance ${claimed.instanceId}`,
               );
-            });
-        }
+              let claimedMorphInstance = await client.instances.get({
+                instanceId: claimed.instanceId,
+              });
+              if (claimedMorphInstance.networking.httpServices.length === 0) {
+                claimedMorphInstance = await client.instances.get({
+                  instanceId: claimed.instanceId,
+                });
+              }
 
-        if (maintenanceScript || devScript) {
-          (async () => {
-            await runMaintenanceAndDevScripts({
-              instance,
-              maintenanceScript: maintenanceScript || undefined,
-              devScript: devScript || undefined,
-              identifiers: scriptIdentifiers ?? undefined,
-              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
-              taskRunJwt: body.taskRunJwt || undefined,
-              isCloudWorkspace,
-            });
-          })().catch((error) => {
+              const claimedWrapped = wrapMorphInstance(claimedMorphInstance);
+              const claimedExposed = claimedWrapped.networking.httpServices;
+              const claimedVscodeService = claimedExposed.find(
+                (service) => service.port === 39378,
+              );
+              const claimedWorkerService = claimedExposed.find(
+                (service) => service.port === 39377,
+              );
+              if (claimedVscodeService && claimedWorkerService) {
+                instance = claimedWrapped;
+                usedWarmPool = true;
+                warmPoolRepoUrl = claimed.repoUrl;
+                warmPoolBranch = claimed.branch;
+                void (async () => {
+                  await instance.setWakeOn(true, true);
+                })();
+              } else {
+                console.warn(
+                  `[sandboxes.start] Warm pool instance ${claimed.instanceId} missing services, falling back to on-demand start`,
+                );
+              }
+            }
+          } catch (error) {
             console.error(
-              "[sandboxes.start] Background script execution failed:",
+              "[sandboxes.start] Warm pool claim failed, falling back to on-demand start",
               error,
             );
-          });
+          }
         }
 
-        return c.json({
-          instanceId: instance.id,
-          vscodeUrl: vscodeService.url,
-          workerUrl: workerService.url,
-          provider: "morph",
-          vscodePersisted,
-        });
+        if (!usedWarmPool) {
+          const morphInstance = await client.instances.start({
+            snapshotId: resolvedSnapshotId,
+            ttlSeconds: body.ttlSeconds ?? 60 * 60,
+            ttlAction: "pause",
+            metadata: {
+              app: "cmux",
+              teamId: team.uuid,
+              ...(body.environmentId ? { environmentId: body.environmentId } : {}),
+              ...(body.metadata || {}),
+            },
+          });
+          instance = wrapMorphInstance(morphInstance);
+          void (async () => {
+            await instance.setWakeOn(true, true);
+          })();
+        }
       }
 
-      // --- Regular path (on-demand instance) ---
+      if (!instance) {
+        return c.text("Failed to start sandbox instance", 500);
+      }
+
+      // Record sandbox creation in Convex for activity tracking
+      // This enables the maintenance cron to properly track and garbage collect instances
+      try {
+        await convex.mutation(api.sandboxInstances.recordCreate, {
+          instanceId: instance.id,
+          provider: provider === "pve-lxc" ? "pve-lxc" : "morph",
+          vmid: rawPveLxcInstance?.vmid,
+          hostname: rawPveLxcInstance?.networking.hostname,
+          snapshotId: resolvedSnapshotId,
+          snapshotProvider: provider === "pve-lxc" ? "pve-lxc" : "morph",
+          templateVmid: resolvedTemplateVmid,
+          teamSlugOrId: body.teamSlugOrId,
+        });
+        console.log(`[sandboxes.start] Recorded instance creation for ${instance.id}`);
+      } catch (error) {
+        // Non-fatal: instance is created, but activity tracking may not work
+        console.error(
+          "[sandboxes.start] Failed to record instance creation (non-fatal):",
+          error,
+        );
+      }
+
+      // SDK bug: instances.start() returns empty httpServices array
+      // Re-fetch instance to get the actual networking data
+      let refreshedInstance: SandboxInstance = instance;
+      if (instance.networking.httpServices.length === 0) {
+        refreshedInstance = await getInstanceById(instance.id, getMorphClientOrNull());
+      }
+
+      const exposed = refreshedInstance.networking.httpServices;
+      const vscodeService = exposed.find((service) => service.port === 39378);
+      const workerService = exposed.find((service) => service.port === 39377);
+      const vncService = exposed.find((service) => service.port === 39380);
+      const xtermService = exposed.find((service) => service.port === 39383);
+      if (!vscodeService || !workerService) {
+        await instance.stop().catch(() => { });
+        return c.text("VSCode or worker service not found", 500);
+      }
 
       // Wait for VSCode server to be ready before persisting URL
       // This prevents "upstream connect error" when the frontend loads the iframe
       // before the OpenVSCode server is actually listening
-      const vscodeReady = await waitForVSCodeReady(vscodeService.url, {
-        timeoutMs: 15_000,
-      });
+      const vscodeReady = await waitForVSCodeReady(vscodeService.url);
       if (!vscodeReady) {
         console.warn(
           `[sandboxes.start] VSCode server did not become ready within timeout for ${instance.id}, proceeding anyway`,
@@ -689,6 +700,20 @@ sandboxesRouter.openapi(
       } else {
         console.log(
           `[sandboxes.start] VSCode server ready for ${instance.id}`,
+        );
+      }
+
+      // Wait for Worker socket server to be ready before returning
+      // This prevents "Worker socket not available" errors when the agent spawner
+      // tries to connect before the worker service is actually listening
+      const workerReady = await waitForWorkerReady(workerService.url);
+      if (!workerReady) {
+        console.warn(
+          `[sandboxes.start] Worker server did not become ready within timeout for ${instance.id}, proceeding anyway`,
+        );
+      } else {
+        console.log(
+          `[sandboxes.start] Worker server ready for ${instance.id}`,
         );
       }
 
@@ -701,11 +726,13 @@ sandboxesRouter.openapi(
             teamSlugOrId: body.teamSlugOrId,
             id: body.taskRunId as Id<"taskRuns">,
             vscode: {
-              provider: "morph",
+              provider: provider === "pve-lxc" ? "pve-lxc" : "morph",
               containerName: instance.id,
               status: "starting",
               url: vscodeService.url,
               workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              vncUrl: vncService?.url,
+              xtermUrl: xtermService?.url,
               startedAt: Date.now(),
             },
           });
@@ -719,14 +746,39 @@ sandboxesRouter.openapi(
             error,
           );
         }
+
+        // Store environment repos as discovered repos for git diff
+        // This allows the git diff UI to work immediately without waiting for discovery
+        if (environmentSelectedRepos && environmentSelectedRepos.length > 0) {
+          try {
+            await convex.mutation(api.taskRuns.updateDiscoveredRepos, {
+              teamSlugOrId: body.teamSlugOrId,
+              runId: body.taskRunId as Id<"taskRuns">,
+              discoveredRepos: environmentSelectedRepos,
+            });
+            console.log(
+              `[sandboxes.start] Stored discovered repos for ${body.taskRunId}:`,
+              environmentSelectedRepos
+            );
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to store discovered repos (non-fatal):",
+              error,
+            );
+          }
+        }
       }
 
       // Get environment variables from the environment if configured
       const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
       // Prepare environment variables including task JWT if present
-      // Workspace env vars take precedence if no environment is configured
-      let envVarsToApply = environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+      // Workspace config env vars are the base layer, environment vars override later.
+      let envVarsToApply =
+        concatConfigBlocks(
+          [workspaceEnvVarsContent, environmentEnvVarsContent],
+          "\n",
+        ) ?? "";
 
       // Add CMUX task-related env vars if present
       if (body.taskRunId) {
@@ -734,6 +786,15 @@ sandboxesRouter.openapi(
       }
       if (body.taskRunJwt) {
         envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+        // Also add the JWT secret so the worker can verify tokens for image uploads
+        // Only add if the secret is configured to avoid injecting "undefined" as a literal value
+        if (env.CMUX_TASK_RUN_JWT_SECRET) {
+          envVarsToApply += `\nCMUX_TASK_RUN_JWT_SECRET="${env.CMUX_TASK_RUN_JWT_SECRET}"`;
+        } else {
+          console.warn(
+            "[sandboxes.start] CMUX_TASK_RUN_JWT_SECRET not configured, image uploads will not work",
+          );
+        }
       }
 
       // Apply all environment variables if any
@@ -746,7 +807,7 @@ sandboxesRouter.openapi(
               `[sandboxes.start] Applied environment variables via envctl`,
               {
                 hasEnvironmentVars: Boolean(environmentEnvVarsContent),
-                hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
+                hasWorkspaceVars: Boolean(workspaceEnvVarsContent),
                 hasTaskRunId: Boolean(body.taskRunId),
                 hasTaskRunJwt: Boolean(body.taskRunJwt),
               },
@@ -785,24 +846,90 @@ sandboxesRouter.openapi(
         return c.text("Failed to resolve GitHub credentials", 401);
       }
 
-      // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
-      await configureGithubAccess(instance, githubAccessToken);
+      // Try to use GitHub App installation token for better permission scope.
+      // The user's OAuth token from Stack Auth may not have 'repo' scope needed for private repos.
+      let gitAuthToken = githubAccessToken;
+      if (parsedRepoUrl) {
+        try {
+          // Look up GitHub App installation for the repo's owner
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId: body.teamSlugOrId,
+          });
+          const targetConnection = connections.find(
+            (co) =>
+              co.isActive &&
+              co.accountLogin?.toLowerCase() === parsedRepoUrl.owner.toLowerCase()
+          );
+          if (targetConnection) {
+            console.log(
+              `[sandboxes.start] Found GitHub App installation ${targetConnection.installationId} for ${parsedRepoUrl.owner}`
+            );
+            const appToken = await generateGitHubInstallationToken({
+              installationId: targetConnection.installationId,
+              repositories: [parsedRepoUrl.fullName],
+              permissions: {
+                contents: "write",
+                metadata: "read",
+                // Required for pushing workflow files (.github/workflows/*)
+                // Without this, pushes containing workflow files are rejected
+                workflows: "write",
+              },
+            });
+            gitAuthToken = appToken;
+            console.log(
+              `[sandboxes.start] Using GitHub App token for git authentication`
+            );
+          } else {
+            console.log(
+              `[sandboxes.start] No GitHub App installation found for ${parsedRepoUrl.owner}, using user OAuth token`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[sandboxes.start] Failed to get GitHub App token, falling back to user OAuth:`,
+            error
+          );
+        }
+      }
 
-      {
+      await configureGithubAccess(instance, gitAuthToken);
+
+      // Only skip hydration if both repo URL and branch match the warm pool instance
+      // This ensures we don't use wrong branch when user prewarmed with different branch
+      const requestedBranch = body.branch ?? undefined;
+      const skipHydration =
+        usedWarmPool &&
+        typeof repoUrl === "string" &&
+        repoUrl.length > 0 &&
+        warmPoolRepoUrl === repoUrl &&
+        warmPoolBranch === requestedBranch;
+      if (skipHydration) {
+        console.log(
+          `[sandboxes.start] Skipping hydration - repo and branch already cloned in warm pool instance ${instance.id}`,
+        );
+      } else {
         let repoConfig: HydrateRepoConfig | undefined;
-        if (body.repoUrl) {
+        if (repoUrl) {
           console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
           if (!parsedRepoUrl) {
             return c.text("Unsupported repo URL; expected GitHub URL", 400);
           }
           console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
+          // Use authenticated URL for cloning when token available (required for private repos)
+          const authenticatedGitUrl = gitAuthToken
+            ? `https://x-access-token:${gitAuthToken}@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+            : parsedRepoUrl.gitUrl;
+          const maskedGitUrl = gitAuthToken
+            ? `https://x-access-token:***@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+            : parsedRepoUrl.gitUrl;
+
           repoConfig = {
             owner: parsedRepoUrl.owner,
             name: parsedRepoUrl.repo,
             repoFull: parsedRepoUrl.fullName,
-            cloneUrl: parsedRepoUrl.gitUrl,
-            maskedCloneUrl: parsedRepoUrl.gitUrl,
+            cloneUrl: authenticatedGitUrl,
+            maskedCloneUrl: maskedGitUrl,
             depth: Math.max(1, Math.floor(body.depth ?? 1)),
             baseBranch: body.branch || "main",
             newBranch: body.newBranch ?? "",
@@ -821,6 +948,55 @@ sandboxesRouter.openapi(
         }
       }
 
+      // Capture starting commit SHA for diff baseline (after hydration, before agent runs)
+      if (body.taskRunId) {
+        console.log(
+          "[sandboxes.start] Capturing starting commit SHA for taskRunId:",
+          body.taskRunId,
+        );
+        try {
+          const execResult = await instance.exec(
+            "git -C /root/workspace rev-parse HEAD",
+          );
+          console.log("[sandboxes.start] git rev-parse HEAD result:", {
+            exit_code: execResult.exit_code,
+            stdout: execResult.stdout?.substring(0, 50),
+          });
+          if (execResult.exit_code === 0 && execResult.stdout) {
+            const startingCommitSha = execResult.stdout.trim();
+            console.log(
+              "[sandboxes.start] Starting commit SHA:",
+              startingCommitSha,
+              "length:",
+              startingCommitSha.length,
+            );
+            if (startingCommitSha.length === 40) {
+              console.log(
+                "[sandboxes.start] Saving startingCommitSha to Convex:",
+                startingCommitSha,
+              );
+              void convex
+                .mutation(api.taskRuns.updateStartingCommitSha, {
+                  teamSlugOrId: body.teamSlugOrId,
+                  id: body.taskRunId as Id<"taskRuns">,
+                  startingCommitSha,
+                })
+                .catch((error) => {
+                  console.error(
+                    "[sandboxes.start] Failed to update starting commit SHA:",
+                    error,
+                  );
+                });
+            }
+          }
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to capture starting commit SHA:",
+            error,
+          );
+        }
+      }
+
       // Update status to "running" after hydration completes
       if (body.taskRunId && vscodePersisted) {
         void convex
@@ -835,6 +1011,32 @@ sandboxesRouter.openapi(
               error,
             );
           });
+      }
+
+      // Populate projectFullName and baseBranch on the task for crown evaluation refresh.
+      // This ensures GitHub diff info is available when retrying crown evaluation.
+      if (body.taskRunId && parsedRepoUrl) {
+        void (async () => {
+          try {
+            const taskRun = await convex.query(api.taskRuns.get, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+            });
+            if (taskRun) {
+              await convex.mutation(api.tasks.setProjectAndBranch, {
+                teamSlugOrId: body.teamSlugOrId,
+                id: taskRun.taskId,
+                projectFullName: parsedRepoUrl.fullName,
+                baseBranch: body.branch ?? "main",
+              });
+            }
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to set project and branch info:",
+              error,
+            );
+          }
+        })();
       }
 
       if (maintenanceScript || devScript) {
@@ -862,7 +1064,9 @@ sandboxesRouter.openapi(
         instanceId: instance.id,
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
-        provider: "morph",
+        vncUrl: vncService?.url,
+        xtermUrl: xtermService?.url,
+        provider: provider === "pve-lxc" ? "pve-lxc" : "morph",
         vscodePersisted,
       });
     } catch (error) {
@@ -881,7 +1085,7 @@ sandboxesRouter.openapi(
   },
 );
 
-// Prewarm a sandbox instance for faster task startup
+// Prewarm a Morph sandbox instance for faster task startup.
 const PrewarmSandboxBody = z
   .object({
     teamSlugOrId: z.string(),
@@ -950,8 +1154,6 @@ sandboxesRouter.openapi(
       });
 
       const snapshotId = DEFAULT_MORPH_SNAPSHOT_ID;
-
-      // Create or find existing prewarm entry
       const result = await convex.mutation(api.warmPool.createPrewarmEntry, {
         teamId: team.uuid,
         userId: user.id,
@@ -964,17 +1166,13 @@ sandboxesRouter.openapi(
         return c.json({ id: result.id, alreadyExists: true });
       }
 
-      // Get GitHub access token for repo cloning (needed in background)
       const githubAccountPromise = user.getConnectedAccount("github");
-
-      // Fire-and-forget background provisioning
       const prewarmEntryId = result.id;
-      (async () => {
+      void (async () => {
         try {
-          const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+          const client = getMorphClient();
 
-          // Start Morph instance
-          let instance = await client.instances.start({
+          let morphInstance = await client.instances.start({
             snapshotId,
             ttlSeconds: 3600,
             ttlAction: "pause",
@@ -985,52 +1183,48 @@ sandboxesRouter.openapi(
             },
           });
 
+          if (morphInstance.networking.httpServices.length === 0) {
+            morphInstance = await client.instances.get({
+              instanceId: morphInstance.id,
+            });
+          }
+
+          const instance = wrapMorphInstance(morphInstance);
           void (async () => {
             await instance.setWakeOn(true, true);
           })();
 
-          // Re-fetch for httpServices (SDK bug)
-          if (instance.networking.httpServices.length === 0) {
-            instance = await client.instances.get({
-              instanceId: instance.id,
-            });
-          }
-
           const exposed = instance.networking.httpServices;
-          const vscodeService = exposed.find((s) => s.port === 39378);
-          const workerService = exposed.find((s) => s.port === 39377);
-
+          const vscodeService = exposed.find((service) => service.port === 39378);
+          const workerService = exposed.find((service) => service.port === 39377);
           if (!vscodeService || !workerService) {
             throw new Error(
-              `VSCode or worker service not found on instance ${instance.id}`
+              `VSCode or worker service not found on instance ${instance.id}`,
             );
           }
 
-          // Wait for VSCode to be ready
           await waitForVSCodeReady(vscodeService.url, { timeoutMs: 30_000 });
 
-          // Configure GitHub access for repo cloning
           const githubAccount = await githubAccountPromise;
           if (githubAccount) {
-            const { accessToken: ghToken } =
+            const { accessToken: githubAccessToken } =
               await githubAccount.getAccessToken();
-            if (ghToken) {
-              await configureGithubAccess(instance, ghToken);
+            if (githubAccessToken) {
+              await configureGithubAccess(instance, githubAccessToken);
             }
           }
 
-          // Clone the repo if provided
           if (body.repoUrl) {
-            const parsed = parseGithubRepoUrl(body.repoUrl);
-            if (parsed) {
+            const parsedRepo = parseGithubRepoUrl(body.repoUrl);
+            if (parsedRepo) {
               await hydrateWorkspace({
                 instance,
                 repo: {
-                  owner: parsed.owner,
-                  name: parsed.repo,
-                  repoFull: parsed.fullName,
-                  cloneUrl: parsed.gitUrl,
-                  maskedCloneUrl: parsed.gitUrl,
+                  owner: parsedRepo.owner,
+                  name: parsedRepo.repo,
+                  repoFull: parsedRepo.fullName,
+                  cloneUrl: parsedRepo.gitUrl,
+                  maskedCloneUrl: parsedRepo.gitUrl,
                   depth: 1,
                   baseBranch: body.branch || "main",
                   newBranch: "",
@@ -1039,17 +1233,12 @@ sandboxesRouter.openapi(
             }
           }
 
-          // Mark as ready in the warm pool
           await convex.mutation(api.warmPool.markInstanceReady, {
             id: prewarmEntryId,
             instanceId: instance.id,
             vscodeUrl: vscodeService.url,
             workerUrl: workerService.url,
           });
-
-          console.log(
-            `[sandboxes.prewarm] Instance ${instance.id} ready with repo ${body.repoUrl ?? "none"}`
-          );
         } catch (error) {
           console.error("[sandboxes.prewarm] Background provisioning failed:", error);
           try {
@@ -1061,7 +1250,7 @@ sandboxesRouter.openapi(
           } catch (markError) {
             console.error(
               "[sandboxes.prewarm] Failed to mark entry as failed:",
-              markError
+              markError,
             );
           }
         }
@@ -1071,6 +1260,189 @@ sandboxesRouter.openapi(
     } catch (error) {
       console.error("[sandboxes.prewarm] Failed:", error);
       return c.text("Failed to create prewarm entry", 500);
+    }
+  },
+);
+
+const SandboxRefreshGitHubAuthBody = z
+  .object({
+    teamSlugOrId: z.string(),
+  })
+  .openapi("SandboxRefreshGitHubAuthBody");
+
+const SandboxRefreshGitHubAuthResponse = z
+  .object({
+    refreshed: z.literal(true),
+  })
+  .openapi("SandboxRefreshGitHubAuthResponse");
+
+// Refresh GitHub authentication inside a sandbox (Morph or PVE LXC)
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/refresh-github-auth",
+    tags: ["Sandboxes"],
+    summary: "Refresh GitHub authentication inside a sandbox",
+    description:
+      "Fetches a fresh GitHub token via Stack Auth and re-authenticates the GitHub CLI inside the sandbox.",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: SandboxRefreshGitHubAuthBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: SandboxRefreshGitHubAuthResponse,
+          },
+        },
+        description: "GitHub authentication refreshed successfully",
+      },
+      400: { description: "Unsupported sandbox provider" },
+      401: { description: "Unauthorized or GitHub not connected" },
+      403: { description: "Forbidden - sandbox does not belong to this team" },
+      404: { description: "Sandbox not found" },
+      409: { description: "Sandbox is paused/stopped and must be resumed first" },
+      500: { description: "Failed to refresh GitHub authentication" },
+      503: { description: "Sandbox provider not configured" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId } = c.req.valid("json");
+
+    const convex = getConvex({ accessToken });
+    const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    const activity = await convex.query(api.sandboxInstances.getActivity, {
+      instanceId: id,
+    });
+    if (!activity) {
+      return c.text("Sandbox not found", 404);
+    }
+    if (activity.teamId && activity.teamId !== team.uuid) {
+      return c.text("Forbidden", 403);
+    }
+
+    const provider =
+      activity.provider ||
+      (isPveLxcInstanceId(id)
+        ? "pve-lxc"
+        : id.startsWith("morphvm_")
+          ? "morph"
+          : undefined);
+
+    // Try to use GitHub App installation token (same logic as /sandboxes/start)
+    // to maintain consistency with initial sandbox setup
+    let gitAuthToken: string | undefined;
+
+    // Look up the taskRun to get the repo owner for GitHub App token preference
+    const taskRun = await convex.query(api.taskRuns.getByContainerName, {
+      teamSlugOrId,
+      containerName: id,
+    });
+
+    if (taskRun) {
+      const task = await convex.query(api.tasks.getById, {
+        teamSlugOrId,
+        id: taskRun.taskId,
+      });
+      if (task?.projectFullName) {
+        const [owner] = task.projectFullName.split("/");
+        try {
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId,
+          });
+          const targetConnection = connections.find(
+            (co) =>
+              co.isActive && co.accountLogin?.toLowerCase() === owner.toLowerCase()
+          );
+          if (targetConnection) {
+            console.log(
+              `[sandboxes.refresh-github-auth] Found GitHub App installation ${targetConnection.installationId} for ${owner}`
+            );
+            gitAuthToken = await generateGitHubInstallationToken({
+              installationId: targetConnection.installationId,
+              repositories: [task.projectFullName],
+              permissions: {
+                contents: "write",
+                metadata: "read",
+                workflows: "write",
+              },
+            });
+            console.log(
+              `[sandboxes.refresh-github-auth] Using GitHub App token for git authentication`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[sandboxes.refresh-github-auth] Failed to get GitHub App token, falling back to user OAuth:`,
+            error
+          );
+        }
+      }
+    }
+
+    // Fall back to personal OAuth token if no GitHub App token
+    if (!gitAuthToken) {
+      const tokenResult = await getFreshGitHubToken(user);
+      if ("error" in tokenResult) {
+        return c.text(tokenResult.error, tokenResult.status);
+      }
+      gitAuthToken = tokenResult.token;
+      console.log(
+        `[sandboxes.refresh-github-auth] Using personal OAuth token for git authentication`
+      );
+    }
+
+    try {
+      if (provider !== "morph" && provider !== "pve-lxc") {
+        return c.text("Unsupported sandbox provider", 400);
+      }
+
+      const instance = await getInstanceById(id, getMorphClientOrNull());
+
+      const metadataTeamId = getInstanceTeamId(instance);
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Check instance is active (Morph uses "paused", PVE LXC uses "running" check)
+      if (provider === "morph" && instance.status === "paused") {
+        return c.text("Instance is paused - resume it first", 409);
+      } else if (provider === "pve-lxc" && instance.status !== "running") {
+        return c.text("Container is stopped - resume it first", 409);
+      }
+
+      await configureGithubAccess(instance, gitAuthToken);
+
+      console.log(
+        `[sandboxes.refresh-github-auth] Successfully refreshed GitHub auth for sandbox ${id}`
+      );
+
+      return c.json({ refreshed: true });
+    } catch (error) {
+      console.error(
+        `[sandboxes.refresh-github-auth] Failed to refresh GitHub auth for sandbox ${id}:`,
+        error
+      );
+      return c.text("Failed to refresh GitHub authentication", 500);
     }
   }
 );
@@ -1119,27 +1491,33 @@ sandboxesRouter.openapi(
         req: c.req.raw,
         teamSlugOrId,
       });
+      const convex = getConvex({ accessToken });
 
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances
-        .get({ instanceId: id })
-        .catch((error) => {
-          console.error("[sandboxes.env] Failed to load instance", error);
-          return null;
+      // For PVE LXC, verify via activity record (metadata not persisted reliably)
+      if (isPveLxcInstanceId(id)) {
+        const activity = await convex.query(api.sandboxInstances.getActivity, {
+          instanceId: id,
         });
+        if (!activity || !activity.teamId) {
+          return c.text("Sandbox not found", 404);
+        }
+        if (activity.teamId !== team.uuid) {
+          return c.text("Forbidden", 403);
+        }
+      }
 
+      // Get instance via provider dispatch (use nullable client for PVE-only deployments)
+      const instance = await tryGetInstanceById(id, getMorphClientOrNull(), "sandboxes.env");
       if (!instance) {
         return c.text("Sandbox not found", 404);
       }
 
-      const metadataTeamId = (
-        instance as unknown as {
-          metadata?: { teamId?: string };
+      // For Morph instances, verify team ownership via metadata
+      if (!isPveLxcInstanceId(id)) {
+        const metadataTeamId = getInstanceTeamId(instance);
+        if (metadataTeamId && metadataTeamId !== team.uuid) {
+          return c.text("Forbidden", 403);
         }
-      ).metadata?.teamId;
-
-      if (metadataTeamId && metadataTeamId !== team.uuid) {
-        return c.text("Forbidden", 403);
       }
 
       const encodedEnv = encodeEnvContentForEnvctl(envVarsContent);
@@ -1231,26 +1609,18 @@ sandboxesRouter.openapi(
         teamSlugOrId,
       });
 
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances
-        .get({ instanceId: id })
-        .catch((error) => {
-          console.error("[sandboxes.run-scripts] Failed to load instance", error);
-          return null;
-        });
-
+      // Get instance via provider dispatch (use nullable client for PVE-only deployments)
+      const instance = await tryGetInstanceById(id, getMorphClientOrNull(), "sandboxes.run-scripts");
       if (!instance) {
         return c.text("Sandbox not found", 404);
       }
 
-      const metadataTeamId = (
-        instance as unknown as {
-          metadata?: { teamId?: string };
+      // For Morph instances, verify team ownership via metadata
+      if (!isPveLxcInstanceId(id)) {
+        const metadataTeamId = getInstanceTeamId(instance);
+        if (metadataTeamId && metadataTeamId !== team.uuid) {
+          return c.text("Forbidden", 403);
         }
-      ).metadata?.teamId;
-
-      if (metadataTeamId && metadataTeamId !== team.uuid) {
-        return c.text("Forbidden", 403);
       }
 
       // Allocate script identifiers for tracking
@@ -1307,11 +1677,13 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     try {
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instanceId: id });
-      // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
-      await instance.exec(VM_CLEANUP_COMMANDS);
+      // Get instance via provider dispatch and pause it
+      // Morph preserves RAM state; PVE LXC pause() stops the container
+      const instance = await getInstanceById(id, getMorphClientOrNull());
       await instance.pause();
+      if (isPveLxcInstanceId(id)) {
+        console.log(`[sandboxes.stop] PVE LXC container ${id} stopped`);
+      }
       return c.body(null, 204);
     } catch (error) {
       console.error("Failed to stop sandbox:", error);
@@ -1338,7 +1710,7 @@ sandboxesRouter.openapi(
               running: z.boolean(),
               vscodeUrl: z.string().optional(),
               workerUrl: z.string().optional(),
-              provider: z.enum(["morph"]).optional(),
+              provider: z.enum(["morph", "pve-lxc"]).optional(),
             }),
           },
         },
@@ -1353,20 +1725,23 @@ sandboxesRouter.openapi(
     const token = await getAccessTokenFromRequest(c.req.raw);
     if (!token) return c.text("Unauthorized", 401);
     try {
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instanceId: id });
+      // Get instance via provider dispatch
+      const isPveLxc = isPveLxcInstanceId(id);
+      const instance = await getInstanceById(id, getMorphClientOrNull());
       const vscodeService = instance.networking.httpServices.find(
         (s) => s.port === 39378,
       );
       const workerService = instance.networking.httpServices.find(
         (s) => s.port === 39377,
       );
-      const running = Boolean(vscodeService);
+      const running = isPveLxc
+        ? instance.status === "running" && Boolean(vscodeService)
+        : Boolean(vscodeService);
       return c.json({
         running,
         vscodeUrl: vscodeService?.url,
         workerUrl: workerService?.url,
-        provider: "morph",
+        provider: isPveLxc ? ("pve-lxc" as const) : ("morph" as const),
       });
     } catch (error) {
       console.error("Failed to get sandbox status:", error);
@@ -1422,8 +1797,10 @@ sandboxesRouter.openapi(
     const { id } = c.req.valid("param");
     const { teamSlugOrId, taskRunId } = c.req.valid("json");
     try {
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instanceId: id });
+      // Get instance via provider dispatch
+      const instance = await getInstanceById(id, getMorphClientOrNull());
+
+      const isPveLxc = isPveLxcInstanceId(id);
 
       const reservedPorts = RESERVED_CMUX_PORT_SET;
 
@@ -1442,21 +1819,28 @@ sandboxesRouter.openapi(
         ? (parsed.forwardPorts as number[])
         : [];
 
-      // Read environmentId from instance metadata (set during start)
-      const instanceMeta = (
-        instance as unknown as {
-          metadata?: { environmentId?: string };
-        }
-      ).metadata;
-
-      // Resolve environment-exposed ports (preferred)
+      // Get environmentId from the taskRun (PVE-LXC doesn't persist metadata on instances)
       const convex = getConvex({ accessToken: token });
       let environmentPorts: number[] | undefined;
-      if (instanceMeta?.environmentId) {
+
+      // First try to get environmentId from the taskRun
+      let environmentId: string | undefined;
+      try {
+        const taskRun = await convex.query(api.taskRuns.get, {
+          teamSlugOrId,
+          id: taskRunId as unknown as string & { __tableName: "taskRuns" },
+        });
+        environmentId = taskRun?.environmentId;
+      } catch {
+        // ignore lookup errors
+      }
+
+      // If we have an environmentId, fetch the environment's exposedPorts
+      if (environmentId) {
         try {
           const envDoc = await convex.query(api.environments.get, {
             teamSlugOrId,
-            id: instanceMeta.environmentId as string & {
+            id: environmentId as string & {
               __tableName: "environments";
             },
           });
@@ -1487,9 +1871,7 @@ sandboxesRouter.openapi(
 
       let workingInstance = instance;
       const reloadInstance = async () => {
-        workingInstance = await client.instances.get({
-          instanceId: instance.id,
-        });
+        workingInstance = await getInstanceById(instance.id, getMorphClientOrNull());
       };
 
       await reloadInstance();
@@ -1526,7 +1908,12 @@ sandboxesRouter.openapi(
         }
       }
 
-      await reloadInstance();
+      // For Morph, reload to get persisted state from their API
+      // For PVE-LXC, skip reload as exposeHttpService only updates in-memory state
+      // and reloading would wipe out the services we just added
+      if (!isPveLxc) {
+        await reloadInstance();
+      }
 
       const networking = workingInstance.networking.httpServices
         .filter((s) => allowedPorts.has(s.port))
@@ -1609,7 +1996,7 @@ sandboxesRouter.openapi(
       // Check if the id is a Morph instance ID (starts with "morphvm_")
       if (id.startsWith("morphvm_")) {
         // Direct Morph instance ID - verify ownership via instance metadata
-        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+        const morphClient = getMorphClient();
 
         // First try to find in task runs if team is provided
         if (teamSlugOrId) {
@@ -1753,7 +2140,7 @@ sandboxesRouter.openapi(
       }
 
       // Get instance status from Morph
-      const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const morphClient = getMorphClient();
       const instance = await morphClient.instances.get({ instanceId: morphInstanceId });
       const status = instance.status === "paused" ? "paused" : "running";
 
@@ -1825,12 +2212,47 @@ sandboxesRouter.openapi(
 
     try {
       const convex = getConvex({ accessToken });
+
+      // Determine provider based on instance ID prefix
+      const isPveLxc = isPveLxcInstanceId(id);
+      const isMorphVm = id.startsWith("morphvm_");
+
+      if (isPveLxc) {
+        // PVE LXC instance - resume directly
+        // Note: LXC doesn't support hibernate, so "paused" containers are actually "stopped"
+        const pveClient = getPveLxcClient();
+        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
+
+        if (pveLxcInstance.status === "running") {
+          // Already running, just return success
+          return c.json({ resumed: true });
+        }
+
+        await pveLxcInstance.resume();
+        console.log(`[sandboxes.resume] PVE LXC container ${id} started`);
+
+        // Record resume activity for PVE LXC instance
+        if (teamSlugOrId) {
+          try {
+            await convex.mutation(api.sandboxInstances.recordResume, {
+              instanceId: id,
+              teamSlugOrId,
+            });
+          } catch (recordError) {
+            // Don't fail the resume if recording fails
+            console.error("[sandboxes.resume] Failed to record PVE LXC resume activity:", recordError);
+          }
+        }
+
+        return c.json({ resumed: true });
+      }
+
       let morphInstanceId: string | null = null;
 
       // Check if the id is a direct VM ID
-      if (id.startsWith("morphvm_")) {
+      if (isMorphVm) {
         // Direct Morph instance ID - verify ownership via instance metadata
-        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+        const morphClient = getMorphClient();
 
         // First try to find in task runs if team is provided
         if (teamSlugOrId) {
@@ -1893,6 +2315,32 @@ sandboxesRouter.openapi(
           return c.text("Sandbox not found", 404);
         }
 
+        // Handle PVE LXC via task run lookup
+        // Note: LXC doesn't support hibernate, so "paused" containers are actually "stopped"
+        if (taskRun.vscode.provider === "pve-lxc") {
+          const pveClient = getPveLxcClient();
+          const pveLxcInstance = await pveClient.instances.get({ instanceId: taskRun.vscode.containerName });
+
+          if (pveLxcInstance.status === "running") {
+            return c.json({ resumed: true });
+          }
+
+          await pveLxcInstance.resume();
+          console.log(`[sandboxes.resume] PVE LXC container ${taskRun.vscode.containerName} started`);
+
+          // Record resume activity for PVE LXC instance
+          try {
+            await convex.mutation(api.sandboxInstances.recordResume, {
+              instanceId: taskRun.vscode.containerName,
+              teamSlugOrId,
+            });
+          } catch (recordError) {
+            console.error("[sandboxes.resume] Failed to record PVE LXC resume activity:", recordError);
+          }
+
+          return c.json({ resumed: true });
+        }
+
         if (taskRun.vscode.provider !== "morph") {
           return c.text("Sandbox type not supported", 404);
         }
@@ -1905,7 +2353,7 @@ sandboxesRouter.openapi(
       }
 
       // Resume the instance using Morph API
-      const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const morphClient = getMorphClient();
       const instance = await morphClient.instances.get({ instanceId: morphInstanceId });
 
       if (instance.status !== "paused") {
@@ -1915,13 +2363,17 @@ sandboxesRouter.openapi(
 
       await instance.resume();
 
+      // Morph preserves RAM state on pause/resume, so all processes (including agent sessions)
+      // should resume exactly where they left off. No need to restart services.
+
       // Record the resume for activity tracking (used by cleanup cron)
       // Get teamSlugOrId from request or fall back to instance metadata
       const instanceMetadata = instance.metadata as Record<string, unknown> | undefined;
       const effectiveTeamSlugOrId = teamSlugOrId ?? (instanceMetadata?.teamId as string | undefined);
       if (effectiveTeamSlugOrId && morphInstanceId) {
         try {
-          await convex.mutation(api.morphInstances.recordResume, {
+          // Record resume activity for cleanup cron
+          await convex.mutation(api.sandboxInstances.recordResume, {
             instanceId: morphInstanceId,
             teamSlugOrId: effectiveTeamSlugOrId,
           });
@@ -1938,6 +2390,151 @@ sandboxesRouter.openapi(
       }
       console.error("[sandboxes.resume] Failed to resume sandbox:", error);
       return c.text("Failed to resume sandbox", 500);
+    }
+  },
+);
+
+/**
+ * Parse a git remote URL to extract owner/repo format.
+ * Supports:
+ * - https://github.com/owner/repo.git
+ * - git@github.com:owner/repo.git
+ * - https://github.com/owner/repo
+ */
+function parseGitRemoteUrl(url: string): string | null {
+  // HTTPS URL: https://github.com/owner/repo.git or https://github.com/owner/repo
+  // Use non-greedy match to support repo names with dots (e.g., next.js)
+  const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/)?$/);
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  // SSH URL: git@github.com:owner/repo.git
+  const sshMatch = url.match(/git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?(?:\/)?$/);
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  return null;
+}
+
+// Discover git repositories inside a sandbox
+// This scans the workspace for .git directories and returns their GitHub remote URLs
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/discover-repos",
+    tags: ["Sandboxes"],
+    summary: "Discover git repositories in sandbox workspace",
+    description: "Scans the sandbox workspace for git repositories and returns their GitHub remote URLs in owner/repo format.",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              workspacePath: z.string().optional().describe("Path to scan for repos (default: /root/workspace)"),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              repos: z.array(z.string()).describe("Array of discovered repos in owner/repo format"),
+              paths: z.array(z.object({
+                path: z.string(),
+                repo: z.string().nullable(),
+              })).describe("Detailed info about each discovered .git directory"),
+            }),
+          },
+        },
+        description: "Discovered repositories",
+      },
+      400: { description: "Invalid workspace path" },
+      401: { description: "Unauthorized" },
+      404: { description: "Sandbox not found" },
+      500: { description: "Failed to discover repos" },
+    },
+  }),
+  async (c) => {
+    const id = c.req.valid("param").id;
+    const body = c.req.valid("json");
+    const rawWorkspacePath = body.workspacePath ?? "/root/workspace";
+
+    // Sanitize workspacePath to prevent shell injection
+    // Only allow alphanumeric, /, -, _, and . characters (standard path characters)
+    if (!/^[a-zA-Z0-9/_.-]+$/.test(rawWorkspacePath)) {
+      return c.text("Invalid workspace path: contains disallowed characters", 400);
+    }
+    const workspacePath = rawWorkspacePath;
+
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    try {
+      // Get instance via provider dispatch
+      const sandbox = await getInstanceById(id, getMorphClientOrNull());
+
+      // Find all .git directories in the workspace
+      const findResult = await sandbox.exec(
+        `find "${workspacePath}" -maxdepth 3 -name ".git" -type d 2>/dev/null || true`,
+        { timeoutMs: 10_000 }
+      );
+
+      const gitDirs = findResult.stdout
+        .split("\n")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+
+      // For each .git directory, get the remote URL
+      const pathsWithRepos: Array<{ path: string; repo: string | null }> = [];
+      const repos = new Set<string>();
+
+      for (const gitDir of gitDirs) {
+        // Get the parent directory (the actual repo directory)
+        const repoDir = gitDir.replace(/\/\.git$/, "");
+
+        try {
+          const remoteResult = await sandbox.exec(
+            `git -C "${repoDir}" remote get-url origin 2>/dev/null || echo ""`,
+            { timeoutMs: 5_000 }
+          );
+
+          const remoteUrl = remoteResult.stdout.trim();
+          const repo = remoteUrl ? parseGitRemoteUrl(remoteUrl) : null;
+
+          pathsWithRepos.push({ path: repoDir, repo });
+
+          if (repo) {
+            repos.add(repo);
+          }
+        } catch {
+          // If we can't get remote URL, skip this repo
+          pathsWithRepos.push({ path: repoDir, repo: null });
+        }
+      }
+
+      return c.json({
+        repos: Array.from(repos),
+        paths: pathsWithRepos,
+      });
+    } catch (error) {
+      // Check if error indicates sandbox not found
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("does not exist") ||
+        errorMessage.includes("404")
+      ) {
+        return c.text("Sandbox not found", 404);
+      }
+      console.error("[sandboxes.discover-repos] Failed to discover repos:", error);
+      return c.text("Failed to discover repos", 500);
     }
   },
 );

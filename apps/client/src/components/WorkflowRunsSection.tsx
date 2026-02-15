@@ -169,12 +169,17 @@ function WorkflowRunsBadge({
   );
   const allPassed =
     allRuns.length > 0 &&
-    allRuns.every(
-      (run) =>
-        run.conclusion === "success" ||
-        run.conclusion === "neutral" ||
-        run.conclusion === "skipped",
-    );
+    allRuns.every((run) => {
+      const conclusion = run.conclusion;
+      if (conclusion === "success" || conclusion === "neutral" || conclusion === "skipped") {
+        return true;
+      }
+      // Completed runs without explicit conclusion are treated as passing
+      if (run.status === "completed" && conclusion === undefined) {
+        return true;
+      }
+      return false;
+    });
 
   const { icon, colorClass, statusText } = hasAnyRunning
     ? {
@@ -273,12 +278,17 @@ export function WorkflowRunsSection({
       run.conclusion === "action_required",
   );
   const hasAnyFailure = failedRuns.length > 0;
-  const passedRuns = sortedRuns.filter(
-    (run) =>
-      run.conclusion === "success" ||
-      run.conclusion === "neutral" ||
-      run.conclusion === "skipped",
-  );
+  const passedRuns = sortedRuns.filter((run) => {
+    const conclusion = run.conclusion;
+    if (conclusion === "success" || conclusion === "neutral" || conclusion === "skipped") {
+      return true;
+    }
+    // Completed runs without explicit conclusion are treated as passing
+    if (run.status === "completed" && conclusion === undefined) {
+      return true;
+    }
+    return false;
+  });
   const allPassed = sortedRuns.length > 0 && passedRuns.length === sortedRuns.length;
 
   if (isLoading) {

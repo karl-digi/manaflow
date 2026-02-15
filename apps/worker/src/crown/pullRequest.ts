@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { log } from "../logger";
 import { execAsync, WORKSPACE_ROOT } from "./utils";
+import { getDefaultBaseBranch } from "./git";
 import type {
   CandidateData,
   CrownWorkerCheckResponse,
@@ -107,7 +108,8 @@ export async function createPullRequest(options: {
     return null;
   }
 
-  const baseBranch = check.task.baseBranch || "main";
+  // Auto-detect base branch if not set (for repos using master instead of main)
+  const baseBranch = check.task.baseBranch || await getDefaultBaseBranch();
   const prTitle = buildPullRequestTitle(check.task.text);
   const prBody = buildPullRequestBody({
     summary,

@@ -14,7 +14,11 @@ import {
   getCurrentBranch,
   runGitCommand,
 } from "./git";
-import { createPullRequest } from "./pullRequest";
+import {
+  buildPullRequestBody,
+  buildPullRequestTitle,
+  createPullRequest,
+} from "./pullRequest";
 import {
   type CandidateData,
   type CrownEvaluationResponse,
@@ -141,15 +145,23 @@ export async function handleWorkerTaskCompletion(
 
   const taskRunInfo = info.taskRun;
 
-  void uploadScreenshotsWithLogging(
-    {
-      taskId: info.taskRun.taskId as Id<"tasks">,
-      taskRunId: taskRunId as Id<"taskRuns">,
-      token: runContext.token,
-      convexUrl: runContext.convexUrl,
-    },
-    taskRunId
-  );
+  const screenshotWorkflowEnabled = info.screenshotWorkflowEnabled ?? false;
+
+  if (screenshotWorkflowEnabled) {
+    void uploadScreenshotsWithLogging(
+      {
+        taskId: info.taskRun.taskId as Id<"tasks">,
+        taskRunId: taskRunId as Id<"taskRuns">,
+        token: runContext.token,
+        convexUrl: runContext.convexUrl,
+      },
+      taskRunId
+    );
+  } else {
+    log("INFO", "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      taskRunId,
+    });
+  }
 
   const hasGitRepo = existsSync(join(detectedGitPath, ".git"));
 
@@ -251,17 +263,28 @@ export async function handleWorkerTaskCompletion(
       });
 
       try {
-        await autoCommitAndPush({
+        const autoCommitResult = await autoCommitAndPush({
           branchName: branchForCommit,
           commitMessage,
           remoteUrl,
         });
-        log("INFO", "[AUTOCOMMIT] autoCommitAndPush completed successfully", {
-          taskRunId,
-          branch: branchForCommit,
-        });
+
+        if (autoCommitResult.success) {
+          log("INFO", "[AUTOCOMMIT] autoCommitAndPush completed successfully", {
+            taskRunId,
+            branch: branchForCommit,
+            pushedRepos: autoCommitResult.pushedRepos,
+          });
+        } else {
+          log("WARN", "[AUTOCOMMIT] autoCommitAndPush completed with issues", {
+            taskRunId,
+            branch: branchForCommit,
+            pushedRepos: autoCommitResult.pushedRepos,
+            errors: autoCommitResult.errors,
+          });
+        }
       } catch (error) {
-        log("ERROR", "[AUTOCOMMIT] Worker auto-commit failed", {
+        log("ERROR", "[AUTOCOMMIT] Worker auto-commit failed with exception", {
           taskRunId,
           branch: branchForCommit,
           error,
@@ -437,30 +460,18 @@ async function startCrownEvaluation({
   const completedRuns = crownData.runs.filter(
     (run) => run.status === "completed"
   );
-  const totalRuns = crownData.runs.length;
-  const allRunsCompleted = totalRuns > 0 && completedRuns.length === totalRuns;
 
   log("INFO", "Crown readiness status", {
     taskRunId,
     taskId: currentTaskId,
-    totalRuns,
+    totalRuns: crownData.runs.length,
     completedRuns: completedRuns.length,
-    allRunsCompleted,
+    shouldEvaluate: crownData.shouldEvaluate,
+    singleRunWinnerId: crownData.singleRunWinnerId,
   });
 
-  if (!allRunsCompleted) {
-    log("INFO", "Not all task runs completed; deferring crown evaluation", {
-      taskRunId,
-      taskId: currentTaskId,
-      runStatuses: crownData.runs.map((run) => ({
-        id: run.id,
-        status: run.status,
-      })),
-    });
-    return;
-  }
-
-  const baseBranch = crownData.task.baseBranch ?? "main";
+  // Pass undefined to let collectDiffForRun auto-detect the default branch
+  const baseBranch = crownData.task.baseBranch || undefined;
 
   if (crownData.singleRunWinnerId) {
     if (crownData.singleRunWinnerId !== taskRunId) {
@@ -477,7 +488,40 @@ async function startCrownEvaluation({
       return;
     }
 
-    const gitDiff = await collectDiffForRun(baseBranch, singleRun.newBranch);
+    let gitDiff: string;
+    try {
+      gitDiff = await collectDiffForRun(baseBranch, singleRun.newBranch);
+    } catch (diffError) {
+      const errorMessage = diffError instanceof Error ? diffError.message : String(diffError);
+      log("ERROR", "Failed to collect diff for single-run crown evaluation", {
+        taskRunId,
+        baseBranch,
+        branch: singleRun.newBranch,
+        error: errorMessage,
+      });
+
+      // Mark the crown evaluation as error so user can retry
+      await convexRequest(
+        "/api/crown/finalize",
+        runContext.token,
+        {
+          taskId: crownData.taskId,
+          winnerRunId: null,
+          reason: `Diff collection failed: ${errorMessage}`,
+          evaluationPrompt: "Failed to collect git diff",
+          evaluationResponse: JSON.stringify({
+            winner: null,
+            reason: errorMessage,
+            isFallback: true,
+          }),
+          candidateRunIds: [singleRun.id],
+          isFallback: true,
+          evaluationNote: `Failed to collect git diff between ${baseBranch} and ${singleRun.newBranch}: ${errorMessage}. This may happen if the workspace is not a git repository or the branches don't exist.`,
+        },
+        baseUrlOverride
+      );
+      return;
+    }
 
     log("INFO", "Built crown candidate", {
       runId: singleRun.id,
@@ -496,11 +540,12 @@ async function startCrownEvaluation({
       baseBranch
     );
     if (!branchesReady) {
-      log("WARN", "Branches not ready for single-run crown; continuing", {
+      // Branch may not be on remote (e.g., push failed due to permissions)
+      // but we can still proceed with crown evaluation using local diff
+      log("WARN", "Branches not ready on remote; proceeding with local diff", {
         taskRunId,
         elapsedMs,
       });
-      return;
     }
 
     log("INFO", "Single run detected, skipping evaluation", {
@@ -557,30 +602,93 @@ async function startCrownEvaluation({
     return;
   }
 
-  const completedRunsWithDiff = await Promise.all(
-    completedRuns.map(async (run) => {
-      const gitDiff = await collectDiffForRun(baseBranch, run.newBranch);
-      log("INFO", "Built crown candidate", {
-        runId: run.id,
-        branch: run.newBranch,
-      });
-      return {
-        runId: run.id,
-        agentName: run.agentName ?? "unknown agent",
-        gitDiff,
-        newBranch: run.newBranch,
-      } satisfies CandidateData;
-    })
-  );
+  let completedRunsWithDiff: (CandidateData | null)[];
+  try {
+    completedRunsWithDiff = await Promise.all(
+      completedRuns.map(async (run) => {
+        try {
+          const gitDiff = await collectDiffForRun(baseBranch, run.newBranch);
+          log("INFO", "Built crown candidate", {
+            runId: run.id,
+            branch: run.newBranch,
+          });
+          return {
+            runId: run.id,
+            agentName: run.agentName ?? "unknown agent",
+            gitDiff,
+            newBranch: run.newBranch,
+          } satisfies CandidateData;
+        } catch (diffError) {
+          const errorMessage = diffError instanceof Error ? diffError.message : String(diffError);
+          log("ERROR", "Failed to collect diff for run", {
+            runId: run.id,
+            baseBranch,
+            branch: run.newBranch,
+            error: errorMessage,
+          });
+          // Return null for failed runs - we'll filter them out
+          return null;
+        }
+      })
+    );
+  } catch (allDiffError) {
+    const errorMessage = allDiffError instanceof Error ? allDiffError.message : String(allDiffError);
+    log("ERROR", "Failed to collect diffs for multi-run crown evaluation", {
+      taskRunId,
+      error: errorMessage,
+    });
+
+    // Mark the crown evaluation as error so user can retry
+    await convexRequest(
+      "/api/crown/finalize",
+      runContext.token,
+      {
+        taskId: crownData.taskId,
+        winnerRunId: null,
+        reason: `Diff collection failed: ${errorMessage}`,
+        evaluationPrompt: "Failed to collect git diffs",
+        evaluationResponse: JSON.stringify({
+          winner: null,
+          reason: errorMessage,
+          isFallback: true,
+        }),
+        candidateRunIds: completedRuns.map((run) => run.id),
+        isFallback: true,
+        evaluationNote: `Failed to collect git diffs for crown evaluation: ${errorMessage}`,
+      },
+      baseUrlOverride
+    );
+    return;
+  }
 
   const candidates = completedRunsWithDiff.filter(
-    (candidate): candidate is CandidateData => Boolean(candidate)
+    (candidate): candidate is CandidateData => candidate !== null
   );
 
   if (candidates.length === 0) {
-    log("ERROR", "No candidates available for crown evaluation", {
+    log("ERROR", "No candidates available for crown evaluation (all diff collections failed)", {
       taskRunId,
     });
+    // Mark the crown evaluation as error since all candidates failed
+    await convexRequest(
+      "/api/crown/finalize",
+      runContext.token,
+      {
+        taskId: crownData.taskId,
+        winnerRunId: null,
+        reason: "All candidate diff collections failed",
+        evaluationPrompt: "No diffs available for evaluation",
+        evaluationResponse: JSON.stringify({
+          winner: null,
+          reason: "All candidate diff collections failed - workspace may not be a git repository",
+          isFallback: true,
+        }),
+        candidateRunIds: completedRuns.map((run) => run.id),
+        isFallback: true,
+        evaluationNote: "Failed to collect git diffs for all candidates. This may happen if the workspace is not a git repository or the branches don't exist.",
+      },
+      baseUrlOverride
+    );
     return;
   }
 
@@ -630,17 +738,42 @@ async function startCrownEvaluation({
     taskRunId,
     winner: evaluationResponse.winner,
     reason: evaluationResponse.reason,
+    isFallback: evaluationResponse.isFallback,
   });
 
-  const winnerIndex =
-    typeof evaluationResponse.winner === "number"
-      ? evaluationResponse.winner
-      : 0;
-  const winnerCandidate = candidates[winnerIndex] ?? candidates[0];
+  // Handle "no winner" case (fallback)
+  if (evaluationResponse.winner === null) {
+      log("WARN", "No winner selected by crown evaluation (fallback)", {
+          taskRunId,
+          reason: evaluationResponse.reason,
+      });
+
+      await convexRequest(
+        "/api/crown/finalize",
+        runContext.token,
+        {
+          taskId: crownData.taskId,
+          winnerRunId: null,
+          reason: evaluationResponse.reason,
+          evaluationPrompt: `Task: ${promptText}\nCandidates: ${JSON.stringify(candidates)}`,
+          evaluationResponse: JSON.stringify(evaluationResponse),
+          candidateRunIds: candidates.map((candidate) => candidate.runId),
+          isFallback: true,
+          evaluationNote: evaluationResponse.evaluationNote || "No winner selected",
+        },
+        baseUrlOverride
+      );
+      return;
+  }
+
+  const winnerIndex = evaluationResponse.winner;
+  const winnerCandidate = candidates[winnerIndex];
+  
   if (!winnerCandidate) {
-    log("ERROR", "Unable to determine crown winner", {
+    log("ERROR", "Unable to find winner candidate by index", {
       taskRunId,
       winnerIndex,
+      totalCandidates: candidates.length,
     });
     return;
   }
@@ -664,6 +797,17 @@ async function startCrownEvaluation({
   const summary = summaryResponse?.summary
     ? summaryResponse.summary.slice(0, 8000)
     : undefined;
+
+  // Always generate PR title and description (for manual draft PRs even if auto-PR is disabled)
+  const pullRequestTitle = buildPullRequestTitle(promptText);
+  const pullRequestDescription = buildPullRequestBody({
+    summary,
+    prompt: promptText,
+    agentName: winnerCandidate.agentName,
+    branch: winnerCandidate.newBranch || "",
+    taskId: crownData.taskId,
+    runId: winnerCandidate.runId,
+  });
 
   const prMetadata = await createPullRequest({
     check: crownData,
@@ -693,8 +837,11 @@ async function startCrownEvaluation({
       candidateRunIds: candidates.map((candidate) => candidate.runId),
       summary,
       pullRequest: prMetadata?.pullRequest,
-      pullRequestTitle: prMetadata?.title,
-      pullRequestDescription: prMetadata?.description,
+      // Use pre-generated title/description (available for manual PRs even if auto-PR disabled)
+      pullRequestTitle: prMetadata?.title || pullRequestTitle,
+      pullRequestDescription: prMetadata?.description || pullRequestDescription,
+      isFallback: evaluationResponse.isFallback,
+      evaluationNote: evaluationResponse.evaluationNote,
     },
     baseUrlOverride
   );

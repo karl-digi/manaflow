@@ -1,0 +1,1174 @@
+# OpenCode
+
+OpenCode is an open-source AI coding agent that provides a powerful terminal-based interface, desktop application, and IDE extensions for AI-assisted software development. It operates on a client/server architecture where the TUI (Terminal User Interface) acts as a client communicating with a backend server that exposes an OpenAPI endpoint. This enables programmatic control of OpenCode through its SDK, allowing integrations with mobile apps, web interfaces, and custom automation tools.
+
+The core functionality includes two primary agents (Build for full development work, Plan for read-only analysis), comprehensive file operations (read, write, edit, grep, glob), shell command execution, and extensive configurability through JSON/JSONC config files. OpenCode supports multiple LLM providers (Anthropic, OpenAI, Google, local models), MCP (Model Context Protocol) servers for external tool integration, custom plugins for extending functionality, and LSP (Language Server Protocol) integration for code intelligence features.
+
+---
+
+## Installation
+
+Install OpenCode via the install script or package managers.
+
+```bash
+# Install script (recommended)
+curl -fsSL https://opencode.ai/install | bash
+
+# Package managers
+npm i -g opencode-ai@latest
+brew install anomalyco/tap/opencode  # macOS/Linux
+scoop install opencode               # Windows
+paru -S opencode-bin                 # Arch Linux
+
+# Docker
+docker run -it --rm ghcr.io/anomalyco/opencode
+```
+
+---
+
+## CLI Commands
+
+### Run OpenCode TUI
+
+Start the interactive terminal user interface.
+
+```bash
+# Basic usage - starts TUI in current directory
+opencode
+
+# Continue last session
+opencode --continue
+
+# Specify project directory and model
+opencode /path/to/project --model anthropic/claude-sonnet-4-5
+
+# Continue specific session with custom port
+opencode --session abc123 --port 4096
+```
+
+### Run Non-Interactive Commands
+
+Execute prompts without launching the TUI.
+
+```bash
+# Simple prompt execution
+opencode run "Explain how closures work in JavaScript"
+
+# Continue previous session with specific model
+opencode run --continue --model anthropic/claude-sonnet-4-5 "Add error handling to this function"
+
+# Attach files to the prompt
+opencode run --file ./src/index.ts "Review this code for security issues"
+
+# Execute a slash command
+opencode run --command test "Run all unit tests"
+
+# JSON output format for scripting
+opencode run --format json "List all exported functions in src/"
+
+# Attach to running server to avoid cold boot
+opencode run --attach http://localhost:4096 "Generate a README for this project"
+```
+
+### Start Headless Server
+
+Run OpenCode as an HTTP API server without TUI.
+
+```bash
+# Basic server on default port 4096
+opencode serve
+
+# Custom port and hostname with mDNS discovery
+opencode serve --port 8080 --hostname 0.0.0.0 --mdns
+
+# Enable CORS for specific origins
+opencode serve --cors http://localhost:5173 --cors https://app.example.com
+
+# With basic auth protection
+OPENCODE_SERVER_PASSWORD=your-secret opencode serve
+
+# Start with web interface
+opencode web --port 4096
+
+# Attach TUI to remote server
+opencode attach http://10.20.30.40:4096
+```
+
+### Session Management
+
+Manage and export conversation sessions.
+
+```bash
+# List all sessions
+opencode session list
+
+# List with format options
+opencode session list --max-count 10 --format json
+
+# Export session data as JSON
+opencode export abc123
+
+# Import from file or share URL
+opencode import session.json
+opencode import https://opncd.ai/s/abc123
+
+# View usage statistics
+opencode stats --days 30 --models 5
+```
+
+### Authentication and Provider Management
+
+Configure API keys and providers.
+
+```bash
+# Interactive login to add provider credentials
+opencode auth login
+
+# List authenticated providers
+opencode auth list
+
+# Logout from a provider
+opencode auth logout
+
+# List available models from all providers
+opencode models
+
+# List models for specific provider
+opencode models anthropic --verbose
+
+# Refresh models cache
+opencode models --refresh
+```
+
+### MCP Server Management
+
+Configure and manage Model Context Protocol servers.
+
+```bash
+# Add an MCP server interactively
+opencode mcp add
+
+# List configured MCP servers
+opencode mcp list
+
+# Authenticate with OAuth-enabled server
+opencode mcp auth sentry
+
+# List OAuth authentication status
+opencode mcp auth list
+
+# Remove OAuth credentials
+opencode mcp logout my-server
+
+# Debug connection issues
+opencode mcp debug my-server
+```
+
+### Agent Management
+
+Create and list custom agents.
+
+```bash
+# Create new agent interactively
+opencode agent create
+
+# List all available agents
+opencode agent list
+```
+
+---
+
+## SDK Client API
+
+### Create SDK Client
+
+Initialize the OpenCode SDK for programmatic access.
+
+```typescript
+import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
+
+// Start both server and client
+const { client, server } = await createOpencode({
+  hostname: "127.0.0.1",
+  port: 4096,
+  timeout: 5000,
+  config: {
+    model: "anthropic/claude-sonnet-4-5",
+  },
+})
+
+console.log(`Server running at ${server.url}`)
+
+// Or connect to existing server
+const clientOnly = createOpencodeClient({
+  baseUrl: "http://localhost:4096",
+  throwOnError: true,
+})
+
+// Clean shutdown
+server.close()
+```
+
+### Session Management API
+
+Create, manage, and interact with conversation sessions.
+
+```typescript
+import { createOpencodeClient } from "@opencode-ai/sdk"
+import type { Session, Message, Part } from "@opencode-ai/sdk"
+
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
+
+// Create a new session
+const session = await client.session.create({
+  body: { title: "Feature implementation" },
+})
+console.log(`Created session: ${session.data.id}`)
+
+// List all sessions
+const sessions = await client.session.list()
+sessions.data.forEach((s: Session) => console.log(`- ${s.id}: ${s.title}`))
+
+// Get session details
+const details = await client.session.get({
+  path: { id: session.data.id },
+})
+
+// Send a prompt and get AI response
+const response = await client.session.prompt({
+  path: { id: session.data.id },
+  body: {
+    model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+    parts: [{ type: "text", text: "Explain the architecture of this project" }],
+  },
+})
+console.log("AI Response:", response.data.parts)
+
+// Inject context without triggering AI response (for plugins)
+await client.session.prompt({
+  path: { id: session.data.id },
+  body: {
+    noReply: true,
+    parts: [{ type: "text", text: "Remember: Use TypeScript for all new files." }],
+  },
+})
+
+// Get all messages in session
+const messages = await client.session.messages({ path: { id: session.data.id } })
+
+// Abort running session
+await client.session.abort({ path: { id: session.data.id } })
+
+// Share/unshare session
+await client.session.share({ path: { id: session.data.id } })
+await client.session.unshare({ path: { id: session.data.id } })
+
+// Revert to previous state
+await client.session.revert({
+  path: { id: session.data.id },
+  body: { messageID: "msg_123" },
+})
+
+// Delete session
+await client.session.delete({ path: { id: session.data.id } })
+```
+
+### File Operations API
+
+Search, read, and manage files through the SDK.
+
+```typescript
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
+
+// Search file contents with regex
+const textResults = await client.find.text({
+  query: { pattern: "function.*async" },
+})
+textResults.data.forEach((match) => {
+  console.log(`${match.path}:${match.line_number}: ${match.lines}`)
+})
+
+// Find files by name pattern
+const tsFiles = await client.find.files({
+  query: { query: "*.ts", type: "file", limit: 50 },
+})
+console.log("TypeScript files:", tsFiles.data)
+
+// Find directories
+const srcDirs = await client.find.files({
+  query: { query: "src", type: "directory" },
+})
+
+// Find workspace symbols
+const symbols = await client.find.symbols({
+  query: { query: "handleRequest" },
+})
+
+// Read file contents
+const content = await client.file.read({
+  query: { path: "src/index.ts" },
+})
+console.log(content.data.content)
+
+// Get file status (git tracking)
+const status = await client.file.status()
+status.data.forEach((file) => console.log(`${file.status}: ${file.path}`))
+```
+
+### Events API
+
+Subscribe to real-time server events.
+
+```typescript
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
+
+// Subscribe to event stream
+const events = await client.event.subscribe()
+
+for await (const event of events.stream) {
+  switch (event.type) {
+    case "session.idle":
+      console.log("Session completed")
+      break
+    case "message.updated":
+      console.log("New message:", event.properties)
+      break
+    case "file.edited":
+      console.log("File changed:", event.properties.path)
+      break
+    case "permission.asked":
+      console.log("Permission requested:", event.properties)
+      break
+    default:
+      console.log("Event:", event.type)
+  }
+}
+```
+
+### TUI Control API
+
+Control the terminal UI programmatically.
+
+```typescript
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
+
+// Append text to prompt input
+await client.tui.appendPrompt({
+  body: { text: "Review this code for security issues" },
+})
+
+// Submit the current prompt
+await client.tui.submitPrompt()
+
+// Clear prompt input
+await client.tui.clearPrompt()
+
+// Show toast notification
+await client.tui.showToast({
+  body: {
+    title: "Build Complete",
+    message: "All tests passed successfully",
+    variant: "success", // "success" | "error" | "warning" | "info"
+  },
+})
+
+// Execute slash command
+await client.tui.executeCommand({
+  body: { command: "/share" },
+})
+
+// Open UI dialogs
+await client.tui.openHelp()
+await client.tui.openSessions()
+await client.tui.openThemes()
+await client.tui.openModels()
+```
+
+### Provider and Config API
+
+Manage providers and configuration.
+
+```typescript
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
+
+// Get current config
+const config = await client.config.get()
+console.log("Current model:", config.data.model)
+
+// List all providers
+const providers = await client.config.providers()
+providers.data.providers.forEach((p) => {
+  console.log(`${p.id}: ${p.name}`)
+})
+
+// Set provider credentials
+await client.auth.set({
+  path: { id: "anthropic" },
+  body: { type: "api", key: process.env.ANTHROPIC_API_KEY },
+})
+
+// Check server health
+const health = await client.global.health()
+console.log(`Server v${health.data.version}, healthy: ${health.data.healthy}`)
+
+// Get project info
+const project = await client.project.current()
+console.log(`Project: ${project.data.name} at ${project.data.path}`)
+
+// List available agents
+const agents = await client.app.agents()
+agents.data.forEach((agent) => console.log(`- ${agent.name}: ${agent.description}`))
+```
+
+---
+
+## HTTP Server API
+
+### Health and Global Endpoints
+
+Check server status and subscribe to events.
+
+```bash
+# Health check
+curl http://localhost:4096/global/health
+# Response: {"healthy":true,"version":"1.1.53"}
+
+# Server-sent events stream
+curl -N http://localhost:4096/event
+# Streams: {"type":"server.connected"}, {"type":"session.updated",...}
+
+# OpenAPI spec
+curl http://localhost:4096/doc
+```
+
+### Session HTTP Endpoints
+
+Manage sessions via REST API.
+
+```bash
+# List all sessions
+curl http://localhost:4096/session
+
+# Create new session
+curl -X POST http://localhost:4096/session \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Code Review Session"}'
+
+# Get session details
+curl http://localhost:4096/session/abc123
+
+# Update session title
+curl -X PATCH http://localhost:4096/session/abc123 \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Updated Title"}'
+
+# Get session messages
+curl "http://localhost:4096/session/abc123/message?limit=50"
+
+# Send prompt (synchronous - waits for response)
+curl -X POST http://localhost:4096/session/abc123/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": {"providerID":"anthropic","modelID":"claude-sonnet-4-5"},
+    "parts": [{"type":"text","text":"Explain this codebase"}]
+  }'
+
+# Send prompt (async - returns immediately)
+curl -X POST http://localhost:4096/session/abc123/prompt_async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": {"providerID":"anthropic","modelID":"claude-sonnet-4-5"},
+    "parts": [{"type":"text","text":"Refactor auth module"}]
+  }'
+
+# Execute slash command
+curl -X POST http://localhost:4096/session/abc123/command \
+  -H "Content-Type: application/json" \
+  -d '{"command":"init","arguments":""}'
+
+# Fork session at specific message
+curl -X POST http://localhost:4096/session/abc123/fork \
+  -H "Content-Type: application/json" \
+  -d '{"messageID":"msg_456"}'
+
+# Share session
+curl -X POST http://localhost:4096/session/abc123/share
+
+# Abort running session
+curl -X POST http://localhost:4096/session/abc123/abort
+
+# Delete session
+curl -X DELETE http://localhost:4096/session/abc123
+
+# Respond to permission request
+curl -X POST http://localhost:4096/session/abc123/permissions/perm_789 \
+  -H "Content-Type: application/json" \
+  -d '{"response":"allow","remember":true}'
+```
+
+### File Search HTTP Endpoints
+
+Search and read files via REST API.
+
+```bash
+# Search file contents (regex)
+curl "http://localhost:4096/find?pattern=async%20function"
+
+# Find files by name
+curl "http://localhost:4096/find/file?query=*.ts&type=file&limit=100"
+
+# Find directories
+curl "http://localhost:4096/find/file?query=src&type=directory"
+
+# Find workspace symbols
+curl "http://localhost:4096/find/symbol?query=handleRequest"
+
+# Read file contents
+curl "http://localhost:4096/file/content?path=src/index.ts"
+
+# List files in directory
+curl "http://localhost:4096/file?path=src/"
+
+# Get file status
+curl http://localhost:4096/file/status
+```
+
+### TUI Control HTTP Endpoints
+
+Control the TUI remotely.
+
+```bash
+# Append to prompt
+curl -X POST http://localhost:4096/tui/append-prompt \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Review this code"}'
+
+# Submit prompt
+curl -X POST http://localhost:4096/tui/submit-prompt
+
+# Clear prompt
+curl -X POST http://localhost:4096/tui/clear-prompt
+
+# Show toast notification
+curl -X POST http://localhost:4096/tui/show-toast \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Build complete","variant":"success"}'
+
+# Open UI dialogs
+curl -X POST http://localhost:4096/tui/open-help
+curl -X POST http://localhost:4096/tui/open-sessions
+curl -X POST http://localhost:4096/tui/open-models
+```
+
+---
+
+## Configuration
+
+### Basic Configuration File
+
+Configure OpenCode behavior via JSON config.
+
+```jsonc
+// opencode.json or opencode.jsonc (supports comments)
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Model configuration
+  "model": "anthropic/claude-sonnet-4-5",
+  "small_model": "anthropic/claude-haiku-4-5",
+
+  // Theme and UI
+  "theme": "opencode",
+  "autoupdate": true,
+
+  // TUI settings
+  "tui": {
+    "scroll_speed": 3,
+    "scroll_acceleration": { "enabled": true },
+    "diff_style": "auto"
+  },
+
+  // Server settings
+  "server": {
+    "port": 4096,
+    "hostname": "127.0.0.1",
+    "mdns": false,
+    "cors": ["http://localhost:5173"]
+  },
+
+  // Tool permissions
+  "permission": {
+    "edit": "allow",
+    "bash": "ask",
+    "webfetch": "allow"
+  },
+
+  // Sharing mode
+  "share": "manual", // "manual" | "auto" | "disabled"
+
+  // Context compaction
+  "compaction": {
+    "auto": true,
+    "prune": true
+  },
+
+  // Instructions files (AGENTS.md, etc.)
+  "instructions": ["AGENTS.md", "docs/guidelines.md", ".cursor/rules/*.md"]
+}
+```
+
+### Provider Configuration
+
+Configure LLM providers with custom options.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Default model
+  "model": "anthropic/claude-sonnet-4-5",
+
+  // Provider-specific settings
+  "provider": {
+    "anthropic": {
+      "options": {
+        "timeout": 600000,
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    },
+    "amazon-bedrock": {
+      "options": {
+        "region": "us-east-1",
+        "profile": "my-aws-profile",
+        "endpoint": "https://bedrock-runtime.us-east-1.vpce.amazonaws.com"
+      }
+    },
+    "openai": {
+      "options": {
+        "apiKey": "{file:~/.secrets/openai-key}"
+      }
+    }
+  },
+
+  // Provider filtering
+  "enabled_providers": ["anthropic", "openai"],
+  "disabled_providers": ["gemini"]
+}
+```
+
+### Agent Configuration
+
+Define custom agents for specialized tasks.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Default agent
+  "default_agent": "build",
+
+  "agent": {
+    // Override built-in agent
+    "build": {
+      "mode": "primary",
+      "model": "anthropic/claude-sonnet-4-5",
+      "prompt": "{file:./prompts/build.txt}",
+      "temperature": 0.3,
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true
+      }
+    },
+
+    // Read-only plan agent
+    "plan": {
+      "mode": "primary",
+      "model": "anthropic/claude-haiku-4-5",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "ask"
+      }
+    },
+
+    // Custom code review agent
+    "code-reviewer": {
+      "description": "Reviews code for best practices and security",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-5",
+      "prompt": "You are a code reviewer. Focus on security, performance, and maintainability.",
+      "tools": {
+        "write": false,
+        "edit": false
+      },
+      "permission": {
+        "bash": {
+          "*": "ask",
+          "git diff": "allow",
+          "git log*": "allow"
+        }
+      }
+    },
+
+    // Agent with step limit
+    "quick-thinker": {
+      "description": "Fast reasoning with limited iterations",
+      "mode": "subagent",
+      "steps": 5,
+      "temperature": 0.2
+    }
+  }
+}
+```
+
+### Markdown Agent Definition
+
+Define agents using markdown files in `.opencode/agents/` or `~/.config/opencode/agents/`.
+
+```markdown
+<!-- ~/.config/opencode/agents/security-auditor.md -->
+---
+description: Performs security audits and identifies vulnerabilities
+mode: subagent
+model: anthropic/claude-sonnet-4-5
+temperature: 0.1
+tools:
+  write: false
+  edit: false
+  bash: false
+permission:
+  edit: deny
+  webfetch: deny
+---
+
+You are a security expert. Focus on identifying potential security issues.
+
+Look for:
+- Input validation vulnerabilities
+- Authentication and authorization flaws
+- Data exposure risks
+- Dependency vulnerabilities
+- Configuration security issues
+
+Provide detailed findings with remediation recommendations.
+```
+
+### Custom Commands Configuration
+
+Define reusable slash commands.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "command": {
+    "test": {
+      "template": "Run the full test suite with coverage report and show any failures.\nFocus on the failing tests and suggest fixes.",
+      "description": "Run tests with coverage",
+      "agent": "build",
+      "model": "anthropic/claude-haiku-4-5"
+    },
+    "component": {
+      "template": "Create a new React component named $ARGUMENTS with TypeScript support.\nInclude proper typing and basic structure.",
+      "description": "Create a new React component"
+    },
+    "review": {
+      "template": "Review the code in $ARGUMENTS for security issues, performance problems, and best practices.",
+      "description": "Code review",
+      "agent": "code-reviewer"
+    }
+  }
+}
+```
+
+### MCP Server Configuration
+
+Configure Model Context Protocol servers for external tools.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "mcp": {
+    // Local MCP server
+    "my-local-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+      "enabled": true,
+      "environment": {
+        "MY_API_KEY": "{env:MY_API_KEY}"
+      },
+      "timeout": 10000
+    },
+
+    // Remote MCP with OAuth
+    "sentry": {
+      "type": "remote",
+      "url": "https://mcp.sentry.dev/mcp",
+      "oauth": {}
+    },
+
+    // Remote MCP with API key
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
+      }
+    },
+
+    // Remote MCP with pre-registered OAuth
+    "custom-oauth": {
+      "type": "remote",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+        "clientId": "{env:MCP_CLIENT_ID}",
+        "clientSecret": "{env:MCP_CLIENT_SECRET}",
+        "scope": "tools:read tools:execute"
+      }
+    },
+
+    // Grep by Vercel
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app"
+    }
+  },
+
+  // Disable specific MCP tools globally
+  "tools": {
+    "my-local-mcp_*": false
+  },
+
+  // Enable MCP tools per-agent
+  "agent": {
+    "research": {
+      "tools": {
+        "context7_*": true,
+        "gh_grep_*": true
+      }
+    }
+  }
+}
+```
+
+### Keybinds Configuration
+
+Customize keyboard shortcuts.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "keybinds": {
+    "leader": "ctrl+a",
+    "switch_agent": "tab",
+    "session_child_cycle": "leader+right",
+    "session_child_cycle_reverse": "leader+left",
+    "submit": "ctrl+enter",
+    "cancel": "escape",
+    "undo": "ctrl+z",
+    "redo": "ctrl+y"
+  }
+}
+```
+
+### Formatter Configuration
+
+Configure code formatters.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "formatter": {
+    // Disable built-in prettier
+    "prettier": {
+      "disabled": true
+    },
+
+    // Custom formatter
+    "custom-prettier": {
+      "command": ["npx", "prettier", "--write", "$FILE"],
+      "environment": {
+        "NODE_ENV": "development"
+      },
+      "extensions": [".js", ".ts", ".jsx", ".tsx"]
+    },
+
+    // Go formatter
+    "gofmt": {
+      "command": ["gofmt", "-w", "$FILE"],
+      "extensions": [".go"]
+    }
+  }
+}
+```
+
+---
+
+## Plugins
+
+### Basic Plugin Structure
+
+Create plugins to extend OpenCode functionality.
+
+```typescript
+// .opencode/plugins/my-plugin.ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const MyPlugin: Plugin = async ({ project, client, $, directory, worktree }) => {
+  console.log(`Plugin initialized for project: ${project.name}`)
+  console.log(`Working directory: ${directory}`)
+
+  return {
+    // Event handlers go here
+  }
+}
+```
+
+### Event Subscription Plugin
+
+Subscribe to OpenCode events for notifications and automation.
+
+```typescript
+// .opencode/plugins/notifications.ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const NotificationPlugin: Plugin = async ({ client, $ }) => {
+  return {
+    event: async ({ event }) => {
+      switch (event.type) {
+        case "session.idle":
+          // Send macOS notification when session completes
+          await $`osascript -e 'display notification "Session completed!" with title "OpenCode"'`
+          break
+
+        case "session.error":
+          await $`osascript -e 'display notification "Session error occurred" with title "OpenCode" sound name "Basso"'`
+          break
+
+        case "file.edited":
+          console.log(`File edited: ${event.properties.path}`)
+          break
+
+        case "permission.asked":
+          console.log(`Permission requested: ${event.properties.tool}`)
+          break
+      }
+    },
+  }
+}
+```
+
+### Tool Interception Plugin
+
+Intercept and modify tool calls before/after execution.
+
+```typescript
+// .opencode/plugins/security.ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const SecurityPlugin: Plugin = async ({ client }) => {
+  return {
+    // Prevent reading sensitive files
+    "tool.execute.before": async (input, output) => {
+      if (input.tool === "read") {
+        const sensitivePatterns = [".env", "credentials", "secrets", ".pem", ".key"]
+        const filePath = output.args.filePath.toLowerCase()
+
+        if (sensitivePatterns.some((p) => filePath.includes(p))) {
+          throw new Error(`Access denied: Cannot read sensitive file ${output.args.filePath}`)
+        }
+      }
+
+      // Log bash commands
+      if (input.tool === "bash") {
+        await client.app.log({
+          body: {
+            service: "security-plugin",
+            level: "info",
+            message: `Executing bash: ${output.args.command}`,
+          },
+        })
+      }
+    },
+
+    // Log tool results
+    "tool.execute.after": async (input, output) => {
+      await client.app.log({
+        body: {
+          service: "security-plugin",
+          level: "debug",
+          message: `Tool ${input.tool} completed`,
+          extra: { duration: output.duration },
+        },
+      })
+    },
+  }
+}
+```
+
+### Environment Injection Plugin
+
+Inject environment variables into shell executions.
+
+```typescript
+// .opencode/plugins/env-inject.ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const EnvInjectPlugin: Plugin = async () => {
+  return {
+    "shell.env": async (input, output) => {
+      // Inject custom environment variables
+      output.env.PROJECT_ROOT = input.cwd
+      output.env.NODE_ENV = "development"
+      output.env.CUSTOM_API_URL = process.env.API_URL || "http://localhost:3000"
+
+      // Add PATH modifications
+      output.env.PATH = `${input.cwd}/node_modules/.bin:${output.env.PATH}`
+    },
+  }
+}
+```
+
+### Custom Tool Plugin
+
+Add custom tools that the LLM can use.
+
+```typescript
+// .opencode/plugins/custom-tools.ts
+import { type Plugin, tool } from "@opencode-ai/plugin"
+
+export const CustomToolsPlugin: Plugin = async (ctx) => {
+  return {
+    tool: {
+      // Database query tool
+      database_query: tool({
+        description: "Execute a read-only SQL query against the development database",
+        args: {
+          query: tool.schema.string().describe("SQL query to execute"),
+          database: tool.schema.string().optional().describe("Database name"),
+        },
+        async execute(args, context) {
+          const db = args.database || "development"
+          // Execute query (implementation depends on your setup)
+          const result = await executeQuery(db, args.query)
+          return JSON.stringify(result, null, 2)
+        },
+      }),
+
+      // API health check tool
+      api_health: tool({
+        description: "Check the health status of internal APIs",
+        args: {
+          service: tool.schema.string().describe("Service name to check"),
+        },
+        async execute(args, context) {
+          const response = await fetch(`http://${args.service}.internal/health`)
+          const data = await response.json()
+          return `${args.service}: ${data.status} (latency: ${data.latency}ms)`
+        },
+      }),
+
+      // Git branch info tool
+      branch_info: tool({
+        description: "Get detailed information about git branches",
+        args: {
+          pattern: tool.schema.string().optional().describe("Branch name pattern"),
+        },
+        async execute(args, context) {
+          const { $ } = ctx
+          const pattern = args.pattern || "*"
+          const result = await $`git branch -a --format='%(refname:short) %(upstream:short) %(committerdate:relative)'`.text()
+          return result
+        },
+      }),
+    },
+  }
+}
+```
+
+### Compaction Hook Plugin
+
+Customize context compaction behavior.
+
+```typescript
+// .opencode/plugins/compaction.ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const CompactionPlugin: Plugin = async (ctx) => {
+  return {
+    "experimental.session.compacting": async (input, output) => {
+      // Add custom context to preserve during compaction
+      output.context.push(`
+## Project Context
+
+Important state to preserve:
+- Current task: Implementing user authentication
+- Active branch: feature/auth-system
+- Key files: src/auth/*, src/middleware/*
+- Dependencies: jsonwebtoken, bcrypt
+
+## Decisions Made
+- Using JWT for stateless authentication
+- Passwords hashed with bcrypt (12 rounds)
+- Refresh tokens stored in Redis
+`)
+
+      // Or replace the entire compaction prompt
+      // output.prompt = `Custom compaction prompt...`
+    },
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+Configure OpenCode behavior through environment variables.
+
+```bash
+# Configuration
+export OPENCODE_CONFIG=/path/to/custom-config.json
+export OPENCODE_CONFIG_DIR=/path/to/config-directory
+export OPENCODE_CONFIG_CONTENT='{"model":"anthropic/claude-sonnet-4-5"}'
+
+# Server authentication
+export OPENCODE_SERVER_PASSWORD=your-secret-password
+export OPENCODE_SERVER_USERNAME=admin
+
+# Feature flags
+export OPENCODE_AUTO_SHARE=true
+export OPENCODE_DISABLE_AUTOUPDATE=true
+export OPENCODE_DISABLE_AUTOCOMPACT=true
+export OPENCODE_ENABLE_EXA=true  # Enable web search
+
+# Permissions (JSON)
+export OPENCODE_PERMISSION='{"edit":"ask","bash":"ask"}'
+
+# Experimental features
+export OPENCODE_EXPERIMENTAL=true
+export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
+export OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS=120000
+export OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=8192
+
+# Provider API keys
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+export GOOGLE_API_KEY=...
+
+# Custom installation
+export OPENCODE_INSTALL_DIR=/usr/local/bin
+export XDG_BIN_DIR=$HOME/.local/bin
+```
+
+---
+
+## Summary
+
+OpenCode serves as a comprehensive AI coding assistant that integrates seamlessly into developer workflows through multiple interfaces. The primary use cases include interactive development sessions via the TUI (switching between Build and Plan agents with Tab), automated scripting through the CLI (`opencode run`), and programmatic integration via the SDK and HTTP API. The tool excels at code exploration, refactoring, test generation, documentation writing, and complex multi-file changes while maintaining full version control awareness.
+
+Integration patterns typically involve running OpenCode as a headless server (`opencode serve`) for remote access from mobile apps or web interfaces, extending functionality through plugins for custom tools and event handling, and configuring MCP servers to integrate external services like Sentry, GitHub, or custom internal APIs. The configuration system supports layered settings (remote, global, project-level) with environment variable substitution, making it suitable for both individual developers and enterprise deployments with organization-wide defaults. Custom agents enable specialized workflows like security auditing, code review, and documentation generation, each with tailored permissions and tool access.

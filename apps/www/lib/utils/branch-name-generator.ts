@@ -4,7 +4,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import {
   CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  normalizeAnthropicBaseUrl,
 } from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
@@ -99,20 +101,12 @@ function getFallbackInfo(taskDescription: string): PRInfoResult {
 function getModelAndProvider(
   apiKeys: ApiKeys
 ): { model: LanguageModel; providerName: string } | null {
-  if (apiKeys.OPENAI_API_KEY) {
-    const openai = createOpenAI({
-      apiKey: apiKeys.OPENAI_API_KEY,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
-    });
-    return {
-      model: openai("gpt-5-nano"),
-      providerName: "OpenAI",
-    };
-  }
-
+  // Note: AIGATEWAY_* accessed via process.env to support custom AI gateway configurations
   if (apiKeys.GEMINI_API_KEY) {
     const google = createGoogleGenerativeAI({
       apiKey: apiKeys.GEMINI_API_KEY,
+      baseURL:
+        process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
     });
     return {
       model: google("gemini-2.5-flash"),
@@ -120,10 +114,26 @@ function getModelAndProvider(
     };
   }
 
+  if (apiKeys.OPENAI_API_KEY) {
+    const openai = createOpenAI({
+      apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL:
+        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    return {
+      model: openai("gpt-5-nano"),
+      providerName: "OpenAI",
+    };
+  }
+
   if (apiKeys.ANTHROPIC_API_KEY) {
+    const rawAnthropicBaseUrl =
+      apiKeys.ANTHROPIC_BASE_URL?.trim() ||
+      process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+      CLOUDFLARE_ANTHROPIC_BASE_URL;
     const anthropic = createAnthropic({
       apiKey: apiKeys.ANTHROPIC_API_KEY,
-      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+      baseURL: normalizeAnthropicBaseUrl(rawAnthropicBaseUrl).forAiSdk,
     });
     return {
       model: anthropic("claude-3-5-haiku-20241022"),

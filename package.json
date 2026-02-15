@@ -24,11 +24,13 @@
     "node": ">=20.0.0"
   },
   "overrides": {
+    "vite": "npm:rolldown-vite@^7.3.1",
     "@sentry/browser": "10.38.0",
     "@sentry/core": "10.38.0",
     "@sentry/types": "10.38.0",
     "@types/express": "4.17.23",
     "@types/express-serve-static-core": "4.19.6",
+    "@codemirror/state": "6.5.4",
     "node-abi": "^4.14.0",
     "react": "^19.2.2",
     "react-dom": "^19.2.2",
@@ -62,7 +64,11 @@
     "generate-morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run generate",
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
     "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)",
-    "convex:setup": "bun run --env-file .env --cwd packages/convex setup"
+    "convex:deploy": "(cd packages/convex && bun run deploy)",
+    "convex:setup": "bun run --env-file .env --cwd packages/convex setup",
+    "convex:backup": "bun run scripts/convex-clone-db.ts export",
+    "convex:clone": "bun run scripts/convex-clone-db.ts clone",
+    "convex:restore": "bun run scripts/convex-clone-db.ts import"
   },
   "type": "module",
   "workspaces": [

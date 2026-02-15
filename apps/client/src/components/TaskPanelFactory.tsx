@@ -175,7 +175,9 @@ interface PanelFactoryProps {
     title: string;
     description?: string;
   } | null;
+  /** @deprecated Use isBrowserSupported instead */
   isMorphProvider?: boolean;
+  isBrowserSupported?: boolean;
   isBrowserBusy?: boolean;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
@@ -563,6 +565,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         browserPlaceholder,
         selectedRun,
         isMorphProvider,
+        isBrowserSupported,
         isBrowserBusy,
         PersistentWebView,
         WorkspaceLoadingIndicator,
@@ -571,7 +574,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
+      // Support both new isBrowserSupported prop and deprecated isMorphProvider
+      const browserSupported = isBrowserSupported ?? isMorphProvider;
+      const shouldShowBrowserLoader = Boolean(selectedRun) && browserSupported && (!browserUrl || !browserPersistKey);
 
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,

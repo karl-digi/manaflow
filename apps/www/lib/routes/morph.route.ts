@@ -3,7 +3,10 @@ import {
   MORPH_SNAPSHOT_PRESETS,
   type MorphSnapshotId,
 } from "@/lib/utils/morph-defaults";
+import { DEFAULT_PVE_LXC_SNAPSHOT_ID } from "@/lib/utils/pve-lxc-defaults";
 import { getAccessTokenFromRequest, getUserFromRequest } from "@/lib/utils/auth";
+import { getPveLxcClient } from "@/lib/utils/pve-lxc-client";
+import { getActiveSandboxProvider } from "@/lib/utils/sandbox-provider";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -12,13 +15,16 @@ import { type Instance, MorphCloudClient } from "morphcloud";
 import { getConvex } from "../utils/get-convex";
 import { selectGitIdentity } from "../utils/gitIdentity";
 import { stackServerAppJs } from "../utils/stack";
+import { generateGitHubInstallationToken } from "@/lib/utils/github-app-token";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import {
   configureGithubAccess,
   configureGitIdentity,
   fetchGitIdentityInputs,
+  getFreshGitHubToken,
 } from "./sandboxes/git";
+import { wrapMorphInstance, wrapPveLxcInstance, type SandboxInstance } from "@/lib/utils/sandbox-instance";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import * as Sentry from "@sentry/nextjs";
 
@@ -165,7 +171,7 @@ morphRouter.openapi(
       await instance.resume();
 
       // Record the resume for activity tracking (used by cleanup cron)
-      await convex.mutation(api.morphInstances.recordResume, {
+      await convex.mutation(api.sandboxInstances.recordResume, {
         instanceId,
         teamSlugOrId,
       });
@@ -299,28 +305,6 @@ const RefreshGitHubAuthResponse = z
   })
   .openapi("RefreshGitHubAuthResponse");
 
-/**
- * Fetches a fresh GitHub access token for the authenticated user.
- * This is a reusable helper to avoid duplicating token retrieval logic.
- */
-async function getFreshGitHubToken(
-  user: Awaited<ReturnType<typeof stackServerAppJs.getUser>>
-): Promise<{ token: string } | { error: string; status: 401 }> {
-  if (!user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-  const githubAccount = await user.getConnectedAccount("github");
-  if (!githubAccount) {
-    return { error: "GitHub account not connected", status: 401 };
-  }
-  const { accessToken: githubAccessToken } =
-    await githubAccount.getAccessToken();
-  if (!githubAccessToken) {
-    return { error: "Failed to get GitHub access token", status: 401 };
-  }
-  return { token: githubAccessToken };
-}
-
 morphRouter.openapi(
   createRoute({
     method: "post" as const,
@@ -416,14 +400,65 @@ morphRouter.openapi(
         return c.text("Instance is paused - resume it first", 409);
       }
 
-      // Get fresh GitHub token (server-side, never from client)
-      const tokenResult = await getFreshGitHubToken(user);
-      if ("error" in tokenResult) {
-        return c.text(tokenResult.error, tokenResult.status);
+      // Try to use GitHub App installation token (same logic as /sandboxes/start)
+      // to maintain consistency with initial sandbox setup
+      let gitAuthToken: string | undefined;
+
+      // Get the task to find projectFullName for GitHub App token preference
+      const task = await convex.query(api.tasks.getById, {
+        teamSlugOrId,
+        id: taskRun.taskId,
+      });
+
+      if (task?.projectFullName) {
+        const [owner] = task.projectFullName.split("/");
+        try {
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId,
+          });
+          const targetConnection = connections.find(
+            (co) =>
+              co.isActive && co.accountLogin?.toLowerCase() === owner.toLowerCase()
+          );
+          if (targetConnection) {
+            console.log(
+              `[morph.refresh-github-auth] Found GitHub App installation ${targetConnection.installationId} for ${owner}`
+            );
+            gitAuthToken = await generateGitHubInstallationToken({
+              installationId: targetConnection.installationId,
+              repositories: [task.projectFullName],
+              permissions: {
+                contents: "write",
+                metadata: "read",
+                workflows: "write",
+              },
+            });
+            console.log(
+              `[morph.refresh-github-auth] Using GitHub App token for git authentication`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[morph.refresh-github-auth] Failed to get GitHub App token, falling back to user OAuth:`,
+            error
+          );
+        }
+      }
+
+      // Fall back to personal OAuth token if no GitHub App token
+      if (!gitAuthToken) {
+        const tokenResult = await getFreshGitHubToken(user);
+        if ("error" in tokenResult) {
+          return c.text(tokenResult.error, tokenResult.status);
+        }
+        gitAuthToken = tokenResult.token;
+        console.log(
+          `[morph.refresh-github-auth] Using personal OAuth token for git authentication`
+        );
       }
 
       // Use the existing configureGithubAccess function to refresh auth
-      await configureGithubAccess(instance, tokenResult.token);
+      await configureGithubAccess(wrapMorphInstance(instance), gitAuthToken);
 
       console.log(
         `[morph.refresh-github-auth] Successfully refreshed GitHub auth for instance ${instanceId}`
@@ -534,122 +569,170 @@ morphRouter.openapi(
     );
 
     try {
-      const client = new MorphCloudClient({
-        apiKey: env.MORPH_API_KEY,
-      });
+      const providerConfig = getActiveSandboxProvider();
+      const provider = providerConfig.provider;
+      const selectedSnapshotId =
+        snapshotId ??
+        (provider === "pve-lxc"
+          ? DEFAULT_PVE_LXC_SNAPSHOT_ID
+          : DEFAULT_MORPH_SNAPSHOT_ID);
 
-      let instance: Instance;
+      let sandboxInstance: SandboxInstance;
       let instanceId = existingInstanceId;
-      const selectedSnapshotId = snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
+      let vscodeUrl: string | undefined;
 
-      if (!instanceId) {
+      if (provider === "pve-lxc") {
         const team = await verifyTeamPromise;
+        const pveClient = getPveLxcClient();
 
-        console.log(
-          `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
-        );
-
-        // Retry logic for instance start to handle connection timeouts
-        const maxRetries = 3;
-        let lastError: Error | undefined;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            instance = await Sentry.startSpan(
-              { name: "client.instances.start", op: "morph", attributes: { attempt } },
-              () =>
-                client.instances.start({
-                  snapshotId: selectedSnapshotId,
-                  ttlSeconds,
-                  ttlAction: "pause",
-                  metadata: {
-                    app: "cmux-dev",
-                    userId: user.id,
-                    teamId: team.uuid,
-                  },
-                })
-            );
-            break; // Success, exit retry loop
-          } catch (error) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            const isConnectTimeout =
-              lastError.message.includes("fetch failed") ||
-              lastError.message.includes("ConnectTimeoutError") ||
-              (lastError.cause instanceof Error &&
-                (lastError.cause.message.includes("Connect Timeout") ||
-                  (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
-
-            if (!isConnectTimeout || attempt === maxRetries) {
-              throw lastError;
-            }
-
-            console.log(
-              `[morph.setup-instance] Connection timeout on attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
-            );
-            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
-          }
-        }
-        instanceId = instance!.id;
-        void Sentry.startSpan(
-          { name: "instance.setWakeOn", op: "morph" },
-          () => instance.setWakeOn(true, true)
-        );
-        instance = instance!;
-        // SDK bug: instances.start() returns empty httpServices array
-        // Re-fetch instance to get the actual networking data
-        if (instance.networking.httpServices.length === 0) {
-          instance = await client.instances.get({ instanceId: instance.id });
-        }
-      } else {
-        console.log(`Using existing Morph instance: ${instanceId}`);
-
-        const team = await verifyTeamPromise;
-
-        // Retry logic for instance get to handle connection timeouts
-        const maxRetries = 3;
-        let lastError: Error | undefined;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            instance = await Sentry.startSpan(
-              { name: "client.instances.get", op: "morph", attributes: { attempt } },
-              () => client.instances.get({ instanceId: instanceId! })
-            );
-            break; // Success, exit retry loop
-          } catch (error) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            const isConnectTimeout =
-              lastError.message.includes("fetch failed") ||
-              lastError.message.includes("ConnectTimeoutError") ||
-              (lastError.cause instanceof Error &&
-                (lastError.cause.message.includes("Connect Timeout") ||
-                  (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
-
-            if (!isConnectTimeout || attempt === maxRetries) {
-              throw lastError;
-            }
-
-            console.log(
-              `[morph.setup-instance] Connection timeout on get attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
-            );
-            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
-          }
-        }
-
-        const meta = instance!.metadata;
-        const instanceTeamId = meta?.teamId;
-        if (!instanceTeamId || instanceTeamId !== team.uuid) {
-          return c.text(
-            "Forbidden: Instance does not belong to this team",
-            403
+        if (!instanceId) {
+          console.log(
+            `[morph.setup-instance] Creating new PVE LXC instance (snapshot: ${selectedSnapshotId})`
           );
+          const pveInstance = await pveClient.instances.start({
+            snapshotId: selectedSnapshotId,
+            ttlSeconds,
+            metadata: {
+              app: "cmux",
+              userId: user.id,
+              teamId: team.uuid,
+            },
+          });
+          instanceId = pveInstance.id;
+          sandboxInstance = wrapPveLxcInstance(pveInstance);
+
+          void convex
+            .mutation(api.sandboxInstances.recordCreate, {
+              instanceId,
+              provider: "pve-lxc",
+              teamSlugOrId,
+            })
+            .catch((error) =>
+              console.error(
+                "[morph.setup-instance] Failed to record PVE instance creation (non-fatal):",
+                error
+              )
+            );
+        } else {
+          console.log(
+            `[morph.setup-instance] Using existing PVE LXC instance: ${instanceId}`
+          );
+          const pveInstance = await pveClient.instances.get({ instanceId });
+          sandboxInstance = wrapPveLxcInstance(pveInstance);
         }
-        instance = instance!;
+
+        vscodeUrl = sandboxInstance.networking.httpServices.find(
+          (service) => service.port === 39378
+        )?.url;
+      } else {
+        const client = new MorphCloudClient({
+          apiKey: env.MORPH_API_KEY,
+        });
+        let instance: Instance | undefined;
+
+        if (!instanceId) {
+          const team = await verifyTeamPromise;
+
+          console.log(
+            `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
+          );
+
+          // Retry logic for instance start to handle connection timeouts
+          const maxRetries = 3;
+          let lastError: Error | undefined;
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              instance = await Sentry.startSpan(
+                { name: "client.instances.start", op: "morph", attributes: { attempt } },
+                () =>
+                  client.instances.start({
+                    snapshotId: selectedSnapshotId,
+                    ttlSeconds,
+                    ttlAction: "pause",
+                    metadata: {
+                      app: "cmux-dev",
+                      userId: user.id,
+                      teamId: team.uuid,
+                    },
+                  })
+              );
+              break; // Success, exit retry loop
+            } catch (error) {
+              lastError = error instanceof Error ? error : new Error(String(error));
+              const isConnectTimeout =
+                lastError.message.includes("fetch failed") ||
+                lastError.message.includes("ConnectTimeoutError") ||
+                (lastError.cause instanceof Error &&
+                  (lastError.cause.message.includes("Connect Timeout") ||
+                    (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
+
+              if (!isConnectTimeout || attempt === maxRetries) {
+                throw lastError;
+              }
+
+              console.log(
+                `[morph.setup-instance] Connection timeout on attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
+              );
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+          }
+          instanceId = instance!.id;
+          void Sentry.startSpan(
+            { name: "instance.setWakeOn", op: "morph" },
+            () => instance!.setWakeOn(true, true)
+          );
+        } else {
+          console.log(`Using existing Morph instance: ${instanceId}`);
+
+          const team = await verifyTeamPromise;
+
+          // Retry logic for instance get to handle connection timeouts
+          const maxRetries = 3;
+          let lastError: Error | undefined;
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              instance = await Sentry.startSpan(
+                { name: "client.instances.get", op: "morph", attributes: { attempt } },
+                () => client.instances.get({ instanceId: instanceId! })
+              );
+              break; // Success, exit retry loop
+            } catch (error) {
+              lastError = error instanceof Error ? error : new Error(String(error));
+              const isConnectTimeout =
+                lastError.message.includes("fetch failed") ||
+                lastError.message.includes("ConnectTimeoutError") ||
+                (lastError.cause instanceof Error &&
+                  (lastError.cause.message.includes("Connect Timeout") ||
+                    (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
+
+              if (!isConnectTimeout || attempt === maxRetries) {
+                throw lastError;
+              }
+
+              console.log(
+                `[morph.setup-instance] Connection timeout on get attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
+              );
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+          }
+
+          const meta = instance!.metadata;
+          const instanceTeamId = meta?.teamId;
+          if (!instanceTeamId || instanceTeamId !== team.uuid) {
+            return c.text(
+              "Forbidden: Instance does not belong to this team",
+              403
+            );
+          }
+        }
+
+        sandboxInstance = wrapMorphInstance(instance!);
+        vscodeUrl = sandboxInstance.networking.httpServices.find(
+          (service) => service.port === 39378
+        )?.url;
       }
 
-      const vscodeUrl = instance.networking.httpServices.find(
-        (service) => service.port === 39378
-      )?.url;
-
-      if (!vscodeUrl) {
+      if (!vscodeUrl || !instanceId) {
         throw new Error("VSCode URL not found");
       }
 
@@ -662,17 +745,18 @@ morphRouter.openapi(
         return c.text("Failed to resolve GitHub credentials", 401);
       }
 
+      const wrappedInstance = sandboxInstance;
       const configureGithubPromise = Sentry.startSpan(
-        { name: "configureGithubAccess", op: "morph.exec" },
-        () => configureGithubAccess(instance, githubAccessToken)
+        { name: "configureGithubAccess", op: "sandbox.exec" },
+        () => configureGithubAccess(wrappedInstance, githubAccessToken)
       );
 
       void gitIdentityPromise
         .then(([who, gh]) => {
           const { name, email } = selectGitIdentity(who, gh);
           return Sentry.startSpan(
-            { name: "configureGitIdentity", op: "morph.exec" },
-            () => configureGitIdentity(instance, { name, email })
+            { name: "configureGitIdentity", op: "sandbox.exec" },
+            () => configureGitIdentity(wrappedInstance, { name, email })
           );
         })
         .catch((error) => {
@@ -692,6 +776,7 @@ morphRouter.openapi(
         [];
 
       if (selectedRepos && selectedRepos.length > 0) {
+        const isSingleRepo = selectedRepos.length === 1;
         const repoNames = new Map<string, string>();
         const reposByOwner = new Map<string, string[]>();
         for (const repo of selectedRepos) {
@@ -722,143 +807,295 @@ morphRouter.openapi(
           reposByOwner.get(owner)!.push(repo);
         }
 
-        const listReposCmd = await Sentry.startSpan(
-          { name: "instance.exec (list repos)", op: "morph.exec" },
+        const rootRepoCheck = await Sentry.startSpan(
+          { name: "instance.exec (check root repo)", op: "sandbox.exec" },
           () =>
-            instance.exec(
-              "for dir in /root/workspace/*/; do " +
-                'if [ -d "$dir/.git" ]; then ' +
-                'basename "$dir"; ' +
-                "cd \"$dir\" && git remote get-url origin 2>/dev/null || echo 'no-remote'; " +
-                "fi; done"
+            sandboxInstance.exec(
+              'if [ -d "/root/workspace/.git" ]; then git -C /root/workspace remote get-url origin 2>/dev/null || echo "no-remote"; else echo "no-git"; fi'
             )
         );
+        const rootRepoRemote = rootRepoCheck.stdout.trim();
+        const hasRootRepo = rootRepoRemote !== "no-git";
+        const clearWorkspaceCmd =
+          "rm -rf /root/workspace/.git /root/workspace/* /root/workspace/.[!.]* 2>/dev/null || true";
 
-        const lines = listReposCmd.stdout.split("\n").filter(Boolean);
-        const existingRepos = new Map<string, string>();
+        if (isSingleRepo) {
+          const selectedRepo = selectedRepos[0]!;
 
-        for (let i = 0; i < lines.length; i += 2) {
-          const repoName = lines[i]?.trim();
-          const remoteUrl = lines[i + 1]?.trim();
-          if (repoName && remoteUrl && remoteUrl !== "no-remote") {
-            existingRepos.set(repoName, remoteUrl);
-          } else if (repoName) {
-            existingRepos.set(repoName, "");
+          const listReposCmd = await Sentry.startSpan(
+            { name: "instance.exec (list repos)", op: "sandbox.exec" },
+            () =>
+              sandboxInstance.exec(
+                "for dir in /root/workspace/*/; do " +
+                  'if [ -d "$dir/.git" ]; then ' +
+                  'basename "$dir"; ' +
+                  "cd \"$dir\" && git remote get-url origin 2>/dev/null || echo 'no-remote'; " +
+                  "fi; done"
+              )
+          );
+
+          const lines = listReposCmd.stdout.split("\n").filter(Boolean);
+          const subdirectoryRepos = new Set<string>();
+          for (let i = 0; i < lines.length; i += 2) {
+            const repoName = lines[i]?.trim();
+            if (repoName) {
+              subdirectoryRepos.add(repoName);
+            }
           }
-        }
 
-        for (const [existingName, existingUrl] of existingRepos) {
-          const selectedRepo = repoNames.get(existingName);
-
-          if (!selectedRepo) {
+          for (const existingName of subdirectoryRepos) {
             console.log(`Removing repository: ${existingName}`);
             await Sentry.startSpan(
-              { name: `instance.exec (rm ${existingName})`, op: "morph.exec" },
-              () => instance.exec(`rm -rf /root/workspace/${existingName}`)
+              { name: `instance.exec (rm ${existingName})`, op: "sandbox.exec" },
+              () => sandboxInstance.exec(`rm -rf /root/workspace/${existingName}`)
             );
             removedRepos.push(existingName);
-          } else if (existingUrl && !existingUrl.includes(selectedRepo)) {
+          }
+
+          const rootRepoMatchesSelected =
+            hasRootRepo &&
+            rootRepoRemote !== "no-remote" &&
+            (rootRepoRemote.endsWith(`/${selectedRepo}.git`) ||
+              rootRepoRemote.endsWith(`/${selectedRepo}`));
+
+          if (hasRootRepo && !rootRepoMatchesSelected) {
             console.log(
-              `Repository ${existingName} points to different remote, removing for re-clone`
+              `Root workspace repository points to different remote, clearing workspace for re-clone`
             );
             await Sentry.startSpan(
-              { name: `instance.exec (rm ${existingName})`, op: "morph.exec" },
-              () => instance.exec(`rm -rf /root/workspace/${existingName}`)
+              { name: "instance.exec (clear workspace)", op: "sandbox.exec" },
+              () => sandboxInstance.exec(clearWorkspaceCmd)
             );
-            removedRepos.push(existingName);
-            existingRepos.delete(existingName);
           }
-        }
 
-        for (const [, repos] of reposByOwner) {
-          const clonePromises = repos.map(async (repo) => {
-            const repoName = repo.split("/").pop()!;
-            if (!existingRepos.has(repoName)) {
-              console.log(`Cloning repository: ${repo}`);
+          if (!rootRepoMatchesSelected) {
+            console.log(`Cloning repository to workspace root: ${selectedRepo}`);
 
-              const maxRetries = 3;
-              let lastError: string | undefined;
-              let isAuthError = false;
+            const maxRetries = 3;
+            let lastError: string | undefined;
+            let isAuthError = false;
 
-              for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                const cloneCmd = await Sentry.startSpan(
-                  {
-                    name: `instance.exec (clone ${repoName})`,
-                    op: "morph.exec",
-                    attributes: { attempt },
-                  },
-                  () =>
-                    instance.exec(
-                      `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${repo}.git ${repoName} 2>&1`
-                    )
-                );
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+              const cloneCmd = await Sentry.startSpan(
+                {
+                  name: "instance.exec (clone root repo)",
+                  op: "sandbox.exec",
+                  attributes: { attempt },
+                },
+                () =>
+                  sandboxInstance.exec(
+                    `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${selectedRepo}.git . 2>&1`
+                  )
+              );
 
-                if (cloneCmd.exit_code === 0) {
-                  return { success: true as const, repo };
-                } else {
-                  lastError = cloneCmd.stderr || cloneCmd.stdout;
-
-                  isAuthError =
-                    lastError.includes("Authentication failed") ||
-                    lastError.includes("could not read Username") ||
-                    lastError.includes("could not read Password") ||
-                    lastError.includes("Invalid username or password") ||
-                    lastError.includes("Permission denied") ||
-                    lastError.includes("Repository not found") ||
-                    lastError.includes("403");
-
-                  if (isAuthError) {
-                    console.error(
-                      `Authentication failed for ${repo}: ${lastError}`
-                    );
-                    break;
-                  }
-
-                  if (attempt < maxRetries) {
-                    console.log(
-                      `Clone attempt ${attempt} failed for ${repo}, retrying...`
-                    );
-                    await instance.exec(`rm -rf /root/workspace/${repoName}`);
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, attempt * 1000)
-                    );
-                  }
-                }
+              if (cloneCmd.exit_code === 0) {
+                clonedRepos.push(selectedRepo);
+                lastError = undefined;
+                break;
               }
 
+              lastError = cloneCmd.stderr || cloneCmd.stdout;
+              isAuthError =
+                lastError.includes("Authentication failed") ||
+                lastError.includes("could not read Username") ||
+                lastError.includes("could not read Password") ||
+                lastError.includes("Invalid username or password") ||
+                lastError.includes("Permission denied") ||
+                lastError.includes("Repository not found") ||
+                lastError.includes("403");
+
+              if (isAuthError) {
+                console.error(
+                  `Authentication failed for ${selectedRepo}: ${lastError}`
+                );
+                break;
+              }
+
+              if (attempt < maxRetries) {
+                console.log(
+                  `Clone attempt ${attempt} failed for ${selectedRepo}, retrying...`
+                );
+                await sandboxInstance.exec(clearWorkspaceCmd);
+                await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+              }
+            }
+
+            if (lastError) {
               const errorMsg = isAuthError
                 ? `Authentication failed - check repository access permissions`
                 : `Failed after ${maxRetries} attempts`;
 
               console.error(
-                `Failed to clone ${repo}: ${errorMsg}\nDetails: ${lastError}`
+                `Failed to clone ${selectedRepo}: ${errorMsg}\nDetails: ${lastError}`
               );
-              return {
-                success: false as const,
-                repo,
+              failedClones.push({
+                repo: selectedRepo,
                 error: lastError || "Unknown error",
                 isAuth: isAuthError,
-              };
-            } else {
-              console.log(
-                `Repository ${repo} already exists with correct remote, skipping clone`
-              );
-              return null;
+              });
             }
-          });
+          } else {
+            console.log(
+              `Repository ${selectedRepo} already exists at workspace root with correct remote, skipping clone`
+            );
+          }
+        } else {
+          if (hasRootRepo) {
+            console.log(
+              `Root workspace has a single-repo layout, clearing workspace for multi-repo clone`
+            );
+            await Sentry.startSpan(
+              { name: "instance.exec (clear workspace)", op: "sandbox.exec" },
+              () => sandboxInstance.exec(clearWorkspaceCmd)
+            );
+          }
 
-          const results = await Promise.all(clonePromises);
+          const listReposCmd = await Sentry.startSpan(
+            { name: "instance.exec (list repos)", op: "sandbox.exec" },
+            () =>
+              sandboxInstance.exec(
+                "for dir in /root/workspace/*/; do " +
+                  'if [ -d "$dir/.git" ]; then ' +
+                  'basename "$dir"; ' +
+                  "cd \"$dir\" && git remote get-url origin 2>/dev/null || echo 'no-remote'; " +
+                  "fi; done"
+              )
+          );
 
-          for (const result of results) {
-            if (result && "success" in result) {
-              if (result.success) {
-                clonedRepos.push(result.repo);
+          const lines = listReposCmd.stdout.split("\n").filter(Boolean);
+          const existingRepos = new Map<string, string>();
+
+          for (let i = 0; i < lines.length; i += 2) {
+            const repoName = lines[i]?.trim();
+            const remoteUrl = lines[i + 1]?.trim();
+            if (repoName && remoteUrl && remoteUrl !== "no-remote") {
+              existingRepos.set(repoName, remoteUrl);
+            } else if (repoName) {
+              existingRepos.set(repoName, "");
+            }
+          }
+
+          for (const [existingName, existingUrl] of existingRepos) {
+            const selectedRepo = repoNames.get(existingName);
+
+            if (!selectedRepo) {
+              console.log(`Removing repository: ${existingName}`);
+              await Sentry.startSpan(
+                { name: `instance.exec (rm ${existingName})`, op: "sandbox.exec" },
+                () => sandboxInstance.exec(`rm -rf /root/workspace/${existingName}`)
+              );
+              removedRepos.push(existingName);
+            } else if (
+              existingUrl &&
+              !(
+                existingUrl.endsWith(`/${selectedRepo}.git`) ||
+                existingUrl.endsWith(`/${selectedRepo}`)
+              )
+            ) {
+              console.log(
+                `Repository ${existingName} points to different remote, removing for re-clone`
+              );
+              await Sentry.startSpan(
+                { name: `instance.exec (rm ${existingName})`, op: "sandbox.exec" },
+                () => sandboxInstance.exec(`rm -rf /root/workspace/${existingName}`)
+              );
+              removedRepos.push(existingName);
+              existingRepos.delete(existingName);
+            }
+          }
+
+          for (const [, repos] of reposByOwner) {
+            const clonePromises = repos.map(async (repo) => {
+              const repoName = repo.split("/").pop()!;
+              if (!existingRepos.has(repoName)) {
+                console.log(`Cloning repository: ${repo}`);
+
+                const maxRetries = 3;
+                let lastError: string | undefined;
+                let isAuthError = false;
+
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                  const cloneCmd = await Sentry.startSpan(
+                    {
+                      name: `instance.exec (clone ${repoName})`,
+                      op: "sandbox.exec",
+                      attributes: { attempt },
+                    },
+                    () =>
+                      sandboxInstance.exec(
+                        `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${repo}.git ${repoName} 2>&1`
+                      )
+                  );
+
+                  if (cloneCmd.exit_code === 0) {
+                    return { success: true as const, repo };
+                  } else {
+                    lastError = cloneCmd.stderr || cloneCmd.stdout;
+
+                    isAuthError =
+                      lastError.includes("Authentication failed") ||
+                      lastError.includes("could not read Username") ||
+                      lastError.includes("could not read Password") ||
+                      lastError.includes("Invalid username or password") ||
+                      lastError.includes("Permission denied") ||
+                      lastError.includes("Repository not found") ||
+                      lastError.includes("403");
+
+                    if (isAuthError) {
+                      console.error(
+                        `Authentication failed for ${repo}: ${lastError}`
+                      );
+                      break;
+                    }
+
+                    if (attempt < maxRetries) {
+                      console.log(
+                        `Clone attempt ${attempt} failed for ${repo}, retrying...`
+                      );
+                      await sandboxInstance.exec(
+                        `rm -rf /root/workspace/${repoName}`
+                      );
+                      await new Promise((resolve) =>
+                        setTimeout(resolve, attempt * 1000)
+                      );
+                    }
+                  }
+                }
+
+                const errorMsg = isAuthError
+                  ? `Authentication failed - check repository access permissions`
+                  : `Failed after ${maxRetries} attempts`;
+
+                console.error(
+                  `Failed to clone ${repo}: ${errorMsg}\nDetails: ${lastError}`
+                );
+                return {
+                  success: false as const,
+                  repo,
+                  error: lastError || "Unknown error",
+                  isAuth: isAuthError,
+                };
               } else {
-                failedClones.push({
-                  repo: result.repo,
-                  error: result.error,
-                  isAuth: result.isAuth,
-                });
+                console.log(
+                  `Repository ${repo} already exists with correct remote, skipping clone`
+                );
+                return null;
+              }
+            });
+
+            const results = await Promise.all(clonePromises);
+
+            for (const result of results) {
+              if (result && "success" in result) {
+                if (result.success) {
+                  clonedRepos.push(result.repo);
+                } else {
+                  failedClones.push({
+                    repo: result.repo,
+                    error: result.error,
+                    isAuth: result.isAuth,
+                  });
+                }
               }
             }
           }
@@ -878,7 +1115,7 @@ morphRouter.openapi(
       if (error instanceof HTTPException) {
         throw error;
       }
-      console.error("Failed to setup Morph instance:", error);
+      console.error("Failed to setup instance:", error);
       return c.text("Failed to setup instance", 500);
     }
   }

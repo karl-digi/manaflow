@@ -264,9 +264,11 @@ githubPrsOpenRouter.openapi(
     const title = task.pullRequestTitle || task.text || "cmux changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
-    const description =
-      task.text ||
-      `## Summary\n\n${title}`;
+    const description = buildPrDescription({
+      taskText: task.text,
+      title,
+      summary: run.summary,
+    });
 
     const existingByRepo = new Map(
       (run.pullRequests ?? []).map(
@@ -1292,11 +1294,14 @@ async function collectRepoFullNamesForRun({
   teamSlugOrId: string;
 }): Promise<string[]> {
   const repos = new Set<string>();
+
+  // 1. Task's configured project
   const project = task.projectFullName?.trim();
   if (project) {
     repos.add(project);
   }
 
+  // 2. Environment's selected repos
   const environmentId = run.environmentId;
   if (environmentId) {
     try {
@@ -1316,6 +1321,16 @@ async function collectRepoFullNamesForRun({
         error,
       );
     }
+  }
+
+  // 3. Discovered repos from sandbox scanning
+  if (run.discoveredRepos?.length) {
+    run.discoveredRepos.forEach((repoName) => {
+      const trimmed = typeof repoName === "string" ? repoName.trim() : "";
+      if (trimmed) {
+        repos.add(trimmed);
+      }
+    });
   }
 
   return Array.from(repos);
@@ -1427,4 +1442,33 @@ function emptyAggregate(): AggregatePullRequestSummary {
     isDraft: false,
     mergeStatus: "none",
   };
+}
+
+/**
+ * Build the PR description body, including the PR Review Summary when available.
+ */
+function buildPrDescription({
+  taskText,
+  title,
+  summary,
+}: {
+  taskText?: string;
+  title: string;
+  summary?: string;
+}): string {
+  const parts: string[] = [];
+
+  // Add task description section
+  if (taskText) {
+    parts.push(`## Task\n\n${taskText}`);
+  } else {
+    parts.push(`## Summary\n\n${title}`);
+  }
+
+  // Add PR Review Summary section if available
+  if (summary && summary.trim().length > 0) {
+    parts.push(summary);
+  }
+
+  return parts.join("\n\n");
 }

@@ -1,0 +1,661 @@
+# Beads (bd) - Distributed Git-Backed Issue Tracker
+
+Beads is a distributed, git-backed graph issue tracker designed specifically for AI agents. It provides persistent, structured memory for coding agents by replacing messy markdown plans with a dependency-aware graph. The system enables agents to handle long-horizon tasks without losing context by storing issues as JSONL in a `.beads/` directory, which is versioned, branched, and merged like code. Hash-based IDs (e.g., `bd-a1b2`) prevent merge collisions in multi-agent/multi-branch workflows.
+
+The core architecture consists of a CLI tool (`bd`), an MCP server for AI integration, and a background daemon for auto-sync. Issues support hierarchical structures (epics with child tasks), dependency tracking with four relationship types (blocks, related, parent-child, discovered-from), and automatic "ready work" detection. The system uses SQLite for local caching and supports compaction (semantic memory decay) to summarize old closed tasks and save context window space.
+
+## CLI Commands
+
+### Initialize Repository
+
+Initialize beads in a project directory to create the `.beads/` directory structure with database and configuration.
+
+```bash
+# Basic initialization
+bd init
+
+# With Dolt backend (version-controlled SQL)
+bd init --backend dolt
+
+# For OSS contributors (fork workflow)
+bd init --contributor
+
+# For team collaboration (branch workflow)
+bd init --team
+
+# Protected main branch setup
+bd init --branch beads-sync
+
+# Stealth mode (local only, no git commits)
+bd init --stealth
+```
+
+### Create Issues
+
+Create new issues with title, priority, type, labels, and optional dependencies.
+
+```bash
+# Basic issue creation
+bd create "Fix authentication bug" -t bug -p 1 --json
+# Output: {"id": "bd-a3f8e9", "title": "Fix authentication bug", ...}
+
+# Create with description and labels
+bd create "Add OAuth support" -t feature -p 2 -d "Implement RFC 6749" -l "backend,security" --json
+
+# Create epic with hierarchical children
+bd create "Auth System" -t epic -p 1 --json                     # Returns: bd-a3f8e9
+bd create "Login UI" -p 1 --parent bd-a3f8e9 --json             # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1 --parent bd-a3f8e9 --json   # Auto-assigned: bd-a3f8e9.2
+
+# Create and link discovered work in one command
+bd create "Found edge case" -t bug -p 1 --deps discovered-from:bd-parent --json
+
+# Create with description from file (avoids shell escaping)
+bd create "Issue title" --body-file=description.md --json
+
+# Read description from stdin
+echo "Description" | bd create "Issue title" --body-file=- --json
+```
+
+### Find Ready Work
+
+List issues with no blocking dependencies that are ready to be worked on.
+
+```bash
+# Find all ready work
+bd ready --json
+# Output: [{"id": "bd-42", "title": "Set up database", "priority": 1, "status": "open"}, ...]
+
+# Filter by priority
+bd ready --priority 1 --json
+
+# Filter by assignee
+bd ready --assignee alice --json
+
+# Filter by labels (AND: must have ALL)
+bd ready --label bug,critical --json
+
+# Filter unassigned only
+bd ready --unassigned --json
+
+# Limit results
+bd ready --limit 5 --json
+```
+
+### List and Filter Issues
+
+Query issues with comprehensive filtering options.
+
+```bash
+# List all open issues
+bd list --status open --json
+
+# Filter by multiple criteria
+bd list --status open --priority 1 --type bug --json
+
+# Search in title (case-insensitive)
+bd list --title "auth" --json
+
+# Label filters (OR: has ANY)
+bd list --label-any frontend,backend --json
+
+# Date range filters
+bd list --created-after 2024-01-01 --updated-before 2024-12-31 --json
+
+# Empty/null checks
+bd list --empty-description --json
+bd list --no-assignee --json
+bd list --no-labels --json
+
+# Priority ranges
+bd list --priority-min 0 --priority-max 1 --json
+```
+
+### Update Issues
+
+Modify issue status, priority, assignee, or content fields.
+
+```bash
+# Start working on an issue
+bd update bd-42 --status in_progress --json
+# Output: {"id": "bd-42", "action": "updated"}
+
+# Update priority
+bd update bd-42 --priority 0 --json
+
+# Update multiple issues at once
+bd update bd-41 bd-42 bd-43 --priority 1 --json
+
+# Update description
+bd update bd-42 --description "Updated requirements" --json
+
+# Update assignee
+bd update bd-42 --assignee alice --json
+```
+
+### Close and Reopen Issues
+
+Complete work or reactivate closed issues.
+
+```bash
+# Close single issue
+bd close bd-42 --reason "Implemented and tested" --json
+# Output: [{"id": "bd-42", "action": "closed", "message": "Implemented and tested"}]
+
+# Close multiple issues
+bd close bd-41 bd-42 bd-43 --reason "Batch completion" --json
+
+# Reopen closed issues
+bd reopen bd-42 --reason "Need more work" --json
+```
+
+### Show Issue Details
+
+View full information about a specific issue including dependencies.
+
+```bash
+# Show full details
+bd show bd-42 --json
+# Output: {
+#   "id": "bd-42",
+#   "title": "Fix authentication bug",
+#   "description": "...",
+#   "status": "open",
+#   "priority": 1,
+#   "issue_type": "bug",
+#   "dependencies": [...],
+#   "dependents": [...]
+# }
+
+# Show multiple issues
+bd show bd-41 bd-42 bd-43 --json
+
+# View dependency tree
+bd dep tree bd-42
+# Output:
+# -> bd-42: Add authentication [P2] (open)
+#   -> bd-41: Create API [P2] (open)
+#     -> bd-40: Set up database [P1] (open)
+```
+
+### Manage Dependencies
+
+Create relationships between issues to control execution order.
+
+```bash
+# Add blocking dependency (bd-42 depends on bd-41)
+bd dep add bd-42 bd-41
+# Output: Added dependency: bd-42 depends on bd-41
+
+# Add with specific type
+bd dep add bd-42 bd-41 --type blocks
+bd dep add bd-42 bd-41 --type related
+bd dep add bd-42 bd-41 --type parent-child
+bd dep add bd-42 bd-41 --type discovered-from
+
+# View dependency tree
+bd dep tree bd-42
+
+# Detect dependency cycles
+bd dep cycles
+```
+
+### Label Management
+
+Organize issues with labels for filtering and categorization.
+
+```bash
+# Add label to issue(s)
+bd label add bd-42 urgent --json
+bd label add bd-41 bd-42 bd-43 critical --json
+
+# Remove label
+bd label remove bd-42 urgent --json
+
+# List labels on issue
+bd label list bd-42 --json
+
+# List all labels in database
+bd label list-all --json
+```
+
+### State Management
+
+Track operational state using dimensional labels for role-based beads.
+
+```bash
+# Query current state
+bd state bd-42 patrol
+# Output: active
+
+# List all state dimensions
+bd state list bd-42
+# Output: patrol: active, mode: normal, health: healthy
+
+# Set state (creates event + updates label atomically)
+bd set-state bd-42 patrol=muted --reason "Investigating issue"
+bd set-state bd-42 mode=degraded --reason "High error rate"
+```
+
+### Statistics
+
+Get aggregate metrics about issue tracking.
+
+```bash
+bd stats --json
+# Output: {
+#   "total": 45,
+#   "open": 12,
+#   "in_progress": 5,
+#   "blocked": 3,
+#   "closed": 25,
+#   "ready": 8,
+#   "avg_lead_time_hours": 48.5
+# }
+```
+
+### Sync Operations
+
+Synchronize database with git repository.
+
+```bash
+# Manual sync (export/import/commit/push)
+bd sync
+
+# What it does:
+# 1. Export pending changes to JSONL
+# 2. Commit to git
+# 3. Pull from remote
+# 4. Import any updates
+# 5. Push to remote
+
+# Import from JSONL file
+bd import -i .beads/issues.jsonl --dry-run  # Preview
+bd import -i .beads/issues.jsonl             # Apply
+
+# Handle orphan children during import
+bd import -i issues.jsonl --orphan-handling resurrect
+```
+
+### Database Status
+
+Check database path, daemon status, and configuration.
+
+```bash
+bd info --json
+# Output: {
+#   "database_path": "/path/to/.beads/beads.db",
+#   "issue_prefix": "bd",
+#   "daemon_running": true,
+#   "agent_mail_enabled": false
+# }
+
+# Get schema information
+bd info --schema --json
+```
+
+## Daemon Management
+
+### Control Background Daemon
+
+Manage the per-workspace background daemon for auto-sync operations.
+
+```bash
+# List all running daemons
+bd daemons list --json
+# Output: [{
+#   "workspace": "/Users/alice/project",
+#   "pid": 12345,
+#   "socket": "/Users/alice/project/.beads/bd.sock",
+#   "version": "0.21.0",
+#   "uptime_seconds": 3600
+# }]
+
+# Check daemon health
+bd daemons health --json
+
+# Stop specific daemon
+bd daemons stop /path/to/workspace --json
+bd daemons stop 12345 --json  # By PID
+
+# Restart daemon
+bd daemons restart /path/to/workspace --json
+
+# Stop all daemons
+bd daemons killall --json
+bd daemons killall --force --json
+
+# View daemon logs
+bd daemons logs /path/to/workspace -n 100
+bd daemons logs 12345 -f  # Follow mode
+
+# Disable daemon for session
+export BEADS_NO_DAEMON=true
+bd --no-daemon ready  # Single command
+```
+
+## Molecular Chemistry (Workflow Templates)
+
+### Pour Proto to Mol
+
+Instantiate a template (proto) as persistent active work (mol).
+
+```bash
+# List available templates
+bd formula list --json
+
+# Show proto structure
+bd mol show proto-feature --json
+
+# Instantiate proto with variables
+bd mol pour proto-feature --var name=auth --var team=backend --json
+# Output: {"id": "bd-mol-a1b2", "children": [...]}
+
+# Preview without creating
+bd mol pour proto-feature --var name=auth --dry-run
+
+# Assign root issue
+bd mol pour proto-feature --var name=auth --assignee alice --json
+```
+
+### Bond Work Graphs
+
+Connect molecules for compound workflow execution.
+
+```bash
+# Sequential bonding (B runs after A)
+bd mol bond mol-a mol-b --json
+
+# Parallel bonding (organizational link)
+bd mol bond mol-a mol-b --type parallel --json
+
+# Conditional bonding (B runs only if A fails)
+bd mol bond mol-a mol-b --type conditional --json
+
+# Dynamic bonding with custom child IDs
+bd mol bond proto-arm mol-patrol --ref arm-ace --var name=ace --json
+
+# Preview bonding
+bd mol bond mol-a mol-b --dry-run
+```
+
+### Wisp Commands (Ephemeral Work)
+
+Create temporary work items that don't sync to git.
+
+```bash
+# Create ephemeral wisp
+bd mol wisp proto-patrol --var target=service-a --json
+
+# List all wisps
+bd mol wisp list --json
+bd mol wisp list --all --json  # Include closed
+
+# Garbage collect orphaned wisps
+bd mol wisp gc --json
+bd mol wisp gc --age 24h --json
+bd mol wisp gc --dry-run
+```
+
+### Squash and Burn
+
+Compress or discard ephemeral work.
+
+```bash
+# Compress wisp to permanent digest
+bd mol squash wisp-42 --json
+bd mol squash wisp-42 --summary "Work completed successfully" --json
+
+# Discard wisp without record
+bd mol burn wisp-42 --json
+bd mol burn wisp-42 --force --json  # Skip confirmation
+```
+
+## Admin Operations
+
+### Cleanup and Compaction
+
+Manage database size and old issues.
+
+```bash
+# Delete all closed issues
+bd admin cleanup --force --json
+
+# Delete closed issues older than N days
+bd admin cleanup --older-than 30 --force --json
+
+# Preview cleanup
+bd admin cleanup --dry-run --json
+
+# Analyze compaction candidates
+bd admin compact --analyze --json
+
+# Apply agent-generated summary
+bd admin compact --apply --id bd-42 --summary summary.txt
+
+# View compaction statistics
+bd admin compact --stats --json
+
+# Restore compacted issue from git
+bd restore bd-42
+```
+
+### Validation and Repair
+
+Check database health and fix issues.
+
+```bash
+# Run all validation checks
+bd validate --checks orphans,duplicates,pollution,conflicts --json
+
+# Find duplicate issues
+bd duplicates --json
+bd duplicates --auto-merge --json
+
+# Repair orphaned dependencies
+bd admin repair --fix --json
+
+# Detect test pollution
+bd admin pollution --json
+bd admin pollution --clean --json  # Delete test issues
+```
+
+### Migration
+
+Upgrade database schema after version updates.
+
+```bash
+# Preview migration
+bd migrate --dry-run
+
+# Inspect migration plan (for AI agents)
+bd migrate --inspect --json
+
+# Apply migration
+bd migrate
+
+# Migrate and cleanup old files
+bd migrate --cleanup --yes
+```
+
+## MCP Server API
+
+### Set Workspace Context
+
+Configure the workspace for MCP server operations.
+
+```python
+# Using beads-mcp Python client
+from beads_mcp import BeadsClient
+
+client = BeadsClient()
+
+# Set workspace context (required before write operations)
+result = await client.context(action="set", workspace_root="/path/to/project")
+# Output: "Context set successfully:\n  Workspace root: /path/to/project\n  Database: /path/to/project/.beads/beads.db"
+
+# Show current context
+result = await client.context(action="show")
+# Output: "Workspace root: /path/to/project\nDatabase: /path/to/project/.beads/beads.db"
+
+# Initialize beads in workspace
+result = await client.context(action="init", prefix="myproject")
+```
+
+### MCP Tool Discovery
+
+Efficiently discover available tools without loading full schemas.
+
+```python
+# Discover available tools (lightweight)
+tools = await client.discover_tools()
+# Output: {
+#   "tools": {
+#     "ready": "Find tasks ready to work on (no blockers)",
+#     "list": "List issues with filters (status, priority, type)",
+#     "show": "Show full details for a specific issue",
+#     "create": "Create a new issue (bug, feature, task, epic)",
+#     ...
+#   },
+#   "count": 14,
+#   "hint": "Use get_tool_info('tool_name') for full parameters"
+# }
+
+# Get detailed info for specific tool
+info = await client.get_tool_info("create")
+# Output: {
+#   "name": "create",
+#   "description": "Create a new issue",
+#   "parameters": {...},
+#   "returns": "OperationResult {id, action} or full Issue if brief=False",
+#   "example": "create(title='Fix auth bug', priority=1, issue_type='bug')"
+# }
+```
+
+### MCP Issue Operations
+
+Create, update, and query issues through the MCP server.
+
+```python
+# Create issue (returns minimal result by default)
+result = await client.create(
+    title="Fix authentication bug",
+    priority=1,
+    issue_type="bug",
+    labels=["security", "urgent"]
+)
+# Output: {"id": "bd-a1b2", "action": "created"}
+
+# Create with full response
+issue = await client.create(
+    title="Add feature",
+    priority=2,
+    brief=False
+)
+# Output: Full Issue object
+
+# Find ready work with filters
+issues = await client.ready(
+    limit=10,
+    priority=1,
+    unassigned=True
+)
+# Output: [IssueMinimal(id="bd-42", title="...", status="open", priority=1), ...]
+
+# List with filters and brief mode
+issues = await client.list(
+    status="open",
+    labels=["bug"],
+    query="auth",
+    brief=True
+)
+# Output: [BriefIssue(id="bd-42", title="...", status="open", priority=1), ...]
+
+# Show full issue details
+issue = await client.show(issue_id="bd-42")
+# Output: Full Issue with dependencies
+
+# Update issue
+result = await client.update(
+    issue_id="bd-42",
+    status="in_progress"
+)
+# Output: {"id": "bd-42", "action": "updated"}
+
+# Close issue
+result = await client.close(
+    issue_id="bd-42",
+    reason="Implemented and tested"
+)
+# Output: [{"id": "bd-42", "action": "closed", "message": "Implemented and tested"}]
+
+# Add dependency
+result = await client.dep(
+    issue_id="bd-43",
+    depends_on_id="bd-42",
+    dep_type="blocks"
+)
+# Output: "Added dependency: bd-43 depends on bd-42"
+```
+
+## Key-Value Store
+
+### Persistent Configuration
+
+Store user-defined key-value pairs that persist across sessions.
+
+```bash
+# Set values
+bd kv set feature_flag true
+bd kv set api_endpoint https://api.example.com
+bd kv set last_migration 20240115_add_users.sql
+
+# Get values
+bd kv get feature_flag
+# Output: true
+
+bd kv get missing_key
+# Output: missing_key (not set)
+# Exit code: 1
+
+# Delete key
+bd kv clear feature_flag
+
+# List all key-value pairs
+bd kv list --json
+# Output: {"feature_flag": "true", "api_endpoint": "https://api.example.com"}
+```
+
+## Editor Integration
+
+### Setup Commands
+
+Configure beads integration with various AI coding tools.
+
+```bash
+# Claude Code integration
+bd setup claude              # Install globally
+bd setup claude --project    # Project-only
+bd setup claude --stealth    # Stealth mode
+bd setup claude --check      # Verify installation
+bd setup claude --remove     # Uninstall
+
+# Cursor IDE
+bd setup cursor
+bd setup cursor --check
+bd setup cursor --remove
+
+# Aider
+bd setup aider
+bd setup aider --check
+
+# Factory.ai / Codex (AGENTS.md standard)
+bd setup factory
+bd setup codex
+```
+
+## Summary
+
+Beads excels at managing complex, multi-step development workflows where AI agents need persistent memory across sessions. The primary use cases include: tracking feature development with hierarchical epics and child tasks, coordinating multi-agent workflows where hash-based IDs prevent merge conflicts, and implementing dependency-aware execution where agents automatically discover ready work. The molecular chemistry system (protos, mols, wisps) enables reusable workflow templates for common patterns like feature development pipelines or patrol cycles.
+
+Integration patterns center around the CLI for direct usage and the MCP server for AI agent integration. Agents should use `bd ready` to find unblocked work, claim issues with status updates, discover new work during implementation (using `discovered-from` dependencies), and always run `bd sync` at session end to ensure changes are persisted. The daemon handles background synchronization, but agents in sandboxed environments should use `--sandbox` mode for direct database access. For team workflows, the protected branch mode (`bd init --branch beads-sync`) keeps issue metadata on a dedicated branch, preventing pollution of the main codebase while maintaining full git history.

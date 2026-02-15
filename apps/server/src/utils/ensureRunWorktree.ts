@@ -6,6 +6,7 @@ import { RepositoryManager } from "../repositoryManager";
 import { getConvex } from "../utils/convexClient";
 import { retryOnOptimisticConcurrency } from "../utils/convexRetry";
 import { serverLogger } from "../utils/fileLogger";
+import { getGitHubOAuthToken } from "../utils/getGitHubToken";
 import { getWorktreePath, setupProjectWorkspace } from "../workspace";
 
 export type EnsureWorktreeResult = {
@@ -75,6 +76,21 @@ export async function ensureRunWorktreeAndBranch(
         throw new Error("Missing projectFullName to set up worktree");
       }
       const repoUrl = `https://github.com/${task.projectFullName}.git`;
+
+      // Fetch GitHub OAuth token for private repo access
+      let authenticatedRepoUrl: string | undefined;
+      try {
+        const token = await getGitHubOAuthToken();
+        if (token) {
+          authenticatedRepoUrl = `https://x-access-token:${token}@github.com/${task.projectFullName}.git`;
+        }
+      } catch (error) {
+        // Non-fatal: if token fetch fails, fall back to unauthenticated access (works for public repos)
+        serverLogger.warn(
+          `[ensureRunWorktree] Failed to get GitHub OAuth token for ${task.projectFullName}: ${String(error)}`
+        );
+      }
+
       const worktreeInfo = await getWorktreePath(
         {
           repoUrl,
@@ -87,6 +103,7 @@ export async function ensureRunWorktreeAndBranch(
         repoUrl,
         branch: baseBranch || undefined,
         worktreeInfo,
+        authenticatedRepoUrl,
       });
       if (!res.success || !res.worktreePath) {
         throw new Error(res.error || "Failed to set up worktree");

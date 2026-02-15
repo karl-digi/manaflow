@@ -2,8 +2,21 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { PreviewConfigureClient } from "@/components/preview/preview-configure-client";
 import { getConvex } from "@/lib/utils/get-convex";
+import { getActiveSandboxProvider } from "@/lib/utils/sandbox-provider";
 import { stackServerApp } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
+import {
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+  PVE_LXC_SNAPSHOT_PRESETS,
+  SANDBOX_PROVIDER_CAPABILITIES,
+  SANDBOX_PROVIDER_DISPLAY_NAMES,
+  filterVisiblePresets,
+  type SandboxConfig,
+  type SandboxPreset,
+  type SandboxProviderType,
+} from "@cmux/shared";
 import {
   getTeamDisplayName,
   getTeamId,
@@ -46,6 +59,71 @@ function getSearchValue(
   }
   const value = search[key];
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
+function getPresetsForProvider(provider: SandboxProviderType): SandboxPreset[] {
+  switch (provider) {
+    case "pve-lxc":
+      return PVE_LXC_SNAPSHOT_PRESETS.map((preset) => ({
+        id: preset.id,
+        presetId: preset.presetId,
+        label: preset.label,
+        cpu: preset.cpu,
+        memory: preset.memory,
+        disk: preset.disk,
+        description: preset.description,
+      }));
+    case "pve-vm":
+      return [];
+    case "morph":
+    default:
+      return MORPH_SNAPSHOT_PRESETS.map((preset) => ({
+        id: preset.id,
+        presetId: preset.presetId,
+        label: preset.label,
+        cpu: preset.cpu,
+        memory: preset.memory,
+        disk: preset.disk,
+        description: preset.description,
+      }));
+  }
+}
+
+function getDefaultPresetId(provider: SandboxProviderType): string {
+  switch (provider) {
+    case "pve-lxc": {
+      const first = PVE_LXC_SNAPSHOT_PRESETS[0];
+      return first?.id ?? "";
+    }
+    case "pve-vm":
+      return "";
+    case "morph":
+    default:
+      return DEFAULT_MORPH_SNAPSHOT_ID;
+  }
+}
+
+function getPreviewDefaultSnapshotId(config: SandboxConfig): string {
+  if (config.provider === "morph") {
+    const hasPreviewDefault = config.presets.some(
+      (preset) => preset.id === DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID
+    );
+    if (hasPreviewDefault) {
+      return DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID;
+    }
+  }
+
+  if (config.provider === "pve-lxc") {
+    // Prefer the "performance" preset if it exists.
+    const boosted = config.presets.find(
+      (preset) => preset.presetId === "6vcpu_8gb_40gb"
+    );
+    if (boosted) {
+      return boosted.id;
+    }
+  }
+
+  return config.defaultPresetId || config.presets[0]?.id || "";
 }
 
 export default async function PreviewConfigurePage({ searchParams }: PageProps) {
@@ -211,6 +289,24 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     }
   }
 
+  const activeProvider = (() => {
+    try {
+      return getActiveSandboxProvider().provider as SandboxProviderType;
+    } catch {
+      return "morph" satisfies SandboxProviderType;
+    }
+  })();
+
+  const sandboxPresets = filterVisiblePresets(getPresetsForProvider(activeProvider));
+  const sandboxConfig: SandboxConfig = {
+    provider: activeProvider,
+    providerDisplayName: SANDBOX_PROVIDER_DISPLAY_NAMES[activeProvider],
+    presets: sandboxPresets,
+    defaultPresetId: getDefaultPresetId(activeProvider),
+    capabilities: SANDBOX_PROVIDER_CAPABILITIES[activeProvider],
+  };
+  const initialSnapshotId = getPreviewDefaultSnapshotId(sandboxConfig);
+
   return (
     <PreviewConfigureClient
       initialTeamSlugOrId={selectedTeamSlugOrId}
@@ -221,6 +317,8 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
       initialMaintenanceScript={initialMaintenanceScript}
       initialDevScript={initialDevScript}
       startAtConfigureEnvironment={Boolean(environmentId)}
+      sandboxConfig={sandboxConfig}
+      initialSnapshotId={initialSnapshotId}
     />
   );
 }

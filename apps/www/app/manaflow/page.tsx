@@ -58,7 +58,7 @@ export default function ManaflowPage() {
                 cloudrouter.dev
               </a>
               <a
-                href="https://github.com/manaflow-ai/cloudrouter"
+                href="https://github.com/karlorz/cloudrouter"
                 target="_blank"
                 className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
               >

@@ -3,6 +3,7 @@
 set -e  # Exit on error
 
 BASE_NAME="cmux-worker"
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 
 echo "Finding latest version from Docker images..."
 
@@ -37,7 +38,7 @@ IMAGE_NAME="$BASE_NAME:$NEW_VERSION"
 echo "Building image: $IMAGE_NAME"
 
 # Build the image with specified platform
-docker build -t "$IMAGE_NAME" --platform=linux/amd64 .
+docker build -t "$IMAGE_NAME" --platform=linux/amd64 --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" .
 
 echo "Pushing to Daytona..."
 

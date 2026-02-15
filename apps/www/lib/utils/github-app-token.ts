@@ -15,6 +15,7 @@ interface GenerateInstallationTokenOptions {
     metadata?: "read";
     pull_requests?: "read" | "write";
     statuses?: "read" | "write";
+    workflows?: "write";
   };
 }
 

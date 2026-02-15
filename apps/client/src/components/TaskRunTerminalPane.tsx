@@ -12,19 +12,26 @@ import {
 
 export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
+  /** Direct xterm URL for providers like PVE LXC that don't use Morph URL derivation */
+  xtermUrl?: string | null;
 }
 
 const INITIAL_AUTO_CREATE_DELAY_MS = 4_000;
 const MAX_AUTO_CREATE_ATTEMPTS = 3;
 const AUTO_RETRY_BASE_DELAY_MS = 4_000;
 
-export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) {
+export function TaskRunTerminalPane({ workspaceUrl, xtermUrl }: TaskRunTerminalPaneProps) {
   const baseUrl = useMemo(() => {
+    // Prefer direct xtermUrl if provided (works for PVE LXC and future providers)
+    if (xtermUrl) {
+      return xtermUrl;
+    }
+    // Fall back to deriving from Morph workspace URL
     if (!workspaceUrl) {
       return null;
     }
     return toMorphXtermBaseUrl(workspaceUrl);
-  }, [workspaceUrl]);
+  }, [workspaceUrl, xtermUrl]);
 
   const queryClient = useQueryClient();
 

@@ -50,8 +50,14 @@ interface RunScreenshotSet {
   videos?: ScreenshotVideo[];
 }
 
+interface ScreenshotConfig {
+  screenshotWorkflowEnabled: boolean;
+  taskRunCompleted: boolean;
+}
+
 interface RunScreenshotGalleryProps {
   screenshotSets: RunScreenshotSet[];
+  screenshotConfig?: ScreenshotConfig;
   highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
 }
 
@@ -105,7 +111,7 @@ function detectEmptyReason(set: RunScreenshotSet): {
   if (set.status === "skipped") {
     return {
       reason: "skipped",
-      message: "Screenshot capture was skipped for this run.",
+      message: set.error ?? "Screenshot capture was skipped for this run.",
     };
   }
 
@@ -137,7 +143,7 @@ const getMediaKey = (
 ) => `${setId}:${kind}:${media.storageId}:${indexInSet}`;
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
-  const { screenshotSets } = props;
+  const { screenshotSets, screenshotConfig } = props;
   // Only show the latest screenshot set
   const latestScreenshotSet = useMemo(() => {
     if (screenshotSets.length === 0) return null;
@@ -508,15 +514,26 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     }
   }, [flattenedMedia]);
 
-  if (!latestScreenshotSet) {
-    return null;
-  }
-
-  const imageCount = latestScreenshotSet.images.length;
-  const videoCount = latestScreenshotSet.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0;
+  const imageCount = latestScreenshotSet?.images.length ?? 0;
+  const videoCount = latestScreenshotSet?.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0;
   const totalMediaCount = imageCount + videoCount;
 
-  const emptyReason = totalMediaCount === 0 ? detectEmptyReason(latestScreenshotSet) : null;
+  const emptyReason = latestScreenshotSet && totalMediaCount === 0 ? detectEmptyReason(latestScreenshotSet) : null;
+
+  // Show "workflow disabled" message when:
+  // - No screenshot sets exist
+  // - Task run is completed
+  // - Screenshot workflow is disabled
+  const showWorkflowDisabledMessage =
+    !latestScreenshotSet &&
+    screenshotConfig?.taskRunCompleted &&
+    screenshotConfig?.screenshotWorkflowEnabled === false;
+
+  // Don't render at all if there's no screenshot set and no media
+  // (unless we need to show the "workflow disabled" message)
+  if (!latestScreenshotSet && totalMediaCount === 0 && !showWorkflowDisabledMessage) {
+    return null;
+  }
 
   return (
     <section>
@@ -808,6 +825,10 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
               );
             })}
           </div>
+        ) : showWorkflowDisabledMessage ? (
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
+            Screenshot workflow is disabled.
+          </p>
         ) : emptyReason ? (
           <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
             {emptyReason.message}

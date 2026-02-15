@@ -18,10 +18,12 @@
     "!**/node_modules/**/*.d.ts",
     "!**/node_modules/.bin",
     "!**/*.map",
-    "!**/node_modules/electron",
-    "!**/node_modules/electron-builder",
-    "!**/node_modules/electron-vite",
+    "!**/node_modules/electron/**",
+    "!**/node_modules/electron-builder/**",
+    "!**/node_modules/electron-vite/**",
     "!**/node_modules/@electron/**",
+    "!**/node_modules/.bun/**",
+    "!**/.bun/**",
     "!**/swiftshader/**",
     "!**/libvk_swiftshader.dylib",
     "!**/vk_swiftshader_icd.json"
@@ -72,7 +74,7 @@
       "dmg",
       "zip"
     ],
-    "x64ArchFiles": "Contents/Resources/native/**/*.node",
+    "x64ArchFiles": "Contents/Resources/{native,app.asar.unpacked}/**/*.{node,dylib}",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }

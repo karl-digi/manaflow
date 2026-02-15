@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -52,6 +52,8 @@ Examples:
 				} else {
 					typeLabel = "GPU"
 				}
+			} else if inst.Provider == "pve-lxc" {
+				typeLabel = "PVE LXC"
 			}
 			fmt.Printf("  %s - %s (%s) [%s]\n", inst.ID, inst.Status, name, typeLabel)
 		}
@@ -94,6 +96,8 @@ Examples:
 				} else {
 					typeLabel = "GPU"
 				}
+			} else if t.Provider == "pve-lxc" {
+				typeLabel = "PVE LXC"
 			}
 			fmt.Printf("  %s - %s [%s]\n", t.ID, t.Name, typeLabel)
 		}
@@ -102,6 +106,6 @@ Examples:
 }
 
 func init() {
-	listCmd.Flags().StringVarP(&listFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
-	templatesCmd.Flags().StringVarP(&templatesFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
+	listCmd.Flags().StringVarP(&listFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal, pve-lxc")
+	templatesCmd.Flags().StringVarP(&templatesFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal, pve-lxc")
 }

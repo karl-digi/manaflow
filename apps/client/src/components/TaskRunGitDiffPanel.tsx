@@ -11,20 +11,43 @@ import { api } from "@cmux/convex/api";
 
 export interface TaskRunGitDiffPanelProps {
   task: Doc<"tasks"> | null | undefined;
+  taskRuns?: TaskRunWithChildren[] | null | undefined;
   selectedRun: TaskRunWithChildren | null | undefined;
   teamSlugOrId: string;
   taskId: Id<"tasks">;
   selectedRunId: Id<"taskRuns"> | null | undefined;
 }
 
-export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, selectedRunId }: TaskRunGitDiffPanelProps) {
+export function TaskRunGitDiffPanel({ task, taskRuns, selectedRun, teamSlugOrId, taskId, selectedRunId }: TaskRunGitDiffPanelProps) {
+  // Check for cloud/local workspace (no GitHub repo to diff against)
+  const isCloudOrLocalWorkspace = task?.isCloudWorkspace || task?.isLocalWorkspace;
+
+  // Find parent run if this is a child run (for comparing against parent's branch)
+  const parentRun = useMemo(() => {
+    if (!selectedRun?.parentRunId || !taskRuns) return null;
+    return taskRuns.find((run) => run._id === selectedRun.parentRunId) ?? null;
+  }, [selectedRun?.parentRunId, taskRuns]);
+
+  // Determine base ref for diff comparison with priority:
+  // 1. Parent run's branch (for child runs)
+  // 2. Starting commit SHA (for new tasks in custom environments)
+  // 3. Task's base branch (explicit user choice)
   const normalizedBaseBranch = useMemo(() => {
+    // Priority 1: Parent run's branch (for child runs)
+    if (parentRun?.newBranch) {
+      return normalizeGitRef(parentRun.newBranch);
+    }
+    // Priority 2: Starting commit SHA (for new tasks in custom environments)
+    if (selectedRun?.startingCommitSha) {
+      return selectedRun.startingCommitSha; // Direct SHA, no normalization needed
+    }
+    // Priority 3: Task's base branch
     const candidate = task?.baseBranch;
     if (candidate && candidate.trim()) {
       return normalizeGitRef(candidate);
     }
-    return normalizeGitRef("main");
-  }, [task?.baseBranch]);
+    return undefined;
+  }, [parentRun?.newBranch, selectedRun?.startingCommitSha, task?.baseBranch]);
 
   const normalizedHeadBranch = useMemo(
     () => normalizeGitRef(selectedRun?.newBranch),
@@ -41,14 +64,27 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
 
   const repoFullNames = useMemo(() => {
     const names = new Set<string>();
-    if (task?.projectFullName?.trim()) {
-      names.add(task.projectFullName.trim());
+    const projectName = task?.projectFullName?.trim();
+    // Skip environment-based project names (format: env:<environmentId>)
+    if (projectName && !projectName.startsWith("env:")) {
+      names.add(projectName);
     }
     for (const repo of environmentRepos) {
-      names.add(repo);
+      const trimmed = repo?.trim();
+      // Skip environment references in selectedRepos as well
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
+    }
+    // Add discovered repos from sandbox (for custom environments)
+    for (const repo of selectedRun?.discoveredRepos ?? []) {
+      const trimmed = repo?.trim();
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
     }
     return Array.from(names);
-  }, [task?.projectFullName, environmentRepos]);
+  }, [task?.projectFullName, environmentRepos, selectedRun?.discoveredRepos]);
 
   const diffQueries = useQueries({
     queries: repoFullNames.map((repoFullName) => ({
@@ -57,8 +93,11 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
         baseRef: normalizedBaseBranch || undefined,
         headRef: normalizedHeadBranch ?? "",
       }),
+      // Skip queries for cloud/local workspaces since they don't have GitHub repos
       enabled:
-        Boolean(repoFullName?.trim()) && Boolean(normalizedHeadBranch?.trim()),
+        !isCloudOrLocalWorkspace &&
+        Boolean(repoFullName?.trim()) &&
+        Boolean(normalizedHeadBranch?.trim()),
     })),
   });
 
@@ -69,16 +108,26 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
   const isLoading = diffQueries.some((query) => query.isLoading);
   const hasError = diffQueries.some((query) => query.isError);
 
-  // Fetch screenshot sets for the selected run
+  // Fetch screenshot sets for the selected run (skip for cloud/local workspaces)
   const runDiffContext = useQuery(
     api.taskRuns.getRunDiffContext,
-    selectedRunId && teamSlugOrId && taskId
+    !isCloudOrLocalWorkspace && selectedRunId && teamSlugOrId && taskId
       ? { teamSlugOrId, taskId, runId: selectedRunId }
       : "skip"
   );
 
   const screenshotSets = runDiffContext?.screenshotSets ?? [];
+  const screenshotConfig = runDiffContext?.screenshotConfig;
   const screenshotSetsLoading = runDiffContext === undefined && screenshotSets.length === 0;
+
+  // Skip git diff for cloud/local workspaces (no GitHub repo to diff against)
+  if (isCloudOrLocalWorkspace) {
+    return (
+      <div className="flex h-full items-center justify-center px-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
+        Git diff not available for cloud workspaces
+      </div>
+    );
+  }
 
   if (!selectedRun || !normalizedHeadBranch) {
     return (
@@ -121,7 +170,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
       ) : (
         <RunScreenshotGallery
           screenshotSets={screenshotSets}
-          highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+          screenshotConfig={screenshotConfig}
         />
       )}
       <MonacoGitDiffViewer diffs={allDiffs} />

@@ -24,7 +24,7 @@ import {
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
-  toMorphVncUrl,
+  toGenericVncUrl,
   toMorphXtermBaseUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
@@ -151,7 +151,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         }
       }
       if (selectedRun && rawBrowserUrl) {
-        const vncUrl = toMorphVncUrl(rawBrowserUrl);
+        const vncUrl = toGenericVncUrl(rawBrowserUrl);
         if (vncUrl) {
           void preloadTaskRunBrowserIframe(selectedRun._id, vncUrl).catch(
             (error) => {
@@ -658,13 +658,14 @@ function TaskDetailPage() {
     if (!rawBrowserUrl) {
       return null;
     }
-    return toMorphVncUrl(rawBrowserUrl);
+    return toGenericVncUrl(rawBrowserUrl);
   }, [rawBrowserUrl]);
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
   const hasBrowserView = Boolean(browserUrl);
   const isMorphProvider = selectedRun?.vscode?.provider === "morph";
+  const isBrowserSupported = selectedRun?.vscode?.provider === "morph" || selectedRun?.vscode?.provider === "pve-lxc";
 
   const handleBrowserStatusChange = useCallback(
     (status: PersistentIframeStatus) => {
@@ -889,6 +890,7 @@ function TaskDetailPage() {
       setBrowserStatus: handleBrowserStatusChange,
       browserPlaceholder,
       isMorphProvider,
+      isBrowserSupported,
       isBrowserBusy,
       TaskRunChatPane,
       PersistentWebView,
@@ -923,6 +925,7 @@ function TaskDetailPage() {
       handleBrowserStatusChange,
       browserPlaceholder,
       isMorphProvider,
+      isBrowserSupported,
       isBrowserBusy,
       handlePanelClose,
       teamSlugOrId,

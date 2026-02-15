@@ -43,7 +43,11 @@ import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
-const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
+const {
+  getApiEnvironmentsById,
+  getApiEnvironmentsByIdVars,
+  getApiWorkspaceConfigs,
+} = await getWwwOpenApiModule();
 
 export interface AgentSpawnResult {
   agentName: string;
@@ -54,6 +58,12 @@ export interface AgentSpawnResult {
   success: boolean;
   error?: string;
 }
+
+type WorkspaceConfigLayer = {
+  projectFullName: string;
+  maintenanceScript: string | undefined;
+  envVarsContent: string | undefined;
+};
 
 export async function spawnAgent(
   agent: AgentConfig,
@@ -88,8 +98,7 @@ export async function spawnAgent(
       options.newBranch ||
       (await generateNewBranchName(options.taskDescription, teamSlugOrId));
     serverLogger.info(
-      `[AgentSpawner] New Branch: ${newBranch}, Base Branch: ${
-        options.branch ?? "(auto)"
+      `[AgentSpawner] New Branch: ${newBranch}, Base Branch: ${options.branch ?? "(auto)"
       }`
     );
 
@@ -202,6 +211,7 @@ export async function spawnAgent(
 
         // Replace image reference in prompt with file path
         // First try to replace the original filename (exact match, no word boundaries)
+        let replaced = false;
         if (image.fileName) {
           const beforeReplace = processedTaskDescription;
           // Escape special regex characters in the filename
@@ -217,6 +227,7 @@ export async function spawnAgent(
             serverLogger.info(
               `[AgentSpawner] Replaced "${image.fileName}" with "${imagePath}"`
             );
+            replaced = true;
           } else {
             serverLogger.warn(
               `[AgentSpawner] Failed to find "${image.fileName}" in prompt text`
@@ -224,25 +235,29 @@ export async function spawnAgent(
           }
         }
 
-        // Also replace just the filename without extension in case it appears that way
-        const nameWithoutExt = image.fileName?.replace(/\.[^/.]+$/, "");
-        if (
-          nameWithoutExt &&
-          processedTaskDescription.includes(nameWithoutExt)
-        ) {
-          const beforeReplace = processedTaskDescription;
-          const escapedName = nameWithoutExt.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedName, "g"),
-            imagePath
-          );
-          if (beforeReplace !== processedTaskDescription) {
-            serverLogger.info(
-              `[AgentSpawner] Replaced "${nameWithoutExt}" with "${imagePath}"`
+        // Only try to replace filename without extension if the full filename replacement didn't work
+        // This prevents double-replacement issues (e.g., "hot.jpg" -> "/root/prompt/hot.jpg",
+        // then "hot" matching within the path and causing "/root/prompt//root/prompt/hot.jpg.jpg")
+        if (!replaced) {
+          const nameWithoutExt = image.fileName?.replace(/\.[^/.]+$/, "");
+          if (
+            nameWithoutExt &&
+            processedTaskDescription.includes(nameWithoutExt)
+          ) {
+            const beforeReplace = processedTaskDescription;
+            const escapedName = nameWithoutExt.replace(
+              /[.*+?^${}()|[\]\\]/g,
+              "\\$&"
             );
+            processedTaskDescription = processedTaskDescription.replace(
+              new RegExp(escapedName, "g"),
+              imagePath
+            );
+            if (beforeReplace !== processedTaskDescription) {
+              serverLogger.info(
+                `[AgentSpawner] Replaced "${nameWithoutExt}" with "${imagePath}"`
+              );
+            }
           }
         }
       });
@@ -255,13 +270,112 @@ export async function spawnAgent(
     // Callback URL for stop hooks to call crown/complete (Convex site URL)
     const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL.replace('.convex.cloud', '.convex.site');
 
-    let envVars: Record<string, string> = {
+    // Start loading workspace config early so it runs in parallel with other setup work.
+    const workspaceConfigPromise = (async (): Promise<WorkspaceConfigLayer[]> => {
+      const projectFullNames: string[] = [];
+
+      if (options.isCloudMode && options.environmentId) {
+        try {
+          const environmentResponse = await getApiEnvironmentsById({
+            client: getWwwClient(),
+            path: { id: String(options.environmentId) },
+            query: { teamSlugOrId },
+          });
+          const selectedRepos = environmentResponse.data?.selectedRepos ?? [];
+          for (const selectedRepo of selectedRepos) {
+            const parsedRepo = parseGithubRepoUrl(selectedRepo);
+            if (!parsedRepo) {
+              serverLogger.warn(
+                `[AgentSpawner] Skipping invalid environment repo "${selectedRepo}" for workspace config loading`
+              );
+              continue;
+            }
+            projectFullNames.push(parsedRepo.fullName);
+          }
+        } catch (error) {
+          serverLogger.warn(
+            `[AgentSpawner] Failed to load environment repos for workspace config layering`,
+            error
+          );
+          return [];
+        }
+      } else if (options.repoUrl) {
+        const parsedRepo = parseGithubRepoUrl(options.repoUrl);
+        if (parsedRepo) {
+          projectFullNames.push(parsedRepo.fullName);
+        }
+      }
+
+      const uniqueProjectFullNames = Array.from(new Set(projectFullNames));
+      if (uniqueProjectFullNames.length === 0) {
+        return [];
+      }
+
+      const workspaceConfigs = await Promise.all(
+        uniqueProjectFullNames.map(async (projectFullName) => {
+          try {
+            const response = await getApiWorkspaceConfigs({
+              client: getWwwClient(),
+              query: { teamSlugOrId, projectFullName },
+            });
+            const config = response.data;
+            if (!config) {
+              return null;
+            }
+            return {
+              projectFullName,
+              maintenanceScript: config.maintenanceScript,
+              envVarsContent: config.envVarsContent,
+            };
+          } catch (error) {
+            serverLogger.warn(
+              `[AgentSpawner] Failed to fetch workspace config for ${projectFullName}`,
+              error
+            );
+            return null;
+          }
+        })
+      );
+
+      return workspaceConfigs.flatMap((config) => (config ? [config] : []));
+    })();
+
+    const systemEnvVars: Record<string, string> = {
       CMUX_PROMPT: processedTaskDescription,
       CMUX_TASK_RUN_ID: taskRunId,
       CMUX_TASK_RUN_JWT: taskRunJwt,
       CMUX_CALLBACK_URL: callbackUrl,
       PROMPT: processedTaskDescription,
     };
+    let envVars: Record<string, string> = { ...systemEnvVars };
+
+    const workspaceConfigs = await workspaceConfigPromise;
+    const workspaceEnvVarsLayer = workspaceConfigs.reduce<Record<string, string>>(
+      (acc, config) => {
+        const envContent = config.envVarsContent;
+        if (!envContent || envContent.trim().length === 0) {
+          return acc;
+        }
+        const parsed = parseDotenv(envContent);
+        if (Object.keys(parsed).length === 0) {
+          return acc;
+        }
+        return {
+          ...acc,
+          ...parsed,
+        };
+      },
+      {}
+    );
+    if (Object.keys(workspaceEnvVarsLayer).length > 0) {
+      envVars = {
+        ...workspaceEnvVarsLayer,
+        ...envVars,
+      };
+      serverLogger.info(
+        `[AgentSpawner] Injected ${Object.keys(workspaceEnvVarsLayer).length} env vars from ${workspaceConfigs.length} workspace config(s)`
+      );
+    }
 
     if (options.environmentId) {
       try {
@@ -274,15 +388,10 @@ export async function spawnAgent(
         if (envContent && envContent.trim().length > 0) {
           const parsed = parseDotenv(envContent);
           if (Object.keys(parsed).length > 0) {
-            const preserved = {
-              CMUX_PROMPT: envVars.CMUX_PROMPT,
-              CMUX_TASK_RUN_ID: envVars.CMUX_TASK_RUN_ID,
-              PROMPT: envVars.PROMPT,
-            };
             envVars = {
               ...envVars,
               ...parsed,
-              ...preserved,
+              ...systemEnvVars,
             };
             serverLogger.info(
               `[AgentSpawner] Injected ${Object.keys(parsed).length} env vars from environment ${String(
@@ -311,6 +420,9 @@ export async function spawnAgent(
     const userApiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
       teamSlugOrId,
     });
+    const workspaceSettings = await getConvex().query(api.workspaceSettings.get, {
+      teamSlugOrId,
+    });
 
     const apiKeys: Record<string, string> = {
       ...userApiKeys,
@@ -324,6 +436,9 @@ export async function spawnAgent(
         taskRunJwt,
         apiKeys,
         callbackUrl,
+        workspaceSettings: {
+          bypassAnthropicProxy: workspaceSettings?.bypassAnthropicProxy ?? false,
+        },
       });
       envVars = {
         ...envVars,
@@ -527,8 +642,8 @@ export async function spawnAgent(
       `VSCode instance spawned for agent ${agent.name}: ${vscodeUrl}`
     );
 
-    if (options.isCloudMode && vscodeInstance instanceof CmuxVSCodeInstance) {
-      console.log("[AgentSpawner] [isCloudMode] Setting up devcontainer");
+    if (vscodeInstance instanceof CmuxVSCodeInstance) {
+      console.log("[AgentSpawner] Setting up devcontainer");
       void vscodeInstance
         .setupDevcontainer()
         .catch((err) =>
@@ -607,12 +722,12 @@ export async function spawnAgent(
     // Get ports if it's a Docker instance
     let ports:
       | {
-          vscode: string;
-          worker: string;
-          extension?: string;
-          proxy?: string;
-          vnc?: string;
-        }
+        vscode: string;
+        worker: string;
+        extension?: string;
+        proxy?: string;
+        vnc?: string;
+      }
       | undefined;
     if (vscodeInstance instanceof DockerVSCodeInstance) {
       const dockerPorts = vscodeInstance.getPorts();
@@ -668,23 +783,6 @@ export async function spawnAgent(
       `[AgentSpawner] Preparing to send terminal creation command for ${agent.name}`
     );
 
-    // Start fetching workspace config early (for maintenance script) - runs in parallel with worker connection
-    const workspaceConfigPromise = (async () => {
-      if (options.isCloudMode || !options.repoUrl) return null;
-      const parsedRepo = parseGithubRepoUrl(options.repoUrl);
-      if (!parsedRepo) return null;
-      try {
-        const config = await getConvex().query(api.workspaceConfigs.get, {
-          teamSlugOrId,
-          projectFullName: parsedRepo.fullName,
-        });
-        return { config, projectFullName: parsedRepo.fullName };
-      } catch (error) {
-        serverLogger.warn(`[AgentSpawner] Failed to fetch workspace config`, error);
-        return null;
-      }
-    })();
-
     // Wait for worker connection if not already connected
     if (!vscodeInstance.isWorkerConnected()) {
       serverLogger.info(`[AgentSpawner] Waiting for worker connection...`);
@@ -727,13 +825,15 @@ export async function spawnAgent(
     if (!options.isCloudMode && vscodeInstance instanceof DockerVSCodeInstance) {
       void (async () => {
         try {
-          // Use pre-fetched workspace config
-          const workspaceConfigResult = await workspaceConfigPromise;
-          if (!workspaceConfigResult?.config?.maintenanceScript?.trim()) {
+          const workspaceConfig = workspaceConfigs.find(
+            (config) => config.maintenanceScript?.trim().length
+          );
+          if (!workspaceConfig?.maintenanceScript?.trim()) {
             return;
           }
 
-          const { config: workspaceConfig, projectFullName } = workspaceConfigResult;
+          const projectFullName = workspaceConfig.projectFullName;
+          const maintenanceScript = workspaceConfig.maintenanceScript.trim();
           serverLogger.info(
             `[AgentSpawner] Running maintenance script for ${projectFullName} via cmux-pty`
           );
@@ -747,7 +847,7 @@ set -eu
 cd /root/workspace
 
 echo "=== Maintenance Script Started at \\$(date) ==="
-${workspaceConfig.maintenanceScript}
+${maintenanceScript}
 echo "=== Maintenance Script Completed at \\$(date) ==="
 `;
 
@@ -871,30 +971,30 @@ chmod +x ${maintenanceScriptPath}`;
     // The notify command contains complex JSON that gets mangled through shell layers
     const tmuxArgs = agent.name.toLowerCase().includes("codex")
       ? [
-          "new-session",
-          "-d",
-          "-s",
-          tmuxSessionName,
-          "-c",
-          "/root/workspace",
-          actualCommand,
-          ...actualArgs.map((arg) => {
-            // Replace $CMUX_PROMPT with actual prompt value
-            if (arg === "$CMUX_PROMPT") {
-              return processedTaskDescription;
-            }
-            return arg;
-          }),
-        ]
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSessionName,
+        "-c",
+        "/root/workspace",
+        actualCommand,
+        ...actualArgs.map((arg) => {
+          // Replace $CMUX_PROMPT with actual prompt value
+          if (arg === "$CMUX_PROMPT") {
+            return processedTaskDescription;
+          }
+          return arg;
+        }),
+      ]
       : [
-          "new-session",
-          "-d",
-          "-s",
-          tmuxSessionName,
-          "bash",
-          "-lc",
-          `${unsetCommand}exec ${commandString}`,
-        ];
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSessionName,
+        "bash",
+        "-lc",
+        `${unsetCommand}exec ${commandString}`,
+      ];
 
     // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
     // For Codex agents, replace $CMUX_PROMPT with actual prompt value (matching tmux behavior)
@@ -938,7 +1038,8 @@ chmod +x ${maintenanceScriptPath}`;
       taskRunContext: {
         taskRunToken: taskRunJwt,
         prompt: processedTaskDescription,
-        convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+        // Use CONVEX_SITE_URL for HTTP actions (crown endpoints), fall back to NEXT_PUBLIC_CONVEX_URL
+        convexUrl: env.CONVEX_SITE_URL || env.NEXT_PUBLIC_CONVEX_URL,
       },
       taskRunId,
       agentModel: agent.name,
@@ -1263,8 +1364,8 @@ export async function spawnAllAgents(
   // If selectedAgents is provided, map each entry to an AgentConfig to preserve duplicates
   const agentsToSpawn = options.selectedAgents
     ? options.selectedAgents
-        .map((name) => AGENT_CONFIGS.find((agent) => agent.name === name))
-        .filter((a): a is AgentConfig => Boolean(a))
+      .map((name) => AGENT_CONFIGS.find((agent) => agent.name === name))
+      .filter((a): a is AgentConfig => Boolean(a))
     : AGENT_CONFIGS;
 
   // Validate taskRunIds count matches agents count if provided

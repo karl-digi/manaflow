@@ -8,22 +8,82 @@ import {
   type IdeDeps,
 } from "./lib/ideDeps";
 
-const npmResponseSchema = z.object({
-  "dist-tags": z.object({
-    latest: z.string().min(1),
-  }),
+const channelSchema = z.enum(["stable", "latest", "beta"]);
+type Channel = z.infer<typeof channelSchema>;
+
+const npmTagResponseSchema = z.object({
+  version: z.string().min(1),
 });
 
-async function fetchLatestNpmVersion(packageName: string): Promise<string> {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
+function parseArgs(argv: string[]): { channel: Channel } {
+  let channelOverride: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--channel" && index + 1 < argv.length) {
+      channelOverride = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--channel=")) {
+      const [, value] = arg.split("=", 2);
+      channelOverride = value;
+    }
+  }
+
+  return {
+    channel: channelSchema.parse(channelOverride ?? "stable"),
+  };
+}
+
+async function fetchDistTag(
+  packageName: string,
+  channel: Channel,
+): Promise<string | null> {
+  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(channel)}`;
   const res = await fetch(url);
+  if (res.status === 404) {
+    return null;
+  }
   if (!res.ok) {
     throw new Error(
-      `Failed to fetch npm info for ${packageName}: ${res.status}`,
+      `Failed to fetch npm info for ${packageName}@${channel}: ${res.status}`,
     );
   }
-  const data = npmResponseSchema.parse(await res.json());
-  return data["dist-tags"].latest;
+  const raw = await res.json();
+  const parsed = npmTagResponseSchema.safeParse(raw);
+  if (parsed.success) {
+    return parsed.data.version;
+  }
+  if (typeof raw.version === "string" && raw.version.trim().length > 0) {
+    return raw.version;
+  }
+  return null;
+}
+
+async function getPackageVersion(
+  packageName: string,
+  channel: Channel,
+): Promise<string> {
+  const requestedVersion = await fetchDistTag(packageName, channel);
+  if (requestedVersion) {
+    console.log(`[${packageName}] Using ${channel}: ${requestedVersion}`);
+    return requestedVersion;
+  }
+
+  if (channel !== "latest") {
+    console.warn(
+      `[${packageName}] Channel '${channel}' not found, falling back to 'latest'`,
+    );
+    const latestVersion = await fetchDistTag(packageName, "latest");
+    if (latestVersion) {
+      console.log(`[${packageName}] Using latest: ${latestVersion}`);
+      return latestVersion;
+    }
+  }
+
+  throw new Error(
+    `[${packageName}] Failed to resolve '${channel}' dist-tag (latest fallback unavailable)`,
+  );
 }
 
 const marketplaceResponseSchema = z.object({
@@ -91,11 +151,14 @@ async function fetchLatestExtensionVersion(
   return version;
 }
 
-async function bumpPackages(deps: IdeDeps): Promise<void> {
+async function bumpPackages(
+  deps: IdeDeps,
+  channel: Channel,
+): Promise<void> {
   const packageNames = Object.keys(deps.packages);
   const latestEntries = await Promise.all(
     packageNames.map(async (name) => {
-      const version = await fetchLatestNpmVersion(name);
+      const version = await getPackageVersion(name, channel);
       return { name, version };
     }),
   );
@@ -135,11 +198,14 @@ async function bumpExtensions(deps: IdeDeps): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const { channel } = parseArgs(process.argv.slice(2));
+  console.log(`[bump-ide-deps] Channel: ${channel}`);
+
   const repoRoot = process.cwd();
   const deps = await readIdeDeps(repoRoot);
   const originalDeps: IdeDeps = structuredClone(deps);
 
-  await Promise.all([bumpPackages(deps), bumpExtensions(deps)]);
+  await Promise.all([bumpPackages(deps, channel), bumpExtensions(deps)]);
 
   const originalString = JSON.stringify(originalDeps);
   const updatedString = JSON.stringify(deps);

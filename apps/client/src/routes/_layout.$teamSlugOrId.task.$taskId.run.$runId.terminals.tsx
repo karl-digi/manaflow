@@ -59,13 +59,18 @@ export const Route = createFileRoute(
       );
       const vscodeInfo = taskRun?.vscode;
       const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const isMorphProvider = vscodeInfo?.provider === "morph";
+      const isSupportedProvider = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "pve-lxc";
 
-      if (!isMorphProvider || !rawMorphUrl) {
+      if (!isSupportedProvider) {
         return;
       }
 
-      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+      // Prefer direct xtermUrl from task run (works for PVE LXC and future providers)
+      // Fall back to deriving from Morph URL for backward compatibility
+      const baseUrl = vscodeInfo?.xtermUrl ?? (rawMorphUrl ? toMorphXtermBaseUrl(rawMorphUrl) : null);
+      if (!baseUrl) {
+        return;
+      }
       const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
 
       const tabs = await queryClient.ensureQueryData(
@@ -163,16 +168,21 @@ function TaskRunTerminals() {
 
   const vscodeInfo = taskRun?.vscode;
   const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const isMorphProvider = vscodeInfo?.provider === "morph";
+  const isSupportedProvider = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "pve-lxc";
 
   const xtermBaseUrl = useMemo(() => {
-    if (!rawMorphUrl) {
-      return null;
+    // Prefer direct xtermUrl from task run (works for PVE LXC and future providers)
+    if (vscodeInfo?.xtermUrl) {
+      return vscodeInfo.xtermUrl;
     }
-    return toMorphXtermBaseUrl(rawMorphUrl);
-  }, [rawMorphUrl]);
+    // Fall back to deriving from Morph URL for backward compatibility
+    if (rawMorphUrl) {
+      return toMorphXtermBaseUrl(rawMorphUrl);
+    }
+    return null;
+  }, [vscodeInfo?.xtermUrl, rawMorphUrl]);
 
-  const hasTerminalBackend = Boolean(isMorphProvider && xtermBaseUrl);
+  const hasTerminalBackend = Boolean(isSupportedProvider && xtermBaseUrl);
 
   const tabsQuery = useQuery(
     terminalTabsQueryOptions({
@@ -387,7 +397,7 @@ function TaskRunTerminals() {
   }, []);
 
   const renderTerminalArea = () => {
-    if (!isMorphProvider) {
+    if (!isSupportedProvider) {
       return renderMessage(
         "Terminals are only available for Cloud-based runs."
       );

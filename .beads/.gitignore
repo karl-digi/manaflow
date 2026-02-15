@@ -16,6 +16,9 @@ beads.base.jsonl
 beads.base.meta.json
 beads.left.jsonl
 beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
+*.db?*
 
 # Keep JSONL and config (source of truth for git)
 !issues.jsonl

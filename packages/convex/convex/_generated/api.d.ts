@@ -8,12 +8,12 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as analytics from "../analytics.js";
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
 import type * as bedrock_utils from "../bedrock_utils.js";
-import type * as cloudRouterSubscription from "../cloudRouterSubscription.js";
 import type * as cmux_http from "../cmux_http.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
@@ -23,10 +23,12 @@ import type * as containerSettings from "../containerSettings.js";
 import type * as crons from "../crons.js";
 import type * as crown from "../crown.js";
 import type * as crown_actions from "../crown/actions.js";
+import type * as crown_retryData from "../crown/retryData.js";
 import type * as crown_http from "../crown_http.js";
 import type * as devboxInstances from "../devboxInstances.js";
 import type * as devbox_http from "../devbox_http.js";
 import type * as devbox_v2_http from "../devbox_v2_http.js";
+import type * as discoverReposAction from "../discoverReposAction.js";
 import type * as e2bInstances from "../e2bInstances.js";
 import type * as e2b_actions from "../e2b_actions.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
@@ -64,6 +66,10 @@ import type * as preview_jobs from "../preview_jobs.js";
 import type * as preview_jobs_http from "../preview_jobs_http.js";
 import type * as preview_jobs_worker from "../preview_jobs_worker.js";
 import type * as preview_screenshots_http from "../preview_screenshots_http.js";
+import type * as pveLxcInstances from "../pveLxcInstances.js";
+import type * as pve_lxc_actions from "../pve_lxc_actions.js";
+import type * as sandboxInstanceMaintenance from "../sandboxInstanceMaintenance.js";
+import type * as sandboxInstances from "../sandboxInstances.js";
 import type * as screenshots_http from "../screenshots_http.js";
 import type * as seed from "../seed.js";
 import type * as stack from "../stack.js";
@@ -94,12 +100,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   analytics: typeof analytics;
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
   bedrock_utils: typeof bedrock_utils;
-  cloudRouterSubscription: typeof cloudRouterSubscription;
   cmux_http: typeof cmux_http;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;
@@ -109,10 +115,12 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   crown: typeof crown;
   "crown/actions": typeof crown_actions;
+  "crown/retryData": typeof crown_retryData;
   crown_http: typeof crown_http;
   devboxInstances: typeof devboxInstances;
   devbox_http: typeof devbox_http;
   devbox_v2_http: typeof devbox_v2_http;
+  discoverReposAction: typeof discoverReposAction;
   e2bInstances: typeof e2bInstances;
   e2b_actions: typeof e2b_actions;
   environmentSnapshots: typeof environmentSnapshots;
@@ -150,6 +158,10 @@ declare const fullApi: ApiFromModules<{
   preview_jobs_http: typeof preview_jobs_http;
   preview_jobs_worker: typeof preview_jobs_worker;
   preview_screenshots_http: typeof preview_screenshots_http;
+  pveLxcInstances: typeof pveLxcInstances;
+  pve_lxc_actions: typeof pve_lxc_actions;
+  sandboxInstanceMaintenance: typeof sandboxInstanceMaintenance;
+  sandboxInstances: typeof sandboxInstances;
   screenshots_http: typeof screenshots_http;
   seed: typeof seed;
   stack: typeof stack;

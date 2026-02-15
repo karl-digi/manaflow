@@ -1,3 +1,8 @@
+import {
+  $convertToMarkdownString,
+  TRANSFORMERS,
+  type Transformer,
+} from "@lexical/markdown";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getRoot,
@@ -7,10 +12,37 @@ import {
   ParagraphNode,
   type LexicalNode,
   ElementNode,
-  TextNode,
 } from "lexical";
 import { useEffect } from "react";
-import { $isImageNode } from "./ImageNode";
+import { $isImageNode, ImageNode } from "./ImageNode";
+
+// Custom transformer for ImageNode to export as plain filename
+// Using plain filename instead of markdown syntax to avoid shell pattern issues
+// when CLI tools process the task description
+const IMAGE_TRANSFORMER: Transformer = {
+  dependencies: [ImageNode],
+  export: (node) => {
+    if (!$isImageNode(node)) {
+      return null;
+    }
+    const fileName = node.getFileName();
+    const altText = node.getAltText();
+    // Use fileName if available, otherwise use altText as reference
+    const imageRef = fileName || `image: ${altText}`;
+    // Export as plain filename with surrounding spaces to ensure proper separation
+    // from adjacent text. The backend will replace this with the sanitized path.
+    return ` ${imageRef} `;
+  },
+  regExp: /!\[([^\]]*)\]\(([^)]+)\)/,
+  replace: () => {
+    // Import is not needed since we handle images via paste/drag-drop
+    // Return void (do nothing) - images are handled separately
+  },
+  type: "text-match",
+};
+
+// Combine default transformers with our custom image transformer
+const EXTENDED_TRANSFORMERS: Transformer[] = [IMAGE_TRANSFORMER, ...TRANSFORMERS];
 
 interface ExtractedContent {
   text: string;
@@ -49,44 +81,31 @@ export function EditorStatePlugin({ onEditorReady }: { onEditorReady?: (api: Edi
 
           editor.getEditorState().read(() => {
             const root = $getRoot();
-            const textParts: string[] = [];
-            
-            // Walk through all nodes to build text with image references
-            const walkNode = (node: LexicalNode): void => {
+
+            // First, collect all images from the editor
+            const collectImages = (node: LexicalNode): void => {
               if ($isImageNode(node)) {
                 const fileName = node.getFileName();
                 const altText = node.getAltText();
-                
-                // Add image to images array
+
                 content.images.push({
                   src: node.getSrc(),
                   fileName: fileName,
                   altText: altText
                 });
-                
-                // Add image reference to text
-                if (fileName) {
-                  textParts.push(fileName);
-                } else {
-                  textParts.push(`[Image: ${altText}]`);
-                }
-              } else if (node instanceof TextNode) {
-                textParts.push(node.getTextContent());
               } else if (node instanceof ElementNode) {
                 const children = node.getChildren();
-                children.forEach(walkNode);
-                // Add newline after paragraphs
-                if (node.getType() === 'paragraph' && textParts.length > 0) {
-                  textParts.push('\n');
-                }
+                children.forEach(collectImages);
               }
             };
 
             const children = root.getChildren();
-            children.forEach(walkNode);
+            children.forEach(collectImages);
 
-            // Build final text
-            content.text = textParts.join('').trim();
+            // Use $convertToMarkdownString to preserve formatting (newlines, headers, etc.)
+            // This properly handles paragraphs, headings, lists, code blocks, etc.
+            // Use EXTENDED_TRANSFORMERS to include our custom ImageNode transformer
+            content.text = $convertToMarkdownString(EXTENDED_TRANSFORMERS).trim();
           });
 
           return content;

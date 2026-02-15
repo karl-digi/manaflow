@@ -1,9 +1,5 @@
 import { env } from "@/client-env";
-import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
-import {
-  DashboardInput,
-  type EditorApi,
-} from "@/components/dashboard/DashboardInput";
+import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
@@ -51,32 +47,62 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+// Lazy load DashboardInput (contains heavy Lexical editor)
+const DashboardInput = lazy(() =>
+  import("@/components/dashboard/DashboardInput").then((m) => ({
+    default: m.DashboardInput,
+  }))
+);
+
+// Skeleton fallback for DashboardInput while loading
+function DashboardInputSkeleton() {
+  return (
+    <div className="p-4 min-h-[120px] animate-pulse">
+      <div className="h-4 bg-neutral-200 dark:bg-neutral-600 rounded w-3/4 mb-3" />
+      <div className="h-4 bg-neutral-200 dark:bg-neutral-600 rounded w-1/2" />
+    </div>
+  );
+}
+
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
-  loader: async (opts) => {
+  loader: (opts) => {
     const { teamSlugOrId } = opts.params;
-    // Prewarm queries used in the dashboard
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github.getReposByOrg,
-      args: { teamSlugOrId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.environments.list,
-      args: { teamSlugOrId },
-    });
-    // Prewarm queries used in TaskList
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.get,
-      args: { teamSlugOrId },
-    });
-    // Prewarm analytics query
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.analytics.getDashboardStats,
-      args: { teamSlugOrId },
+    // In web mode, exclude local workspaces (must match TaskList query args)
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+    // Defer prewarm queries to next tick - don't block route transition
+    // Convex will handle loading states via Suspense
+    queueMicrotask(() => {
+      // Prewarm queries used in the dashboard
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.github.getReposByOrg,
+        args: { teamSlugOrId },
+      });
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.environments.list,
+        args: { teamSlugOrId },
+      });
+      // Prewarm queries used in TaskList (args must match exactly)
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.tasks.get,
+        args: { teamSlugOrId, excludeLocalWorkspaces },
+      });
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.tasks.getPinned,
+        args: { teamSlugOrId, excludeLocalWorkspaces },
+      });
     });
   },
 });
@@ -438,6 +464,15 @@ function DashboardComponent() {
     return null;
   }, [branchPages]);
 
+  const branchesResponseError = useMemo(() => {
+    for (const page of branchPages) {
+      if (page.error) {
+        return page.error;
+      }
+    }
+    return null;
+  }, [branchPages]);
+
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
@@ -452,6 +487,22 @@ function DashboardComponent() {
       toast.error("Failed to load branches", { description: message });
     }
   }, [branchesQuery.isError, branchesQuery.error]);
+
+  const lastBranchesResponseErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!branchesResponseError) {
+      lastBranchesResponseErrorRef.current = null;
+      return;
+    }
+
+    const key = `${currentRepo}:${branchesResponseError}`;
+    if (lastBranchesResponseErrorRef.current === key) return;
+    lastBranchesResponseErrorRef.current = key;
+
+    toast.error("Unable to load branches", {
+      description: branchesResponseError,
+    });
+  }, [branchesResponseError, currentRepo]);
 
   // Callback for project selection changes
   const handleProjectChange = useCallback(
@@ -488,11 +539,11 @@ function DashboardComponent() {
     [persistAgentSelection, setSelectedAgents]
   );
 
-  // Fetch repos from Convex
+  // Fetch repos from Convex - use prewarmed cache from route loader
   const reposByOrgQuery = useQuery({
     ...convexQuery(api.github.getReposByOrg, { teamSlugOrId }),
-    refetchOnMount: "always",
     refetchOnWindowFocus: false,
+    staleTime: 30_000, // Cache for 30s to use prewarmed data
   });
   const reposByOrg = useMemo(
     () => reposByOrgQuery.data || {},
@@ -585,18 +636,29 @@ function DashboardComponent() {
           _id: fakeTaskId,
           _creationTime: now,
           text: args.text,
-          description: args.description,
           projectFullName: args.projectFullName,
           baseBranch: args.baseBranch,
           worktreePath: args.worktreePath,
+          generatedBranchName: undefined,
           isCompleted: false,
           isArchived: false,
+          pinned: undefined,
+          isPreview: undefined,
+          isLocalWorkspace: undefined,
+          isCloudWorkspace: args.isCloudWorkspace,
+          linkedFromCloudTaskRunId: undefined,
           createdAt: now,
           updatedAt: now,
-          images: args.images,
+          lastActivityAt: now,
           userId: "optimistic",
           teamId: teamSlugOrId,
           environmentId: args.environmentId,
+          crownEvaluationStatus: undefined,
+          crownEvaluationError: undefined,
+          mergeStatus: undefined,
+          screenshotStatus: undefined,
+          selectedTaskRunId: undefined,
+          pullRequestTitle: undefined,
           hasUnread: false,
         };
 
@@ -691,7 +753,7 @@ function DashboardComponent() {
         const user = await stackClientApp.getUser();
         if (!user) return;
         const authHeaders = await user.getAuthHeaders();
-        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+        const response = await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
           method: "POST",
           headers: { ...authHeaders, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -700,8 +762,11 @@ function DashboardComponent() {
             branch: branch || undefined,
           }),
         });
+        if (!response.ok) {
+          console.error("[prewarm] Failed:", response.status, response.statusText);
+        }
       } catch (error) {
-        console.error("[prewarm] Failed to trigger prewarm:", error);
+        console.error("[prewarm] Network error:", error);
       }
     })();
   }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
@@ -1032,7 +1097,23 @@ function DashboardComponent() {
     return selectedProject[0];
   }, [selectedProject, isEnvSelected]);
 
-  const shouldShowWorkspaceSetup = !!selectedRepoFullName && !isEnvSelected;
+  const selectedEnvironmentRepos = useMemo(() => {
+    if (!isEnvSelected || !selectedProject[0]) return [];
+    const envId = selectedProject[0].replace(/^env:/, "") as Id<"environments">;
+    const selectedEnvironment = environmentsQuery.data?.find(
+      (environment) => environment._id === envId
+    );
+    return Array.from(new Set(selectedEnvironment?.selectedRepos ?? []));
+  }, [environmentsQuery.data, isEnvSelected, selectedProject]);
+
+  const workspaceSetupProjects = useMemo(() => {
+    if (selectedRepoFullName && !isEnvSelected) {
+      return [selectedRepoFullName];
+    }
+    return selectedEnvironmentRepos;
+  }, [isEnvSelected, selectedEnvironmentRepos, selectedRepoFullName]);
+
+  const shouldShowWorkspaceSetup = workspaceSetupProjects.length > 0;
 
   // const shouldShowCloudRepoOnboarding =
   //   !!selectedRepoFullName && isCloudMode && !isEnvSelected && !hasDismissedCloudRepoOnboarding;
@@ -1277,7 +1358,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane header={<TitleBar title="cmux-next" />}>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">
@@ -1323,13 +1404,16 @@ function DashboardComponent() {
               isStartingTask={isStartingTask}
             />
             {shouldShowWorkspaceSetup ? (
-              <WorkspaceSetupPanel
-                teamSlugOrId={teamSlugOrId}
-                projectFullName={selectedRepoFullName}
-              />
+              <div className="space-y-1">
+                {workspaceSetupProjects.map((projectFullName) => (
+                  <WorkspaceSetupPanel
+                    key={projectFullName}
+                    teamSlugOrId={teamSlugOrId}
+                    projectFullName={projectFullName}
+                  />
+                ))}
+              </div>
             ) : null}
-
-            <AnalyticsCards teamSlugOrId={teamSlugOrId} />
 
             {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
               <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">
@@ -1446,16 +1530,18 @@ function DashboardMainCard({
       className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all"
       data-onboarding="dashboard-input"
     >
-      <DashboardInput
-        ref={editorApiRef}
-        onTaskDescriptionChange={onTaskDescriptionChange}
-        onSubmit={onSubmit}
-        repoUrl={lexicalRepoUrl}
-        environmentId={lexicalEnvironmentId}
-        branch={lexicalBranch}
-        persistenceKey="dashboard-task-description"
-        maxHeight="300px"
-      />
+      <Suspense fallback={<DashboardInputSkeleton />}>
+        <DashboardInput
+          ref={editorApiRef}
+          onTaskDescriptionChange={onTaskDescriptionChange}
+          onSubmit={onSubmit}
+          repoUrl={lexicalRepoUrl}
+          environmentId={lexicalEnvironmentId}
+          branch={lexicalBranch}
+          persistenceKey="dashboard-task-description"
+          maxHeight="300px"
+        />
+      </Suspense>
 
       <DashboardInputFooter>
         <DashboardInputControls

@@ -12,7 +12,9 @@ echo "Building Docker image for current platform..."
 
 # Add a build timestamp label to force a new layer (helps with push issues)
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 docker build \
+    --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" \
     --label "build.version=${VERSION}" \
     --label "build.time=${BUILD_TIME}" \
     -t ${REPO}:${VERSION} \

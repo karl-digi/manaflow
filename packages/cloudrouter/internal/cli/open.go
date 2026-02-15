@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 

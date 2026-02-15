@@ -40,7 +40,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import z from "zod";
 import { spawnAllAgents } from "./agentSpawner";
-import { stopContainersForRuns } from "./archiveTask";
+import { resumeContainersForRuns, stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
@@ -255,6 +255,7 @@ const GitSocketDiffRequestSchema = z.object({
   maxBytes: z.number().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
+  forceRefresh: z.boolean().optional(),
 });
 
 const IframePreflightRequestSchema = z.object({
@@ -272,6 +273,35 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+/**
+ * Build the PR description body, including the PR Review Summary when available.
+ */
+function buildPrDescription({
+  taskText,
+  title,
+  summary,
+}: {
+  taskText?: string;
+  title: string;
+  summary?: string;
+}): string {
+  const parts: string[] = [];
+
+  // Add task description section
+  if (taskText) {
+    parts.push(`## Task\n\n${taskText}`);
+  } else {
+    parts.push(`## Summary\n\n${title}`);
+  }
+
+  // Add PR Review Summary section if available
+  if (summary && summary.trim().length > 0) {
+    parts.push(summary);
+  }
+
+  return parts.join("\n\n");
 }
 
 export function setupSocketHandlers(
@@ -500,8 +530,24 @@ export function setupSocketHandlers(
         const diffs = await runWithAuth(
           currentAuthToken,
           currentAuthHeaderJson,
-          () =>
-            getGitDiff({
+          async () => {
+            // Fetch GitHub OAuth token for private repo authentication.
+            // This is only needed when fetching from remote (not for local originPathOverride).
+            // The token is passed transiently and never persisted.
+            let authToken: string | undefined;
+            if (!parsed.originPathOverride) {
+              try {
+                const token = await getGitHubOAuthToken();
+                authToken = token ?? undefined;
+              } catch (error) {
+                serverLogger.warn(
+                  "Failed to fetch GitHub OAuth token for git-diff:",
+                  error
+                );
+              }
+            }
+
+            return getGitDiff({
               headRef: parsed.headRef,
               baseRef: parsed.baseRef,
               repoFullName: parsed.repoFullName,
@@ -512,7 +558,10 @@ export function setupSocketHandlers(
               teamSlugOrId: safeTeam,
               lastKnownBaseSha: parsed.lastKnownBaseSha,
               lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
-            })
+              authToken,
+              forceRefresh: parsed.forceRefresh,
+            });
+          }
         );
 
         if (parsed.originPathOverride) {
@@ -1984,7 +2033,10 @@ export function setupSocketHandlers(
           }
 
           const sandboxId = data.instanceId;
+          const sandboxProvider = data.provider ?? "morph";
           const vscodeBaseUrl = data.vscodeUrl;
+          const vncUrl = data.vncUrl;
+          const xtermUrl = data.xtermUrl;
           const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
 
           serverLogger.info(
@@ -2002,10 +2054,13 @@ export function setupSocketHandlers(
             teamSlugOrId,
             id: taskRunId,
             vscode: {
-              provider: "morph",
+              provider: sandboxProvider,
+              containerName: sandboxId,
               status: "running",
               url: vscodeBaseUrl,
               workspaceUrl,
+              vncUrl,
+              xtermUrl,
               startedAt: now,
             },
           });
@@ -2027,7 +2082,9 @@ export function setupSocketHandlers(
             instanceId: sandboxId,
             url: vscodeBaseUrl,
             workspaceUrl,
-            provider: "morph",
+            vncUrl,
+            xtermUrl,
+            provider: sandboxProvider,
           });
 
           serverLogger.info(
@@ -2421,7 +2478,7 @@ export function setupSocketHandlers(
       }
     });
 
-    socket.on("list-files", async (data) => {
+    socket.on("list-files", async (data, callback) => {
       try {
         const {
           repoPath: repoUrl,
@@ -2595,7 +2652,8 @@ export function setupSocketHandlers(
           });
 
           if (!environment) {
-            socket.emit("list-files-response", {
+            callback?.({
+              ok: false,
               files: [],
               error: "Environment not found",
             });
@@ -2607,7 +2665,8 @@ export function setupSocketHandlers(
             .filter((repo): repo is string => Boolean(repo));
 
           if (repoFullNames.length === 0) {
-            socket.emit("list-files-response", {
+            callback?.({
+              ok: false,
               files: [],
               error: "This environment has no repositories configured",
             });
@@ -2631,7 +2690,7 @@ export function setupSocketHandlers(
             }
           }
 
-          socket.emit("list-files-response", { files: aggregatedFiles });
+          callback?.({ ok: true, files: aggregatedFiles });
           return;
         }
 
@@ -2640,17 +2699,19 @@ export function setupSocketHandlers(
             targetRepoUrl: repoUrl,
             branchOverride: branch,
           });
-          socket.emit("list-files-response", { files: fileList });
+          callback?.({ ok: true, files: fileList });
           return;
         }
 
-        socket.emit("list-files-response", {
+        callback?.({
+          ok: false,
           files: [],
           error: "Repository information missing",
         });
       } catch (error) {
         serverLogger.error("Error listing files:", error);
-        socket.emit("list-files-response", {
+        callback?.({
+          ok: false,
           files: [],
           error: error instanceof Error ? error.message : "Unknown error",
         });
@@ -2785,7 +2846,7 @@ Please address the issue mentioned in the comment above.`;
         const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
-          projectFullName: "manaflow-ai/manaflow",
+          projectFullName: "manaflow-ai/cmux",
         });
         // Create a comment reply with link to the task
         try {
@@ -2809,15 +2870,15 @@ Please address the issue mentioned in the comment above.`;
         const agentResults = await spawnAllAgents(
           taskId,
           {
-            repoUrl: "https://github.com/manaflow-ai/manaflow.git",
+            repoUrl: "https://github.com/karlorz/cmux.git",
             branch: "main",
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/opus-4.6 and codex/gpt-5.3-codex-xhigh
+            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5.1-codex-high
             selectedAgents: selectedAgents || [
-              "claude/opus-4.6",
-              "codex/gpt-5.3-codex-xhigh",
+              "claude/sonnet-4",
+              "codex/gpt-5.1-codex-high",
             ],
           },
           safeTeam
@@ -2943,11 +3004,11 @@ Please address the issue mentioned in the comment above.`;
         const title = task.pullRequestTitle || task.text || "cmux changes";
         const truncatedTitle =
           title.length > 72 ? `${title.slice(0, 69)}...` : title;
-        const body =
-          task.text ||
-          `## Summary
-
-${title}`;
+        const body = buildPrDescription({
+          taskText: task.text,
+          title,
+          summary: run.summary,
+        });
 
         const existingByRepo = new Map(
           (run.pullRequests ?? []).map(
@@ -3295,15 +3356,12 @@ ${title}`;
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
 
-        // In web mode, skip Docker container operations (managed by cloud provider)
-        if (env.NEXT_PUBLIC_WEB_MODE) {
-          serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
-          callback({ success: true });
-          return;
-        }
-
-        // Stop/pause all containers via helper (handles querying + logging)
-        const results = await stopContainersForRuns(taskId, safeTeam);
+        // Wrap in runWithAuth to propagate auth context to stopCmuxSandbox()
+        const results = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          async () => stopContainersForRuns(taskId, safeTeam)
+        );
 
         try {
           const runsTree = await getConvex().query(api.taskRuns.getByTask, {
@@ -3344,6 +3402,41 @@ ${title}`;
         callback({ success: true });
       } catch (error) {
         serverLogger.error("Error archiving task:", error);
+        callback({
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("unarchive-task", async (data, callback) => {
+      try {
+        const { taskId } = ArchiveTaskSchema.parse(data);
+
+        // Wrap in runWithAuth to propagate auth context to resumeCmuxSandbox()
+        const results = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          async () => resumeContainersForRuns(taskId, safeTeam)
+        );
+
+        // Log summary
+        const successful = results.filter((r) => r.success).length;
+        const failed = results.filter((r) => !r.success).length;
+
+        if (failed > 0) {
+          serverLogger.warn(
+            `Unarchived task ${taskId}: ${successful} containers resumed, ${failed} failed`
+          );
+        } else {
+          serverLogger.info(
+            `Successfully unarchived task ${taskId}: all ${successful} containers resumed`
+          );
+        }
+
+        callback({ success: true });
+      } catch (error) {
+        serverLogger.error("Error unarchiving task:", error);
         callback({
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",

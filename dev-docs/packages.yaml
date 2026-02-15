@@ -1,0 +1,102 @@
+packages:
+  # Core Backend
+  - name: convex
+    description: "Convex reactive database - schemas, queries, mutations, actions"
+    source: https://context7.com/llmstxt/convex_dev_llms_txt/llms.txt
+    tokens: 15000
+    output: convex/llms.txt
+
+  - name: hono
+    description: "Hono web framework - routing, middleware, OpenAPI"
+    source: https://context7.com/honojs/website/llms.txt
+    tokens: 12000
+    output: hono/llms.txt
+
+  - name: nitro
+    description: "Nitro server framework - SSR, API routes, deployment"
+    source: https://context7.com/nitrojs/nitro/llms.txt
+    tokens: 10000
+    output: nitro/llms.txt
+
+  # Frontend
+  - name: tanstack-router
+    description: "TanStack Router - type-safe routing for React"
+    source: https://context7.com/tanstack/router/llms.txt
+    tokens: 12000
+    output: tanstack-router/llms.txt
+
+  - name: tanstack-query
+    description: "TanStack Query - async state management"
+    source: https://context7.com/tanstack/query/llms.txt
+    tokens: 12000
+    output: tanstack-query/llms.txt
+
+  - name: shadcn-ui
+    description: "Shadcn UI - accessible React components"
+    source: https://context7.com/shadcn-ui/ui/llms.txt
+    tokens: 10000
+    output: shadcn-ui/llms.txt
+
+  - name: tailwindcss
+    description: "Tailwind CSS v3 - utility-first CSS"
+    source: https://context7.com/websites/v3_tailwindcss/llms.txt
+    tokens: 12000
+    output: tailwindcss/llms.txt
+
+  - name: streamdown
+    description: "Streamdown - AI streaming markdown renderer"
+    source: https://context7.com/vercel/streamdown/llms.txt
+    tokens: 8000
+    output: streamdown/llms.txt
+
+  # Validation
+  - name: zod
+    description: "Zod - TypeScript schema validation"
+    source: https://context7.com/colinhacks/zod/llms.txt
+    tokens: 10000
+    output: zod/llms.txt
+
+  # Build & Testing
+  - name: vite
+    description: "Vite - frontend build tool"
+    source: https://context7.com/vitejs/vite/llms.txt
+    tokens: 10000
+    output: vite/llms.txt
+
+  - name: vitest
+    description: "Vitest - testing framework"
+    source: https://context7.com/websites/main_vitest_dev/llms.txt
+    tokens: 10000
+    output: vitest/llms.txt
+
+  # Runtime
+  - name: bun
+    description: "Bun - JavaScript runtime & package manager"
+    source: https://context7.com/oven-sh/bun/llms.txt
+    tokens: 12000
+    output: bun/llms.txt
+
+  # AI Agents
+  - name: beads
+    description: "Beads - graph-based issue tracker for AI agents"
+    source: https://context7.com/steveyegge/beads/llms.txt
+    tokens: 12000
+    output: beads/llms.txt
+
+  - name: vercel-workflow
+    description: "Vercel Workflow - durable async functions"
+    source: https://context7.com/vercel/workflow/llms.txt
+    tokens: 10000
+    output: vercel-workflow/llms.txt
+
+  - name: opencode
+    description: "OpenCode - AI coding agent for terminal"
+    source: https://context7.com/anomalyco/opencode/llms.txt
+    tokens: 12000
+    output: opencode/llms.txt
+
+  - name: manaflow
+    description: "Manaflow - autonomous agent platform and workflows"
+    source: https://context7.com/manaflow-ai/manaflow/llms.txt
+    tokens: 12000
+    output: manaflow/llms.txt

@@ -36,6 +36,7 @@ OPENVSCODE_URL="http://localhost:39378/?folder=/root/workspace"
 NOVNC_URL="http://localhost:39380/vnc.html"
 CDP_PORT=39381
 FORCE_DIND=${FORCE_DIND:-0}
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 
 declare -a ACTIVE_CONTAINERS=()
 
@@ -383,7 +384,7 @@ run_checks_for_platform() {
   fi
 
   echo "[sanity][$platform] Building local runtime image ($image_name)..."
-  docker build --platform "$platform" -t "$image_name" .
+  docker build --platform "$platform" -t "$image_name" --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" .
 
   if [[ -n "$HOST_PLATFORM" && "$platform" != "$HOST_PLATFORM" && "${FORCE_CROSS_RUN:-0}" != "1" ]]; then
     echo "[sanity][$platform] Skipping runtime checks on host arch $HOST_ARCH (set FORCE_CROSS_RUN=1 to force)." >&2

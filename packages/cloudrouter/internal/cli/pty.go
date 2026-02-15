@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

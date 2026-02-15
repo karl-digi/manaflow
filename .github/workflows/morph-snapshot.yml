@@ -2,7 +2,7 @@ name: Daily Morph Snapshot
 
 on:
   schedule:
-    - cron: "0 18 * * *" # 10am PST / 11am PDT
+    - cron: "0 22 * * 0" # Every Sunday 10am PST / 11am PDT
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +17,7 @@ env:
   NODE_VERSION: "24"
   BUN_VERSION: "1.2.21"
   GO_VERSION: "1.23"
+  IDE_DEPS_CHANNEL: ${{ vars.IDE_DEPS_CHANNEL || 'stable' }}
 
 jobs:
   morph-snapshot:
@@ -41,6 +42,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v4
@@ -60,12 +62,27 @@ jobs:
       - name: Run morph snapshot (with retry)
         env:
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
+          SNAPSHOT_ID: ${{ vars.MORPH_SNAPSHOT_ID || 'snapshot_u2roj9fj' }}
+          STANDARD_VCPUS: ${{ vars.MORPH_STANDARD_VCPUS || '4' }}
+          STANDARD_MEMORY: ${{ vars.MORPH_STANDARD_MEMORY || '8192' }}
+          STANDARD_DISK_SIZE: ${{ vars.MORPH_STANDARD_DISK_SIZE || '32768' }}
+          BOOSTED_VCPUS: ${{ vars.MORPH_BOOSTED_VCPUS || '6' }}
+          BOOSTED_MEMORY: ${{ vars.MORPH_BOOSTED_MEMORY || '8192' }}
+          BOOSTED_DISK_SIZE: ${{ vars.MORPH_BOOSTED_DISK_SIZE || '32768' }}
         run: |
           max_attempts=3
           attempt=1
           while [ $attempt -le $max_attempts ]; do
             echo "Attempt $attempt of $max_attempts"
-            if uv run ./scripts/snapshot.py; then
+            if uv run ./scripts/snapshot.py \
+              --snapshot-id "$SNAPSHOT_ID" \
+              --standard-vcpus "$STANDARD_VCPUS" \
+              --standard-memory "$STANDARD_MEMORY" \
+              --standard-disk-size "$STANDARD_DISK_SIZE" \
+              --boosted-vcpus "$BOOSTED_VCPUS" \
+              --boosted-memory "$BOOSTED_MEMORY" \
+              --boosted-disk-size "$BOOSTED_DISK_SIZE" \
+              --ide-deps-channel "$IDE_DEPS_CHANNEL"; then
               echo "Snapshot completed successfully"
               exit 0
             fi

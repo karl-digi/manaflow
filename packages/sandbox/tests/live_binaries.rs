@@ -49,6 +49,7 @@ async fn test_global_binaries_in_sandbox() {
         ],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let exec_resp = client
         .post(format!("{}/sandboxes/{}/exec", base_url, id))

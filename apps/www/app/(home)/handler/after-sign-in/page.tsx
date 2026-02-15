@@ -161,7 +161,8 @@ type AfterSignInPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-const CMUX_SCHEME = "cmux://";
+const CMUX_PROTOCOL = env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
+const CMUX_SCHEME = `${CMUX_PROTOCOL}://`;
 
 function getSingleValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -214,7 +215,8 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
     url.searchParams.set("stack_refresh", stackRefreshToken);
     url.searchParams.set("stack_access", stackAccessCookie);
     return url.toString();
-  } catch {
+  } catch (error) {
+    console.error("[After Sign In] Failed to build deep link", error);
     return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessCookie)}`;
   }
 }

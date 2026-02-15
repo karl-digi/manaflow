@@ -94,12 +94,28 @@ async function findExisting(
       return envs.find((e) => e.name === record.name) ?? null;
     }
     case "environmentSnapshotVersions": {
+      const snapshotId = record.snapshotId as string | undefined;
+      const snapshotProvider = record.snapshotProvider as string | undefined;
+      if (!snapshotId) {
+        return null;
+      }
+      if (snapshotProvider) {
+        return await db
+          .query("environmentSnapshotVersions")
+          .withIndex("by_team_snapshot", (q) =>
+            q
+              .eq("teamId", record.teamId as string)
+              .eq("snapshotId", snapshotId)
+          )
+          .filter((q) => q.eq(q.field("snapshotProvider"), snapshotProvider))
+          .first();
+      }
       return await db
         .query("environmentSnapshotVersions")
         .withIndex("by_team_snapshot", (q) =>
           q
             .eq("teamId", record.teamId as string)
-            .eq("morphSnapshotId", record.morphSnapshotId as string)
+            .eq("snapshotId", snapshotId)
         )
         .first();
     }

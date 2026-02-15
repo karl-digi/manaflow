@@ -533,8 +533,9 @@ function registerAutoUpdateIpcHandlers(): void {
 function registerAppIpcHandlers(): void {
   ipcMain.handle("cmux:app:get-protocol-status", async () => {
     try {
+      const cmuxProtocol = env.NEXT_PUBLIC_CMUX_PROTOCOL;
       const call = computeSetAsDefaultProtocolClientCall({
-        scheme: "cmux",
+        scheme: cmuxProtocol,
         defaultApp: process.defaultApp,
         execPath: process.execPath,
         argv: process.argv,
@@ -546,7 +547,7 @@ function registerAppIpcHandlers(): void {
             ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
             : app.isDefaultProtocolClient(call.scheme);
       } catch (error) {
-        mainWarn("isDefaultProtocolClient(cmux) failed", error);
+        mainWarn(`isDefaultProtocolClient(${cmuxProtocol}) failed`, error);
       }
 
       return {
@@ -949,11 +950,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "cmux" instead of package.json name
+  // Ensure macOS menu and About panel use "cmux-next" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName("cmux-next");
+      app.setAboutPanelOptions({ applicationName: "cmux-next" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -973,9 +974,11 @@ app.whenReady().then(async () => {
   // Try to register the custom protocol handler with the OS. electron-builder
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
+  // Use env variable for protocol (cmux-dev in dev, cmux-next in prod)
+  const cmuxProtocol = env.NEXT_PUBLIC_CMUX_PROTOCOL;
   try {
     const call = computeSetAsDefaultProtocolClientCall({
-      scheme: "cmux",
+      scheme: cmuxProtocol,
       defaultApp: process.defaultApp,
       execPath: process.execPath,
       argv: process.argv,
@@ -991,9 +994,12 @@ app.whenReady().then(async () => {
           ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
           : app.isDefaultProtocolClient(call.scheme);
     } catch (error) {
-      mainWarn("isDefaultProtocolClient(cmux) failed after registration", error);
+      mainWarn(
+        `isDefaultProtocolClient(${cmuxProtocol}) failed after registration`,
+        error,
+      );
     }
-    mainLog("setAsDefaultProtocolClient(cmux)", {
+    mainLog(`setAsDefaultProtocolClient(${cmuxProtocol})`, {
       ok,
       isDefaultProtocolClient,
       packaged: app.isPackaged,
@@ -1049,13 +1055,30 @@ app.whenReady().then(async () => {
       return new Response("Not found", { status: 404 });
     }
 
-    const response = await net.fetch(pathToFileURL(fsPath).toString());
     const contentSecurityPolicy =
       "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; " +
       "connect-src * sentry-ipc:; " +
       "worker-src * blob:; child-src * blob:; frame-src *";
-    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
-    return response;
+
+    // Try to fetch the requested file
+    try {
+      const response = await net.fetch(pathToFileURL(fsPath).toString());
+      response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+      return response;
+    } catch (error) {
+      // SPA fallback: if the file doesn't exist and it's not an asset request,
+      // serve index-electron.html so the client-side router can handle the route.
+      // Asset files (with extensions like .js, .css, etc.) should return 404.
+      const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(pathname);
+      if (!hasFileExtension) {
+        const indexPath = path.join(baseDir, "index-electron.html");
+        const fallbackResponse = await net.fetch(pathToFileURL(indexPath).toString());
+        fallbackResponse.headers.set("Content-Security-Policy", contentSecurityPolicy);
+        return fallbackResponse;
+      }
+      // Re-throw for asset files to return proper error
+      throw error;
+    }
   };
 
   ses.protocol.handle("https", handleCmuxProtocol);
@@ -1270,6 +1293,14 @@ function jwksForIssuer(issuer: string) {
 async function verifyJwtAndGetPayload(
   token: string
 ): Promise<JWTPayload | null> {
+  // JWT format: three base64url segments separated by dots
+  // Opaque tokens (like Stack Auth refresh tokens) don't have this structure
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    // Not a JWT - likely an opaque token, silently return null
+    return null;
+  }
+
   try {
     const decoded = decodeJwt(token);
     const iss = decoded.iss;
@@ -1277,8 +1308,9 @@ async function verifyJwtAndGetPayload(
     const JWKS = jwksForIssuer(iss);
     const { payload } = await jwtVerify(token, JWKS, { issuer: iss });
     return payload;
-  } catch (error) {
-    console.error("Failed to verify JWT and get payload", error);
+  } catch {
+    // JWT decode/verify failed - return null silently
+    // The caller logs a warning if both tokens fail verification
     return null;
   }
 }

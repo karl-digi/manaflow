@@ -43,6 +43,7 @@ export const env = createEnv({
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
     NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
+    NEXT_PUBLIC_CMUX_PROTOCOL: z.string().min(1).default("cmux-next"),
   },
   runtimeEnv: import.meta.env,
   emptyStringAsUndefined: true,

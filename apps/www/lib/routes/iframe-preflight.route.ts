@@ -35,6 +35,19 @@ const ALLOWED_EXACT_HOSTS = new Set<string>([
 
 const DEV_ONLY_HOSTS = new Set<string>(["localhost", "127.0.0.1", "::1"]);
 
+/**
+ * Get additional allowed host suffixes from environment (e.g., PVE_PUBLIC_DOMAIN).
+ * Returns array of suffixes like [".example.com"].
+ */
+function getDynamicAllowedHostSuffixes(): string[] {
+  const suffixes: string[] = [];
+  // Add PVE public domain if configured (for Cloudflare Tunnel access)
+  if (env.PVE_PUBLIC_DOMAIN) {
+    suffixes.push(`.${env.PVE_PUBLIC_DOMAIN}`);
+  }
+  return suffixes;
+}
+
 function isAllowedHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
 
@@ -43,6 +56,12 @@ function isAllowedHost(hostname: string): boolean {
   }
 
   if (ALLOWED_HOST_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) {
+    return true;
+  }
+
+  // Check dynamic suffixes (from env)
+  const dynamicSuffixes = getDynamicAllowedHostSuffixes();
+  if (dynamicSuffixes.some((suffix) => normalized.endsWith(suffix))) {
     return true;
   }
 
@@ -151,10 +170,50 @@ async function attemptResumeIfNeeded(
   }
 
   if (instance.status === "ready") {
-    await sendPhase("already_ready", {
-      instanceId: instanceInfo.instanceId,
-    });
-    return "already_ready";
+    // Verify the VM is actually reachable - Morph API can return stale "ready" status
+    // Do a quick HTTP probe to confirm before trusting the status
+    try {
+      const httpServices = instance.networking?.httpServices ?? [];
+      const firstService = httpServices[0];
+      if (firstService?.url) {
+        const probeResponse = await fetch(firstService.url, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(5000), // 5 second timeout
+        }).catch(() => null);
+
+        // If probe fails or times out, the VM might be transitioning to paused
+        // Re-fetch the instance status to get the actual state
+        if (!probeResponse || !probeResponse.ok) {
+          const refreshedInstance = await client.instances.get({
+            instanceId: instanceInfo.instanceId,
+          });
+          if (refreshedInstance.status !== "ready") {
+            // Status changed - proceed with resume logic
+            instance = refreshedInstance;
+          }
+        }
+      }
+    } catch {
+      // Probe failed - re-check instance status
+      try {
+        const refreshedInstance = await client.instances.get({
+          instanceId: instanceInfo.instanceId,
+        });
+        if (refreshedInstance.status !== "ready") {
+          instance = refreshedInstance;
+        }
+      } catch {
+        // If re-fetch also fails, continue with original status
+      }
+    }
+
+    // Re-check after potential refresh
+    if (instance.status === "ready") {
+      await sendPhase("already_ready", {
+        instanceId: instanceInfo.instanceId,
+      });
+      return "already_ready";
+    }
   }
 
   await sendPhase("resuming", {
@@ -407,49 +466,72 @@ iframePreflightRouter.openapi(
                   };
                 }
 
-                // Fast path: user owns this workspace
-                if (metadata.userId === userId) {
-                  return { authorized: true };
-                }
-
-                // Check team membership
+                // Check team membership first
                 const metadataTeamId =
                   typeof metadata.teamId === "string"
                     ? metadata.teamId
                     : null;
 
-                if (!metadataTeamId) {
-                  return {
-                    authorized: false,
-                    reason: "Unable to verify workspace ownership.",
-                  };
-                }
+                // Fast path: user owns this workspace
+                const isDirectOwner = metadata.userId === userId;
 
-                try {
-                  const memberships = await teamMembershipsPromise;
-                  const belongsToTeam = memberships.some((membership) => {
-                    const membershipTeam =
-                      membership.team?.teamId ?? membership.teamId;
-                    return membershipTeam === metadataTeamId;
-                  });
-
-                  if (!belongsToTeam) {
+                // For team membership check
+                let belongsToTeam = false;
+                if (!isDirectOwner && metadataTeamId) {
+                  try {
+                    const memberships = await teamMembershipsPromise;
+                    belongsToTeam = memberships.some((membership) => {
+                      const membershipTeam =
+                        membership.team?.teamId ?? membership.teamId;
+                      return membershipTeam === metadataTeamId;
+                    });
+                  } catch (error) {
+                    console.error(
+                      "[iframe-preflight] Failed to verify team membership",
+                      error,
+                    );
                     return {
                       authorized: false,
                       reason:
-                        "You are not a member of the team that owns this workspace.",
+                        "We could not verify your team membership for this workspace.",
                     };
                   }
-                } catch (error) {
-                  console.error(
-                    "[iframe-preflight] Failed to verify team membership",
-                    error,
-                  );
+                }
+
+                if (!isDirectOwner && !belongsToTeam) {
                   return {
                     authorized: false,
-                    reason:
-                      "We could not verify your team membership for this workspace.",
+                    reason: metadataTeamId
+                      ? "You are not a member of the team that owns this workspace."
+                      : "Unable to verify workspace ownership.",
                   };
+                }
+
+                // Check if the associated task is archived - prevent waking VMs for archived tasks
+                // This prevents cross-task VM wake bugs when cached iframes trigger preflight requests
+                if (metadataTeamId) {
+                  try {
+                    const archivedCheck = await convexClient.query(
+                      api.taskRuns.isTaskArchivedByContainerName,
+                      {
+                        teamSlugOrId: metadataTeamId,
+                        containerName: instance.id,
+                      },
+                    );
+                    if (archivedCheck.isArchived) {
+                      return {
+                        authorized: false,
+                        reason: "This workspace belongs to an archived task.",
+                      };
+                    }
+                  } catch (error) {
+                    // Log error but allow the request to proceed
+                    // This ensures archived check failures don't block legitimate use
+                    console.error(
+                      "[iframe-preflight] Failed to check task archived status",
+                      error,
+                    );
+                  }
                 }
 
                 return { authorized: true };
@@ -461,7 +543,7 @@ iframePreflightRouter.openapi(
                   ? metadata.teamId
                   : null;
                 if (teamId) {
-                  await convexClient.mutation(api.morphInstances.recordResume, {
+                  await convexClient.mutation(api.sandboxInstances.recordResume, {
                     instanceId,
                     teamSlugOrId: teamId,
                   });

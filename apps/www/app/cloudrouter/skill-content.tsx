@@ -3,7 +3,7 @@ import { CLOUDROUTER_SKILL_CONTENT_CLASS } from "./code-block-styles";
 import { CopyButton } from "./copy-button";
 
 const SKILL_URL =
-  "https://raw.githubusercontent.com/manaflow-ai/cloudrouter/main/skills/cloudrouter/SKILL.md";
+  "https://raw.githubusercontent.com/karlorz/cloudrouter/main/skills/cloudrouter/SKILL.md";
 
 async function fetchSkillContent() {
   const res = await fetch(SKILL_URL, { next: { revalidate: 60 } });

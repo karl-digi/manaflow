@@ -260,9 +260,8 @@ const ALLOWED_CWD_PREFIXES: &[&str] = &[
 /// Validate the shell path against whitelist
 fn validate_shell(shell: &str) -> Result<&'static str, &'static str> {
     // First, check if the input is already an allowed absolute path
-    if ALLOWED_SHELLS.contains(&shell) {
-        // Return the matching static str from the whitelist
-        return Ok(ALLOWED_SHELLS.iter().find(|&&s| s == shell).unwrap());
+    if let Some(&matched) = ALLOWED_SHELLS.iter().find(|&&s| s == shell) {
+        return Ok(matched);
     }
 
     // If not an absolute path, try to map common shell names to their paths
@@ -847,13 +846,17 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
-                // Process through virtual terminal emulator for state tracking
+                // Process through virtual terminal emulator and collect responses.
+                // Write back CSI responses (CPR cursor reports, DSR status) to PTY
+                // so the requesting application gets them locally without WebSocket
+                // round-trip. Discard OSC responses (color queries) - those would be
+                // echoed by the shell since it doesn't understand them.
                 let responses = session.process_terminal(&buf[..n]);
-                if !responses.is_empty() {
-                    for response in responses {
+                for response in responses {
+                    if response.starts_with(b"\x1b[") {
                         if let Err(e) = session.write_input_bytes(response) {
-                            error!(
-                                "[reader:{}] Failed to send terminal response: {}",
+                            warn!(
+                                "[reader:{}] Failed to write terminal response: {}",
                                 session_id, e
                             );
                         }
@@ -1932,6 +1935,41 @@ mod tests {
             .route("/sessions/:session_id/ws", get(websocket_terminal))
             .layer(CorsLayer::permissive())
             .with_state(state)
+    }
+
+    #[test]
+    fn test_validate_shell_absolute_paths() {
+        assert_eq!(validate_shell("/bin/sh"), Ok("/bin/sh"));
+        assert_eq!(validate_shell("/bin/bash"), Ok("/bin/bash"));
+        assert_eq!(validate_shell("/usr/bin/zsh"), Ok("/usr/bin/zsh"));
+    }
+
+    #[test]
+    fn test_validate_shell_name_mappings() {
+        assert_eq!(validate_shell("sh"), Ok("/bin/sh"));
+        assert_eq!(validate_shell("bash"), Ok("/bin/bash"));
+        assert_eq!(validate_shell("zsh"), Ok("/bin/zsh"));
+    }
+
+    #[test]
+    fn test_validate_shell_rejected() {
+        assert!(validate_shell("/etc/passwd").is_err());
+        assert!(validate_shell("/bin/python").is_err());
+        assert!(validate_shell("powershell").is_err());
+    }
+
+    #[test]
+    fn test_validate_cwd_allowed() {
+        assert_eq!(validate_cwd("/tmp"), Ok("/tmp".to_string()));
+        assert_eq!(validate_cwd("/home/user"), Ok("/home/user".to_string()));
+        assert_eq!(validate_cwd("/Users/dev"), Ok("/Users/dev".to_string()));
+    }
+
+    #[test]
+    fn test_validate_cwd_rejected() {
+        assert!(validate_cwd("/etc").is_err());
+        assert!(validate_cwd("relative/path").is_err());
+        assert!(validate_cwd("/tmp/../etc").is_err());
     }
 
     #[tokio::test]

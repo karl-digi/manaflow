@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::{
-    repo::cache::{ensure_repo, resolve_repo_url},
+    repo::cache::{ensure_repo_with_auth, resolve_repo_url},
     types::{DiffEntry, GitDiffOptions},
 };
 use gix::{hash::ObjectId, Repository};
@@ -70,6 +70,7 @@ fn collect_tree_blobs(
 }
 
 fn resolve_default_base(repo: &Repository, head_oid: ObjectId) -> ObjectId {
+    // 1. Check refs/remotes/origin/HEAD first (symref to default branch)
     if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
         if let Some(name) = r.target().try_name() {
             let s = name.as_bstr().to_str_lossy().into_owned();
@@ -80,11 +81,19 @@ fn resolve_default_base(repo: &Repository, head_oid: ObjectId) -> ObjectId {
             }
         }
     }
+    // 2. Try origin/main (most common default branch name)
     if let Ok(r) = repo.find_reference("refs/remotes/origin/main") {
         if let Some(id) = r.target().try_id() {
             return id.to_owned();
         }
     }
+    // 3. Try origin/master (legacy default branch name, still used by many repos)
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/master") {
+        if let Some(id) = r.target().try_id() {
+            return id.to_owned();
+        }
+    }
+    // 4. Last resort: HEAD commit (often wrong for branch comparisons)
     if let Ok(commit) = repo.head_commit() {
         return commit.id;
     }
@@ -126,6 +135,9 @@ fn is_ancestor(repo: &Repository, anc: ObjectId, desc: ObjectId) -> bool {
     )
 }
 
+/// Walks backward from base_tip looking for merge commits containing head_tip.
+/// Currently unused but kept for potential future merge detection improvements.
+#[allow(dead_code)]
 fn find_merge_parent_on_base(
     repo: &Repository,
     mut base_tip: ObjectId,
@@ -194,24 +206,30 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
     );
 
     let t_repo_path = Instant::now();
+    let auth_token = opts.authToken.as_deref();
     let repo_path = if let Some(p) = &opts.originPathOverride {
         std::path::PathBuf::from(p)
     } else {
         let url = resolve_repo_url(opts.repoFullName.as_deref(), opts.repoUrl.as_deref())?;
-        ensure_repo(&url)?
+        ensure_repo_with_auth(&url, auth_token)?
     };
     let _d_repo_path = t_repo_path.elapsed();
     let cwd = repo_path.to_string_lossy().to_string();
 
     // If a specific repo path is provided, assume the caller ensures freshness.
     // Avoid synchronous fetch here to reduce latency.
+    let force_refresh = opts.forceRefresh.unwrap_or(false);
+    #[cfg(debug_assertions)]
+    println!("[native.refs] force_refresh={}", force_refresh);
     let _d_fetch = if opts.originPathOverride.is_some() {
         Duration::from_millis(0)
     } else {
         let t_fetch = Instant::now();
-        let _ = crate::repo::cache::swr_fetch_origin_all_path(
+        let _ = crate::repo::cache::swr_fetch_origin_all_path_with_auth_force(
             std::path::Path::new(&cwd),
             crate::repo::cache::fetch_window_ms(),
+            auth_token,
+            force_refresh,
         );
         t_fetch.elapsed()
     };
@@ -223,39 +241,169 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
     let head_oid = match oid_from_rev_parse(&repo, head_ref) {
         Ok(oid) => oid,
         Err(_) => {
-            let _d_head = t_head.elapsed();
+            // Ref not found locally - try fetching it from origin and retry
             #[cfg(debug_assertions)]
             println!(
-        "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms (failed to resolve); cwd={}",
-        t_total.elapsed().as_millis(),
-        _d_head.as_millis(),
-        cwd,
-      );
-            return Ok(Vec::new());
+                "[native.refs] head ref '{}' not found locally, attempting fetch...",
+                head_ref
+            );
+            let fetch_succeeded = crate::repo::cache::fetch_specific_ref_with_auth(
+                std::path::Path::new(&cwd),
+                head_ref,
+                auth_token,
+            )
+            .unwrap_or(false);
+            if fetch_succeeded {
+                // Re-open repo after fetch to pick up new refs
+                if let Ok(repo2) = gix::open(&cwd) {
+                    if let Ok(oid) = oid_from_rev_parse(&repo2, head_ref) {
+                        #[cfg(debug_assertions)]
+                        println!(
+                            "[native.refs] head ref '{}' resolved after fetch: {}",
+                            head_ref, oid
+                        );
+                        oid
+                    } else {
+                        let _d_head = t_head.elapsed();
+                        #[cfg(debug_assertions)]
+                        println!(
+                            "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms (failed to resolve after fetch); cwd={}",
+                            t_total.elapsed().as_millis(),
+                            _d_head.as_millis(),
+                            cwd,
+                        );
+                        return Ok(Vec::new());
+                    }
+                } else {
+                    let _d_head = t_head.elapsed();
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms (failed to reopen repo after fetch); cwd={}",
+                        t_total.elapsed().as_millis(),
+                        _d_head.as_millis(),
+                        cwd,
+                    );
+                    return Ok(Vec::new());
+                }
+            } else {
+                let _d_head = t_head.elapsed();
+                #[cfg(debug_assertions)]
+                println!(
+                    "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms (failed to resolve, fetch also failed); cwd={}",
+                    t_total.elapsed().as_millis(),
+                    _d_head.as_millis(),
+                    cwd,
+                );
+                return Ok(Vec::new());
+            }
         }
     };
     let _d_head = t_head.elapsed();
 
     let t_base = Instant::now();
+    // We may need to use the refreshed repo if we fetched for head_ref
+    let repo_for_base = gix::open(&cwd).unwrap_or(repo);
+
+    // For default base refs (main/master), always fetch fresh to avoid stale comparisons.
+    // These refs are updated frequently and tasks are typically created from the latest,
+    // so using a stale local ref would include commits already in main.
+    let is_default_base_ref = base_ref_input.as_ref().is_some_and(|s| {
+        let lower = s.to_lowercase();
+        lower.contains("main") || lower.contains("master")
+    });
+    if is_default_base_ref {
+        if let Some(ref spec) = base_ref_input {
+            #[cfg(debug_assertions)]
+            println!(
+                "[native.refs] base ref '{}' is a default branch, fetching fresh...",
+                spec
+            );
+            let _ = crate::repo::cache::fetch_specific_ref_with_auth(
+                std::path::Path::new(&cwd),
+                spec,
+                auth_token,
+            );
+        }
+    }
+
+    // Re-open repo after potential fetch for default base
+    let repo_for_base = if is_default_base_ref {
+        gix::open(&cwd).unwrap_or(repo_for_base)
+    } else {
+        repo_for_base
+    };
+
     let mut resolved_base_oid = match base_ref_input {
-        Some(ref spec) => match oid_from_rev_parse(&repo, spec) {
+        Some(ref spec) => match oid_from_rev_parse(&repo_for_base, spec) {
             Ok(oid) => oid,
             Err(_) => {
-                let _d_base = t_base.elapsed();
+                // Base ref not found locally - try fetching it from origin and retry
                 #[cfg(debug_assertions)]
                 println!(
-          "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms resolve_base={}ms (failed to resolve); cwd={}",
-          t_total.elapsed().as_millis(),
-          _d_head.as_millis(),
-          _d_base.as_millis(),
-          cwd,
-        );
-                return Ok(Vec::new());
+                    "[native.refs] base ref '{}' not found locally, attempting fetch...",
+                    spec
+                );
+                let fetch_succeeded = crate::repo::cache::fetch_specific_ref_with_auth(
+                    std::path::Path::new(&cwd),
+                    spec,
+                    auth_token,
+                )
+                .unwrap_or(false);
+                if fetch_succeeded {
+                    // Re-open repo after fetch to pick up new refs
+                    if let Ok(repo3) = gix::open(&cwd) {
+                        if let Ok(oid) = oid_from_rev_parse(&repo3, spec) {
+                            #[cfg(debug_assertions)]
+                            println!(
+                                "[native.refs] base ref '{}' resolved after fetch: {}",
+                                spec, oid
+                            );
+                            oid
+                        } else {
+                            let _d_base = t_base.elapsed();
+                            #[cfg(debug_assertions)]
+                            println!(
+                                "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms resolve_base={}ms (failed to resolve after fetch); cwd={}",
+                                t_total.elapsed().as_millis(),
+                                _d_head.as_millis(),
+                                _d_base.as_millis(),
+                                cwd,
+                            );
+                            return Ok(Vec::new());
+                        }
+                    } else {
+                        let _d_base = t_base.elapsed();
+                        #[cfg(debug_assertions)]
+                        println!(
+                            "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms resolve_base={}ms (failed to reopen repo after fetch); cwd={}",
+                            t_total.elapsed().as_millis(),
+                            _d_head.as_millis(),
+                            _d_base.as_millis(),
+                            cwd,
+                        );
+                        return Ok(Vec::new());
+                    }
+                } else {
+                    let _d_base = t_base.elapsed();
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms resolve_base={}ms (failed to resolve, fetch also failed); cwd={}",
+                        t_total.elapsed().as_millis(),
+                        _d_head.as_millis(),
+                        _d_base.as_millis(),
+                        cwd,
+                    );
+                    return Ok(Vec::new());
+                }
             }
         },
-        None => resolve_default_base(&repo, head_oid),
+        None => resolve_default_base(&repo_for_base, head_oid),
     };
     let _d_base = t_base.elapsed();
+
+    // Re-open repo to ensure we have the latest refs after any fetches
+    let repo = gix::open(&cwd)?;
+
     if let Some(ref known_base) = opts.lastKnownBaseSha {
         if let Some(candidate) = parse_oid(known_base) {
             if repo.find_object(candidate).is_ok() && is_ancestor(&repo, candidate, head_oid) {
@@ -263,14 +411,19 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
             }
         }
     }
+
+    let mut head_oid = head_oid; // Make mutable for potential update
+    let repo_path = std::path::Path::new(&cwd);
+
     let t_merge_base = Instant::now();
-    // Compute merge-base; prefer BFS (pure gix) to avoid shelling out
+    // Compute merge-base using git CLI for correctness.
+    // The BFS algorithm has a bug that returns incorrect merge-base in some cases.
     let mut compare_base_oid = crate::merge_base::merge_base(
         &cwd,
         &repo,
         resolved_base_oid,
         head_oid,
-        crate::merge_base::MergeBaseStrategy::Bfs,
+        crate::merge_base::MergeBaseStrategy::Git,
     )
     .unwrap_or(resolved_base_oid);
     #[cfg(test)]
@@ -291,18 +444,10 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
                 }
             }
         }
-    } else if base_ref_input.is_none() {
-        if let Some((merge_commit_oid, parent_oid)) =
-            find_merge_parent_on_base(&repo, resolved_base_oid, head_oid, 20_000)
-        {
-            compare_base_oid = parent_oid;
-            #[cfg(test)]
-            {
-                merge_commit_for_debug = Some(merge_commit_oid.to_string());
-            }
-            let _ = merge_commit_oid;
-        }
     }
+    // NOTE: We used to call find_merge_parent_on_base() when base_ref_input.is_none(),
+    // but that heuristic returned incorrect results in some cases.
+    // The Git CLI merge-base computed above is already correct.
     #[cfg(test)]
     LAST_DIFF_DEBUG.with(|cell| {
         *cell.borrow_mut() = Some(DiffComputationDebug {
@@ -320,6 +465,42 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
         "[native.refs] MB({}, {})={}",
         resolved_base_oid, head_oid, compare_base_oid
     );
+
+    // Detect potentially stale refs: if merge-base == head, the branch appears to have no commits
+    // ahead of base. This is suspicious and may indicate a stale ref that needs fetching.
+    // This happens when a branch is pushed but the local cache has old refs.
+    let repo = if compare_base_oid == head_oid {
+        let fetch_ok =
+            crate::repo::cache::fetch_specific_ref_with_auth(repo_path, head_ref, auth_token)
+                .unwrap_or(false);
+        if fetch_ok {
+            // Re-open repo and re-resolve head after targeted fetch
+            match gix::open(&cwd) {
+                Ok(repo_fresh) => {
+                    if let Ok(fresh_oid) = oid_from_rev_parse(&repo_fresh, head_ref) {
+                        if fresh_oid != head_oid {
+                            head_oid = fresh_oid;
+                            // Recompute merge-base with updated head using git CLI
+                            compare_base_oid = crate::merge_base::merge_base(
+                                &cwd,
+                                &repo_fresh,
+                                resolved_base_oid,
+                                head_oid,
+                                crate::merge_base::MergeBaseStrategy::Git,
+                            )
+                            .unwrap_or(resolved_base_oid);
+                        }
+                    }
+                    repo_fresh
+                }
+                Err(_) => repo,
+            }
+        } else {
+            repo
+        }
+    } else {
+        repo
+    };
 
     let t_tree_ids = Instant::now();
     let base_commit = repo.find_object(compare_base_oid)?.try_into_commit()?;

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
+import { runtimeProviderValidator } from "../_shared/provider-validators";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -17,7 +18,7 @@ import {
 } from "@cmux/shared/pull-request-state";
 
 function rewriteMorphUrl(url: string): string {
-  // do not rewrite ports 39375 39377 39378 39379 39380 39381
+  // do not rewrite ports 39375 39377 39378 39379 39380 39381 39383
   if (
     url.includes("http.cloud.morph.so") &&
     (url.startsWith("https://port-39375-") ||
@@ -25,7 +26,8 @@ function rewriteMorphUrl(url: string): string {
       url.startsWith("https://port-39378-") ||
       url.startsWith("https://port-39379-") ||
       url.startsWith("https://port-39380-") ||
-      url.startsWith("https://port-39381-"))
+      url.startsWith("https://port-39381-") ||
+      url.startsWith("https://port-39383-"))
   ) {
     return url;
   }
@@ -424,7 +426,11 @@ export const create = authMutation({
 
     // Update task's lastActivityAt for sorting
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
-    const taskPatch: { generatedBranchName?: string; lastActivityAt: number } = {
+    const taskPatch: {
+      generatedBranchName?: string;
+      lastActivityAt: number;
+      selectedTaskRunId?: Id<"taskRuns">;
+    } = {
       lastActivityAt: now,
     };
     if (
@@ -433,6 +439,20 @@ export const create = authMutation({
     ) {
       taskPatch.generatedBranchName = generatedBranchName;
     }
+
+    // Update selectedTaskRunId if task has no crowned run
+    // (new run becomes the selected run by default)
+    const hasCrownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (!hasCrownedRun) {
+      taskPatch.selectedTaskRunId = taskRunId;
+    }
+
     await ctx.db.patch(args.taskId, taskPatch);
     const jwt = await new SignJWT({
       taskRunId,
@@ -584,6 +604,14 @@ export const getRunDiffContext = authQuery({
   handler: async (ctx, args) => {
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
+    // Note: taskRunCompleted will be updated below after fetching runDoc
+    const screenshotConfig = {
+      screenshotWorkflowEnabled:
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1",
+      taskRunCompleted: false, // Will be updated below
+    };
+
     const [taskDoc, taskRuns] = await Promise.all([
       ctx.db.get(args.taskId),
       fetchTaskRunsForTask(ctx, teamId, args.taskId, true),
@@ -595,6 +623,7 @@ export const getRunDiffContext = authQuery({
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
         screenshotSets: [],
+        screenshotConfig,
       };
     }
 
@@ -633,8 +662,12 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    // Fetch the run document to check status and get screenshots
+    const runDoc = await ctx.db.get(args.runId);
+    const taskRunCompleted =
+      runDoc?.status === "completed" || runDoc?.status === "failed";
+
     const screenshotSets = await (async () => {
-      const runDoc = await ctx.db.get(args.runId);
       // Prevent leaking screenshots for runs outside the authenticated task/team
       if (
         !runDoc ||
@@ -689,6 +722,10 @@ export const getRunDiffContext = authQuery({
       taskRuns,
       branchMetadataByRepo,
       screenshotSets,
+      screenshotConfig: {
+        ...screenshotConfig,
+        taskRunCompleted,
+      },
     };
   },
 });
@@ -1030,12 +1067,7 @@ export const updateVSCodeInstance = authMutation({
     teamSlugOrId: v.string(),
     id: v.id("taskRuns"),
     vscode: v.object({
-      provider: v.union(
-        v.literal("docker"),
-        v.literal("morph"),
-        v.literal("daytona"),
-        v.literal("other"),
-      ),
+      provider: runtimeProviderValidator,
       containerName: v.optional(v.string()),
       status: v.union(
         v.literal("starting"),
@@ -1054,6 +1086,8 @@ export const updateVSCodeInstance = authMutation({
       ),
       url: v.optional(v.string()),
       workspaceUrl: v.optional(v.string()),
+      vncUrl: v.optional(v.string()),
+      xtermUrl: v.optional(v.string()),
       startedAt: v.optional(v.number()),
       stoppedAt: v.optional(v.number()),
     }),
@@ -1140,10 +1174,23 @@ export const updateVSCodePorts = authMutation({
       status: "starting" as const,
     };
 
+    // Update ports and regenerate URLs with new port
+    // Only regenerate if this is a Docker provider (localhost URLs)
+    const newUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}`
+        : vscode.url;
+    const newWorkspaceUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}/?folder=/root/workspace`
+        : vscode.workspaceUrl;
+
     await ctx.db.patch(args.id, {
       vscode: {
         ...vscode,
         ports: args.ports,
+        url: newUrl,
+        workspaceUrl: newWorkspaceUrl,
       },
       updatedAt: Date.now(),
     });
@@ -1212,6 +1259,38 @@ export const getByContainerName = authQuery({
     }
 
     return run;
+  },
+});
+
+/**
+ * Check if the task associated with a container name is archived.
+ * Used by iframe-preflight to prevent waking VMs for archived tasks.
+ */
+export const isTaskArchivedByContainerName = authQuery({
+  args: { teamSlugOrId: v.string(), containerName: v.string() },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const run = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_vscode_container_name", (q) =>
+        q.eq("vscode.containerName", args.containerName),
+      )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .first();
+
+    if (!run) {
+      // If we can't find the run, return false (not archived) to allow the request
+      // This handles edge cases where container name doesn't match
+      return { isArchived: false, found: false };
+    }
+
+    // Look up the parent task to check its archived status
+    const task = await ctx.db.get(run.taskId);
+    if (!task) {
+      return { isArchived: false, found: false };
+    }
+
+    return { isArchived: task.isArchived === true, found: true };
   },
 });
 
@@ -1513,12 +1592,7 @@ export const updateVSCodeMetadataInternal = internalMutation({
     vscode: v.optional(
       v.object({
         provider: v.optional(
-          v.union(
-            v.literal("docker"),
-            v.literal("morph"),
-            v.literal("daytona"),
-            v.literal("other"),
-          ),
+          runtimeProviderValidator,
         ),
         containerName: v.optional(v.string()),
         status: v.optional(
@@ -1535,6 +1609,8 @@ export const updateVSCodeMetadataInternal = internalMutation({
         ),
         url: v.optional(v.string()),
         workspaceUrl: v.optional(v.string()),
+        vncUrl: v.optional(v.string()),
+        xtermUrl: v.optional(v.string()),
         startedAt: v.optional(v.number()),
         stoppedAt: v.optional(v.number()),
         lastAccessedAt: v.optional(v.number()),
@@ -1873,6 +1949,53 @@ export const updateEnvironmentError = authMutation({
   },
 });
 
+/**
+ * Update discovered repos for a task run (internal, from server)
+ * Called when scanning sandbox for git repos in custom environment tasks
+ */
+export const updateDiscoveredReposInternal = internalMutation({
+  args: {
+    runId: v.id("taskRuns"),
+    discoveredRepos: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    await ctx.db.patch(args.runId, {
+      discoveredRepos: args.discoveredRepos,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Update discovered repos for a task run (authenticated, from client)
+ * Allows UI to trigger repo discovery and update the task run
+ */
+export const updateDiscoveredRepos = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    discoveredRepos: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    await ctx.db.patch(args.runId, {
+      discoveredRepos: args.discoveredRepos,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const archive = authMutation({
   args: {
     teamSlugOrId: v.string(),
@@ -1905,6 +2028,24 @@ export const archive = authMutation({
         }),
       ),
     );
+
+    // Recalculate selectedTaskRunId if we archived/unarchived a run that might affect the selection
+    const task = await ctx.db.get(run.taskId);
+    if (task) {
+      const targetIdsSet = new Set(targetIds);
+      // Need to recalculate if:
+      // 1. We archived the currently selected run, OR
+      // 2. We unarchived runs (might have unarchived a crowned run or newer run)
+      const needsRecalculation =
+        (args.archive && task.selectedTaskRunId && targetIdsSet.has(task.selectedTaskRunId)) ||
+        !args.archive;
+
+      if (needsRecalculation) {
+        await ctx.runMutation(internal.taskRuns.updateSelectedTaskRunForTask, {
+          taskId: run.taskId,
+        });
+      }
+    }
   },
 });
 
@@ -2130,5 +2271,72 @@ export const createForPreview = internalMutation({
       .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
     return { taskRunId, jwt };
+  },
+});
+
+/**
+ * Internal mutation to recalculate and update the selectedTaskRunId for a task.
+ * Selects the crowned run if one exists, otherwise falls back to the latest non-archived run.
+ */
+export const updateSelectedTaskRunForTask = internalMutation({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      return;
+    }
+
+    // Find crowned run first
+    const crownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (crownedRun) {
+      await ctx.db.patch(args.taskId, { selectedTaskRunId: crownedRun._id });
+      return;
+    }
+
+    // Fall back to latest non-archived run
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .order("desc")
+      .first();
+
+    await ctx.db.patch(args.taskId, {
+      selectedTaskRunId: latestRun?._id,
+    });
+  },
+});
+
+/**
+ * Update starting commit SHA for a task run (used for diff baseline in custom environments).
+ * Called after hydration completes to capture the commit SHA before the agent runs.
+ */
+export const updateStartingCommitSha = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    startingCommitSha: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    if (run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    await ctx.db.patch(args.id, {
+      startingCommitSha: args.startingCommitSha,
+      updatedAt: Date.now(),
+    });
   },
 });

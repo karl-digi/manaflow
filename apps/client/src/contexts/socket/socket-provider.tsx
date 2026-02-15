@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
 import { cachedGetUser } from "../../lib/cachedGetUser";
+import { deriveProxyServiceUrl } from "../../lib/deriveProxyServiceUrl";
 import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
@@ -18,7 +19,10 @@ interface SocketProviderProps {
 
 export const SocketProvider: React.FC<SocketProviderProps> = ({
   children,
-  url = env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
+  url = deriveProxyServiceUrl(
+    9776,
+    env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
+  ),
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;
@@ -146,7 +150,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     };
 
     void refreshAuthentication();
-    const intervalId = window.setInterval(refreshAuthentication, 5 * 60 * 1000);
+    // Refresh every 4 minutes to stay ahead of Stack Auth's ~5 minute token expiration
+    const intervalId = window.setInterval(refreshAuthentication, 4 * 60 * 1000);
     return () => {
       disposed = true;
       window.clearInterval(intervalId);

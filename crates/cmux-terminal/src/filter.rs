@@ -1,19 +1,23 @@
-//! DA (Device Attributes) query filter.
+//! DA (Device Attributes) and DSR (Device Status Report) query filter.
 //!
-//! This module provides filtering for DA1 and DA2 query/response sequences
-//! to prevent feedback loops when terminal applications query capabilities.
+//! This module provides filtering for DA1/DA2 query/response sequences and
+//! DSR/CPR (Cursor Position Report) sequences to prevent feedback loops
+//! when terminal applications query capabilities or cursor position.
 
-/// Stateful filter for DA (Device Attributes) queries.
+/// Stateful filter for DA (Device Attributes) and DSR (Device Status Report) sequences.
 ///
-/// This filter removes DA1 and DA2 query/response sequences from terminal output
-/// before forwarding to clients. It handles sequences that may be split across
-/// multiple chunks by buffering incomplete escape sequences.
+/// This filter removes DA1/DA2 query/response sequences and DSR/CPR sequences
+/// from terminal output before forwarding to clients. It handles sequences that
+/// may be split across multiple chunks by buffering incomplete escape sequences.
 ///
 /// Filtered sequences:
 /// - DA1 query: ESC [ c or ESC [ 0 c
 /// - DA2 query: ESC [ > c or ESC [ > 0 c
 /// - DA1 response: ESC [ ? params c
 /// - DA2 response: ESC [ > params c
+/// - DSR cursor position query: ESC [ 6 n
+/// - DSR device status query: ESC [ 5 n
+/// - CPR response: ESC [ row ; col R
 #[derive(Default)]
 pub struct DaFilter {
     /// Buffer for incomplete escape sequences
@@ -78,7 +82,9 @@ impl DaFilter {
                     match byte {
                         b'?' => self.state = DaFilterState::CsiQuestion,
                         b'>' => self.state = DaFilterState::CsiGreater,
-                        b'0' => self.state = DaFilterState::InParams,
+                        b'0'..=b'9' => {
+                            self.state = DaFilterState::InParams;
+                        }
                         b'c' => {
                             // DA1 query: ESC [ c - filter it out
                             self.buffer.clear();
@@ -129,8 +135,8 @@ impl DaFilter {
                 }
 
                 DaFilterState::InParams => {
-                    if byte == b'c' {
-                        // DA1 query with param: ESC [ 0 c - filter it out
+                    if byte == b'c' || byte == b'n' || byte == b'R' {
+                        // DA query: ESC [ 0 c / DSR query: ESC [ 6 n / CPR response: ESC [ row;col R
                         self.buffer.clear();
                         self.state = DaFilterState::Normal;
                     } else if byte.is_ascii_digit() || byte == b';' {
@@ -262,5 +268,77 @@ mod tests {
     fn test_stateless_helper() {
         let result = filter_da_queries(b"Before\x1b[cAfter");
         assert_eq!(result, b"BeforeAfter");
+    }
+
+    #[test]
+    fn test_filter_dsr_cursor_position_query() {
+        // ESC [ 6 n - DSR cursor position query
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[6n");
+        assert!(
+            result.is_empty(),
+            "DSR cursor position query should be filtered"
+        );
+    }
+
+    #[test]
+    fn test_filter_dsr_status_query() {
+        // ESC [ 5 n - DSR device status query
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[5n");
+        assert!(result.is_empty(), "DSR status query should be filtered");
+    }
+
+    #[test]
+    fn test_filter_cpr_response() {
+        // ESC [ 1 ; 1 R - CPR response
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[1;1R");
+        assert!(result.is_empty(), "CPR response should be filtered");
+    }
+
+    #[test]
+    fn test_filter_cpr_response_large_values() {
+        // ESC [ 24 ; 80 R - CPR response with larger values
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[24;80R");
+        assert!(
+            result.is_empty(),
+            "CPR response with large values should be filtered"
+        );
+    }
+
+    #[test]
+    fn test_preserve_sgr() {
+        // ESC [ 1 m - SGR bold - must NOT be filtered
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[1m");
+        assert_eq!(result, b"\x1b[1m", "SGR bold should be preserved");
+    }
+
+    #[test]
+    fn test_preserve_cursor_movement() {
+        // ESC [ 5 A - cursor up 5 - must NOT be filtered
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[5A");
+        assert_eq!(result, b"\x1b[5A", "Cursor movement should be preserved");
+    }
+
+    #[test]
+    fn test_preserve_erase_display() {
+        // ESC [ 2 J - erase display - must NOT be filtered
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"\x1b[2J");
+        assert_eq!(result, b"\x1b[2J", "Erase display should be preserved");
+    }
+
+    #[test]
+    fn test_mixed_dsr_and_normal() {
+        let mut filter = DaFilter::new();
+        let result = filter.filter(b"Before\x1b[6nAfter");
+        assert_eq!(
+            result, b"BeforeAfter",
+            "DSR query should be filtered from mixed content"
+        );
     }
 }

@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="$SCRIPT_DIR/../npm"
 TEST_DIR=$(mktemp -d)
 
-echo "📦 Testing npm packages locally..."
+echo "[info] Testing npm packages locally..."
 echo "   Test directory: $TEST_DIR"
 echo ""
 
@@ -65,7 +65,7 @@ elif [ "$PLATFORM" = "linux" ] && [ "$ARCH" = "aarch64" ]; then
 elif [ "$PLATFORM" = "linux" ] && [ "$ARCH" = "x86_64" ]; then
   PKG_FILE="cmux-linux-x64-0.1.0.tgz"
 else
-  echo "⚠️  Unknown platform: $PLATFORM-$ARCH"
+  echo "[warn] Unknown platform: $PLATFORM-$ARCH"
   PKG_FILE=""
 fi
 
@@ -92,9 +92,9 @@ echo "   ..."
 echo "   ----------------------------------------"
 
 echo ""
-echo "✅ Test passed!"
+echo "[ok] Test passed!"
 echo ""
-echo "📍 Test directory preserved at: $TEST_DIR"
+echo "[info] Test directory preserved at: $TEST_DIR"
 echo "   To test manually:"
 echo "   cd $TEST_DIR && ./node_modules/.bin/cmux --help"
 echo ""

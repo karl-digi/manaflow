@@ -24,8 +24,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 WORKDIR /workspace
 
 FROM rust-base AS chef
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo install --locked cargo-chef
 COPY packages/sandbox/Cargo.toml packages/sandbox/Cargo.lock ./
 COPY packages/sandbox/benches ./benches
@@ -52,8 +52,8 @@ ENV CARGO_TERM_COLOR=never \
 COPY crates/cmux-terminal ./crates/cmux-terminal
 COPY crates/cmux-pty ./crates/cmux-pty
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo build --locked --release --manifest-path crates/cmux-pty/Cargo.toml
 
 # Build VS Code extension
@@ -85,14 +85,14 @@ ENV CARGO_TERM_COLOR=never \
 COPY packages/sandbox/Cargo.toml packages/sandbox/Cargo.lock ./
 COPY packages/sandbox/benches ./benches
 COPY --from=chef /workspace/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo chef cook --release --recipe-path recipe.json
 
 COPY packages/sandbox/src ./src
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo build --locked --release --bin cmux --bin cmux-sandboxd --bin cmux-bridge
 
 FROM ubuntu:24.04 AS dind-installer

@@ -340,6 +340,7 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                                 command,
                                 workdir: None,
                                 env: Vec::new(),
+                                timeout_ms: None,
                             };
                             if let Err(e) = client.post(&url).json(&body).send().await {
                                 tracing::warn!("Failed to exec in sandbox: {}", e);

@@ -15,8 +15,8 @@ export PATH="/root/.bun/bin:$PATH"
 # Find the real claude binary location
 CLAUDE_PATH="$(which claude 2>/dev/null || true)"
 if [ -z "$CLAUDE_PATH" ]; then
-    echo "claude not found in PATH, skipping wrapper setup"
-    exit 0
+    echo "ERROR: claude not found in PATH - install-global-cli may have failed"
+    exit 1
 fi
 
 echo "Found claude at: $CLAUDE_PATH"

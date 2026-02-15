@@ -328,8 +328,14 @@ function createIPCRealtimeServer(): RealtimeServer {
 
         // Safety timeout so invoke doesn't hang forever if ack is never called
         const longRunningRpcTimeoutMs = 10 * 60 * 1000;
-        const timeoutMs =
-          eventName === "docker-pull-image" ? longRunningRpcTimeoutMs : 10_000;
+        const longRunningEvents = [
+          "docker-pull-image",
+          "git-diff",
+          "list-files",
+        ];
+        const timeoutMs = longRunningEvents.includes(eventName)
+          ? longRunningRpcTimeoutMs
+          : 10_000;
         const timer = setTimeout(() => {
           rejectOnce(new Error(`RPC '${eventName}' timed out waiting for ack`));
         }, timeoutMs);

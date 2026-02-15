@@ -48,6 +48,7 @@ async fn test_network_connectivity_apt_update() {
         command: vec!["apt-get".into(), "update".into(), "-y".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
 
     let resp = service

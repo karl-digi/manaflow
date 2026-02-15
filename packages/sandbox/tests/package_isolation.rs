@@ -47,6 +47,7 @@ async fn test_package_isolation() {
         command: vec!["apt-get".into(), "update".into(), "-y".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let update_resp = service
         .exec(summary_a.id.to_string(), update_exec)
@@ -69,6 +70,7 @@ async fn test_package_isolation() {
         ],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let install_resp = service
         .exec(summary_a.id.to_string(), install_exec)
@@ -85,6 +87,7 @@ async fn test_package_isolation() {
         command: vec!["hello".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let verify_resp_a = service
         .exec(summary_a.id.to_string(), verify_a)
@@ -112,6 +115,7 @@ async fn test_package_isolation() {
         command: vec!["hello".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let verify_resp_b = service
         .exec(summary_b.id.to_string(), verify_b)

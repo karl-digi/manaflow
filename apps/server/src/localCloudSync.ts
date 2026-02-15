@@ -803,7 +803,8 @@ export class LocalCloudSyncManager {
     // Find the local path for this cloud task run
     const localPath = this.cloudToLocalMap.get(taskRunId);
     if (!localPath) {
-      serverLogger.warn(
+      // This is expected for cloud-only task runs without local workspaces
+      serverLogger.debug(
         `[localCloudSync] No local workspace found for cloud taskRun ${taskRunId}`
       );
       return;

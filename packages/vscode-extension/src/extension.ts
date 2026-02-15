@@ -199,15 +199,15 @@ async function openMultiDiffEditor(
     const resources =
       files.length > 0
         ? files.map((file) => {
-            const fileUri = vscode.Uri.file(`${repoPath}/${file}`);
-            const baseUri = api.toGitUri(fileUri, effectiveBase);
+          const fileUri = vscode.Uri.file(`${repoPath}/${file}`);
+          const baseUri = api.toGitUri(fileUri, effectiveBase);
 
-            // Match the exact structure used by VS Code's git extension
-            return {
-              originalUri: baseUri,
-              modifiedUri: fileUri,
-            };
-          })
+          // Match the exact structure used by VS Code's git extension
+          return {
+            originalUri: baseUri,
+            modifiedUri: fileUri,
+          };
+        })
         : [];
 
     log(
@@ -404,6 +404,23 @@ async function setupDefaultTerminal() {
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
+
+  // Check if we already have a cmux terminal open
+  const existingCmuxTerminal = vscode.window.terminals.find(
+    (t) => t.name === "cmux"
+  );
+  if (existingCmuxTerminal) {
+    log("cmux terminal already exists, showing it");
+    existingCmuxTerminal.show(preserveFocus);
+    if (!preserveFocus) {
+      // Still set up the multi-diff editor when we are allowed to focus
+      await Promise.all([
+        vscode.commands.executeCommand("workbench.view.scm"),
+        openMultiDiffEditor(),
+      ]);
+    }
+    return;
+  }
 
   // Check if cmux-pty is managing ANY terminals (not just "cmux")
   // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"

@@ -309,7 +309,8 @@ function estimateCollapsedLayout(
     const { minimumLineCount } = HIDE_UNCHANGED_REGIONS_SETTINGS;
 
     // If the file is too small to collapse, show all lines
-    if (totalLines < minimumLineCount) {
+    // Monaco only collapses regions with MORE than minimumLineCount lines
+    if (totalLines <= minimumLineCount) {
       return {
         visibleLineCount: Math.max(totalLines, MIN_EDITOR_LINE_FALLBACK),
         collapsedRegionCount: 0,
@@ -355,7 +356,8 @@ function estimateCollapsedLayout(
       HIDE_UNCHANGED_REGIONS_SETTINGS;
 
     // Check if this block is large enough to be collapsed by Monaco
-    if (blockLength < minimumLineCount) {
+    // Monaco only collapses regions with MORE than minimumLineCount lines
+    if (blockLength <= minimumLineCount) {
       // Too small to collapse - show all lines
       visibleLineCount += blockLength;
       continue;
@@ -475,11 +477,13 @@ function guessMonacoLanguage(filePath: string): string {
 
 function createDiffEditorMount({
   editorMinHeight,
+  expectedCollapsedRegionCount,
   getVisibilityTarget,
   onReady,
   onHeightSettled,
 }: {
   editorMinHeight: number;
+  expectedCollapsedRegionCount: number;
   getVisibilityTarget?: () => Element | null;
   onReady?: (args: {
     diffEditor: editor.IStandaloneDiffEditor;
@@ -609,11 +613,16 @@ function createDiffEditorMount({
       // Only trust the measured height after:
       // 1. The diff has been computed AND hidden areas have been applied, OR
       // 2. The diff has been computed AND height is less than estimated
-      //    (indicates collapsing happened synchronously with diff computation)
+      //    (indicates collapsing happened synchronously with diff computation), OR
+      // 3. The diff has been computed AND we don't expect any collapsed regions
+      //    (no hidden areas will ever fire, so we can trust the height immediately)
       const heightIsLessThanEstimate = height < targetMinHeight * 0.9;
+      const noHiddenAreasExpected = expectedCollapsedRegionCount === 0;
       const canTrustMeasuredHeight =
         hasDiffBeenComputed &&
-        (hasHiddenAreasBeenApplied || heightIsLessThanEstimate);
+        (hasHiddenAreasBeenApplied ||
+          heightIsLessThanEstimate ||
+          noHiddenAreasExpected);
 
       if (
         (heightMatchesOriginal || heightMatchesModified) &&
@@ -944,6 +953,9 @@ function MonacoFileDiffRow({
     DEFAULT_EDITOR_MIN_HEIGHT,
   );
 
+  const expectedCollapsedRegionCount =
+    file.editorMetrics?.collapsedRegionCount ?? 0;
+
   const diffControlsRef = useRef<DiffEditorControls | null>(null);
   const isExpandedRef = useRef(isExpanded);
   const rowContainerRef = useRef<HTMLDivElement | null>(null);
@@ -970,6 +982,7 @@ function MonacoFileDiffRow({
     () =>
       createDiffEditorMount({
         editorMinHeight,
+        expectedCollapsedRegionCount,
         getVisibilityTarget: () => rowContainerRef.current,
         onReady: ({ controls }) => {
           diffControlsRef.current = controls;
@@ -978,7 +991,7 @@ function MonacoFileDiffRow({
         },
         onHeightSettled: handleHeightSettled,
       }),
-    [editorMinHeight, handleHeightSettled],
+    [editorMinHeight, expectedCollapsedRegionCount, handleHeightSettled],
   );
 
   return (

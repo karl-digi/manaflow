@@ -9,11 +9,15 @@ import * as Sentry from "@sentry/electron/main";
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { app, session } from "electron";
 
 import { clearLogDirectory } from "./log-management/clear-log-directory";
 import { resolveLogFilePath } from "./log-management/log-paths";
 import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
+
+const APP_ID = "com.karlorz.cmux";
+const APP_NAME = "cmux-next";
 
 // Provide CommonJS require in ESM main bundle so dependencies relying on require work.
 const require = createRequire(import.meta.url);
@@ -21,16 +25,26 @@ const require = createRequire(import.meta.url);
 
 const PARTITION = "persist:cmux";
 
+try {
+  const appDataDir = app.getPath("appData");
+  app.setPath("userData", join(appDataDir, APP_ID));
+  app.setName(APP_NAME);
+} catch (error) {
+  console.error("Failed to set app name or userData path", error);
+}
+
 // Sentry must initialize before the Electron app "ready" event fires.
-Sentry.init({
-  dsn: SENTRY_ELECTRON_DSN,
-  ipcMode: Sentry.IPCMode.Both,
-  ipcNamespace: "sentry-ipc",
-  getSessions: () => [
-    session.defaultSession,
-    session.fromPartition(PARTITION),
-  ],
-});
+if (SENTRY_ELECTRON_DSN) {
+  Sentry.init({
+    dsn: SENTRY_ELECTRON_DSN,
+    ipcMode: Sentry.IPCMode.Both,
+    ipcNamespace: "sentry-ipc",
+    getSessions: () => [
+      session.defaultSession,
+      session.fromPartition(PARTITION),
+    ],
+  });
+}
 
 function timestamp(): string {
   return new Date().toISOString();

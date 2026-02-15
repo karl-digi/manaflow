@@ -16,9 +16,10 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 # Build the Docker image
 echo "Building Docker image..."
-docker build -t "$IMAGE_NAME" .
+docker build -t "$IMAGE_NAME" --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" .
 
 # Run the container with systemd as PID 1
 echo "Starting container..."

@@ -115,7 +115,9 @@ export const upsertCheckRunFromWebhook = internalMutation({
     // Duplicate path: cleanup when needed (5 handles rare concurrent webhook storms)
     const existingRecords = await ctx.db
       .query("githubCheckRuns")
-      .withIndex("by_checkRunId", (q) => q.eq("checkRunId", checkRunId))
+      .withIndex("by_installation_checkRunId", (q) =>
+        q.eq("installationId", installationId).eq("checkRunId", checkRunId)
+      )
       .take(5);
 
     // Find the newest record by updatedAt (handles duplicates correctly)

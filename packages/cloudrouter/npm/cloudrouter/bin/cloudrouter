@@ -17,6 +17,6 @@ if (fs.existsSync(libBinary)) {
     process.exit(e.status || 1);
   }
 } else {
-  console.error("cloudrouter: binary not found. Try reinstalling: npm install -g @manaflow-ai/cloudrouter");
+  console.error("cloudrouter: binary not found. Try reinstalling: npm install -g @karlorz/cloudrouter");
   process.exit(1);
 }

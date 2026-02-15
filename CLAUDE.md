@@ -1,5 +1,10 @@
 This project is called cmux. cmux is a web app that spawns Claude Code, Codex CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks. For each run, cmux spawns an isolated openvscode instance via Docker or a configurable sandbox provider. The openvscode instance by default opens the git diff UI and a terminal with the running dev server (configurable via devcontainer.json).
 
+# Repository Targets
+
+- Primary upstream for this workspace is `manaflow-ai/manaflow`, with fork target `karlorz/cmux`.
+- Terminal project is separate: upstream `manaflow-ai/cmux`, fork `karl-digi/cmux`, and should be handled in a separate workspace (for example `/Users/karlchow/Desktop/code/cmux-terminal`).
+
 # Config
 
 Use bun to install dependencies and run the project.

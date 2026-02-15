@@ -35,19 +35,22 @@ export const list = authQuery({
     const runs = await Promise.all(runIds.map((id) => ctx.db.get(id)));
     const runMap = new Map(runs.filter(Boolean).map((r) => [r!._id, r!]));
 
-    // Check which task runs are unread (explicit unread tracking)
-    const unreadRunIds = new Set<string>();
-    for (const runId of runIds) {
-      const unread = await ctx.db
-        .query("unreadTaskRuns")
-        .withIndex("by_run_user", (q) =>
-          q.eq("taskRunId", runId).eq("userId", userId),
-        )
-        .first();
-      if (unread) {
-        unreadRunIds.add(runId);
-      }
-    }
+    // Check unread status only for runs in this page (bounded by page size, not total unread history)
+    // Use parallel indexed lookups - O(page_size) instead of O(total_unread_runs)
+    const unreadChecks = await Promise.all(
+      runIds.map(async (runId) => {
+        const unread = await ctx.db
+          .query("unreadTaskRuns")
+          .withIndex("by_run_user", (q) =>
+            q.eq("taskRunId", runId).eq("userId", userId),
+          )
+          .first();
+        return unread ? runId : null;
+      }),
+    );
+
+    // Build set of unread run IDs for O(1) lookup
+    const unreadRunIds = new Set(unreadChecks.filter(Boolean) as Id<"taskRuns">[])
 
     return notifications.map((n) => ({
       ...n,
@@ -126,21 +129,37 @@ export const getTasksWithUnread = authQuery({
       return [];
     }
 
-    // Get task runs to find their taskIds
-    const taskRuns = await Promise.all(
-      unreadRuns.map((ur) => ctx.db.get(ur.taskRunId)),
-    );
-
-    // Group by taskId
+    // Use denormalized taskId directly when available
+    // For pre-migration rows without taskId, fall back to fetching the taskRun
     const taskUnreadMap = new Map<Id<"tasks">, { count: number }>();
 
-    for (const run of taskRuns) {
-      if (!run) continue;
-      const existing = taskUnreadMap.get(run.taskId);
+    // Separate rows with and without taskId
+    const rowsWithTaskId = unreadRuns.filter((ur) => ur.taskId);
+    const rowsWithoutTaskId = unreadRuns.filter((ur) => !ur.taskId);
+
+    // Process rows with taskId (O(1))
+    for (const ur of rowsWithTaskId) {
+      const existing = taskUnreadMap.get(ur.taskId!);
       if (!existing) {
-        taskUnreadMap.set(run.taskId, { count: 1 });
+        taskUnreadMap.set(ur.taskId!, { count: 1 });
       } else {
         existing.count++;
+      }
+    }
+
+    // For pre-migration rows, fetch taskRuns to get taskId (only for rows missing taskId)
+    if (rowsWithoutTaskId.length > 0) {
+      const taskRunIds = rowsWithoutTaskId.map((ur) => ur.taskRunId);
+      const taskRuns = await Promise.all(taskRunIds.map((id) => ctx.db.get(id)));
+
+      for (const taskRun of taskRuns) {
+        if (!taskRun) continue;
+        const existing = taskUnreadMap.get(taskRun.taskId);
+        if (!existing) {
+          taskUnreadMap.set(taskRun.taskId, { count: 1 });
+        } else {
+          existing.count++;
+        }
       }
     }
 
@@ -264,26 +283,61 @@ export const markTaskAsUnread = authMutation({
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .collect();
 
-    // Insert unread rows for each run (if not already unread)
-    for (const run of runs) {
-      if (run.teamId !== teamId) continue;
+    // Filter runs belonging to this team
+    const teamRuns = runs.filter((run) => run.teamId === teamId);
 
-      const existing = await ctx.db
-        .query("unreadTaskRuns")
-        .withIndex("by_run_user", (q) =>
-          q.eq("taskRunId", run._id).eq("userId", userId),
-        )
-        .first();
+    if (teamRuns.length === 0) {
+      return;
+    }
 
-      if (!existing) {
-        await ctx.db.insert("unreadTaskRuns", {
+    // Bulk fetch existing unread rows for this task
+    // Use by_task_user for rows with taskId, but also check by_run_user for pre-migration rows
+    const existingUnreadsWithTaskId = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_task_user", (q) =>
+        q.eq("taskId", args.taskId).eq("userId", userId),
+      )
+      .collect();
+
+    const existingRunIds = new Set(existingUnreadsWithTaskId.map((u) => u.taskRunId));
+
+    // For runs not found via by_task_user, check by_run_user (handles pre-migration rows without taskId)
+    const teamRunIds = new Set(teamRuns.map((r) => r._id));
+    const missingRunIds = [...teamRunIds].filter((id) => !existingRunIds.has(id));
+
+    // Check each missing run individually via by_run_user index
+    const preMigrationChecks = await Promise.all(
+      missingRunIds.map(async (runId) => {
+        const existing = await ctx.db
+          .query("unreadTaskRuns")
+          .withIndex("by_run_user", (q) =>
+            q.eq("taskRunId", runId).eq("userId", userId),
+          )
+          .first();
+        return existing ? runId : null;
+      }),
+    );
+
+    // Add pre-migration unread rows to the existing set
+    for (const runId of preMigrationChecks) {
+      if (runId) {
+        existingRunIds.add(runId);
+      }
+    }
+
+    // Filter runs that need to be marked unread and batch insert in parallel
+    const runsToMark = teamRuns.filter((run) => !existingRunIds.has(run._id));
+
+    await Promise.all(
+      runsToMark.map((run) =>
+        ctx.db.insert("unreadTaskRuns", {
           taskRunId: run._id,
           taskId: args.taskId,
           userId,
           teamId,
-        });
-      }
-    }
+        }),
+      ),
+    );
   },
 });
 
@@ -302,9 +356,8 @@ export const markAllAsRead = authMutation({
       )
       .collect();
 
-    for (const unread of unreadRuns) {
-      await ctx.db.delete(unread._id);
-    }
+    // Delete all unread rows in parallel (O(N) parallel instead of O(N) sequential)
+    await Promise.all(unreadRuns.map((unread) => ctx.db.delete(unread._id)));
   },
 });
 

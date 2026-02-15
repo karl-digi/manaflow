@@ -44,7 +44,9 @@ const getVideoExtension = (mimeType: string): string => {
     "video/webm": "webm",
     "video/quicktime": "mov",
     "video/x-msvideo": "avi",
+    "video/x-matroska": "mkv",
     "image/apng": "apng",
+    "image/gif": "gif",
   };
   return mimeToExt[mimeType.toLowerCase()] ?? "mp4";
 };

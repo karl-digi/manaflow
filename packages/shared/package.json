@@ -18,6 +18,10 @@
       "import": "./src/socket-client.ts",
       "types": "./src/socket-client.ts"
     },
+    "./provider-types": {
+      "import": "./src/provider-types.ts",
+      "types": "./src/provider-types.ts"
+    },
     "./node/socket": {
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"
@@ -25,6 +29,10 @@
     "./src/providers/amp/start-amp-proxy.ts": {
       "import": "./src/providers/amp/start-amp-proxy.ts",
       "types": "./src/providers/amp/start-amp-proxy.ts"
+    },
+    "./src/providers/opencode/completion-detector.ts": {
+      "import": "./src/providers/opencode/completion-detector.ts",
+      "types": "./src/providers/opencode/completion-detector.ts"
     },
     "./model-usage": {
       "import": "./src/model-usage.ts",
@@ -133,6 +141,10 @@
     "./modal-snapshots": {
       "import": "./src/modal-snapshots.ts",
       "types": "./src/modal-snapshots.ts"
+    },
+    "./pve-lxc-snapshots": {
+      "import": "./src/pve-lxc-snapshots.ts",
+      "types": "./src/pve-lxc-snapshots.ts"
     }
   },
   "peerDependencies": {

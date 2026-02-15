@@ -67,6 +67,22 @@ export const dispatchPreviewJob = httpAction(async (ctx, req) => {
   }
 
   const previewRunId = body.previewRunId as Id<"previewRuns">;
+
+  // Check if screenshot workflow is enabled
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
+  if (!screenshotWorkflowEnabled) {
+    console.log("[preview-jobs-http] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      previewRunId,
+    });
+    return jsonResponse({
+      success: false,
+      error: "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+    }, 400);
+  }
+
   console.log("[preview-jobs-http] Dispatching preview job", {
     previewRunId,
   });
@@ -605,6 +621,23 @@ export const createTestPreviewTask = httpAction(async (ctx, req) => {
   }
 
   const repoFullName = `${prInfo.owner}/${prInfo.repo}`.toLowerCase();
+
+  // Check if screenshot workflow is enabled
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
+  if (!screenshotWorkflowEnabled) {
+    console.log("[preview-jobs-http] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      teamId,
+      userId,
+      prUrl,
+    });
+    return jsonResponse({
+      success: false,
+      error: "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+    }, 400);
+  }
 
   console.log("[preview-jobs-http] Creating test preview task", {
     teamId,

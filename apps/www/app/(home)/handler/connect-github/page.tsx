@@ -1,4 +1,5 @@
 import { stackServerApp } from "@/lib/utils/stack";
+import { env } from "@/lib/utils/www-env";
 import { ConnectGitHubClient } from "./ConnectGitHubClient";
 
 export const dynamic = "force-dynamic";
@@ -29,9 +30,10 @@ export default async function ConnectGitHubPage({
 
   if (githubAccount) {
     // Already connected - redirect to deep link immediately
+    const protocol = env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
     const deepLinkHref = teamSlugOrId
-      ? `cmux://github-connect-complete?team=${encodeURIComponent(teamSlugOrId)}`
-      : `cmux://github-connect-complete`;
+      ? `${protocol}://github-connect-complete?team=${encodeURIComponent(teamSlugOrId)}`
+      : `${protocol}://github-connect-complete`;
 
     // Use client component to trigger deep link
     return <ConnectGitHubClient href={deepLinkHref} alreadyConnected />;

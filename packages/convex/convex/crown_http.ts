@@ -10,12 +10,17 @@ import {
   type WorkerRunStatus,
   type WorkerTaskRunResponse,
 } from "@cmux/shared/convex-safe";
+import { env } from "../_shared/convex-env";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import type { WorkerAuthContext } from "./users/utils/getWorkerAuth";
+import {
+  buildCrownEvaluationPrompt,
+  parseCrownEvaluationPrompt,
+} from "./crown/retryData";
 
 type TaskRunDoc = Doc<"taskRuns">;
 type TeamMembershipDoc = Doc<"teamMemberships">;
@@ -302,6 +307,38 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     }
   }
 
+  if (workerAuth && targetTaskId) {
+    try {
+      const evaluationPrompt = buildCrownEvaluationPrompt(
+        data.prompt,
+        data.candidates
+      );
+      const candidateRunIds = data.candidates
+        .map((candidate) => candidate.runId)
+        .filter((id): id is string => Boolean(id));
+
+      const retryData = JSON.stringify({
+        evaluationPrompt,
+        candidateRunIds,
+        teamId: teamContext.teamId,
+        userId: teamContext.userId,
+      });
+
+      await ctx.runMutation(internal.tasks.setCrownRetryDataInternal, {
+        taskId: targetTaskId,
+        teamId: teamContext.teamId,
+        userId: teamContext.userId,
+        retryData,
+        overwrite: true,
+      });
+    } catch (error) {
+      console.error("[convex.crown] Failed to store crown retry data", {
+        taskId: targetTaskId,
+        error,
+      });
+    }
+  }
+
   try {
     const candidates = data.candidates.map((candidate, index) => ({
       modelName:
@@ -316,6 +353,8 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       candidates,
       teamSlugOrId,
+      teamId: teamContext.teamId,
+      userId: teamContext.userId,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -363,11 +402,97 @@ export const crownSummarize = httpAction(async (ctx, req) => {
     );
   }
 
+  let teamIdForAction: string | undefined;
+  let userIdForAction: string | undefined;
+  if (workerAuth) {
+    teamIdForAction = workerAuth.payload.teamId;
+    userIdForAction = workerAuth.payload.userId;
+  } else {
+    const membership = await ensureTeamMembership(ctx, teamSlugOrId);
+    if (membership instanceof Response) return membership;
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    }
+    teamIdForAction = membership.teamId;
+    userIdForAction = identity.subject;
+  }
+
+  if (workerAuth) {
+    try {
+      const taskRunId = workerAuth.payload.taskRunId as Id<"taskRuns"> | undefined;
+      if (taskRunId) {
+        const run = await ctx.runQuery(internal.taskRuns.getById, {
+          id: taskRunId,
+        });
+        if (
+          run &&
+          run.teamId === workerAuth.payload.teamId &&
+          run.userId === workerAuth.payload.userId
+        ) {
+          const runsForTeam = await ctx.runQuery(
+            internal.taskRuns.listByTaskAndTeamInternal,
+            {
+              taskId: run.taskId,
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+            }
+          );
+          const completedRuns = runsForTeam.filter(
+            (candidateRun: TaskRunDoc) => candidateRun.status === "completed"
+          );
+
+          const isSingleRunTask =
+            runsForTeam.length === 1 && completedRuns.length === 1;
+
+          if (isSingleRunTask) {
+            const candidates = [
+              {
+                runId: run._id,
+                agentName: run.agentName ?? "unknown agent",
+                modelName: run.agentName ?? "unknown agent",
+                gitDiff: data.gitDiff,
+                newBranch: run.newBranch ?? null,
+                index: 0,
+              },
+            ];
+
+            const evaluationPrompt = buildCrownEvaluationPrompt(
+              data.prompt,
+              candidates
+            );
+
+            const retryData = JSON.stringify({
+              evaluationPrompt,
+              candidateRunIds: [run._id],
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+            });
+
+            await ctx.runMutation(internal.tasks.setCrownRetryDataInternal, {
+              taskId: run.taskId,
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+              retryData,
+              overwrite: false,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[convex.crown] Failed to store single-run retry data", {
+        error,
+      });
+    }
+  }
+
   try {
     const result = await ctx.runAction(api.crown.actions.summarize, {
       prompt: data.prompt,
       gitDiff: data.gitDiff,
       teamSlugOrId,
+      teamId: teamIdForAction,
+      userId: userIdForAction,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -468,6 +593,10 @@ async function handleInfoRequest(
     id: taskRun.taskId,
   });
 
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
   const response = {
     ok: true,
     taskRun: {
@@ -484,6 +613,7 @@ async function handleInfoRequest(
           text: task.text,
         }
       : null,
+    screenshotWorkflowEnabled,
   } satisfies WorkerTaskRunResponse;
   return jsonResponse(response);
 }
@@ -522,7 +652,9 @@ async function handleAllCompleteRequest(
 
   const allComplete =
     runsForTeam.length > 0 &&
-    runsForTeam.every((run: TaskRunDoc) => run.status === "completed");
+    runsForTeam.every((run: TaskRunDoc) =>
+      ["completed", "failed"].includes(run.status)
+    );
 
   const response = {
     ok: true,
@@ -591,29 +723,28 @@ async function handleCrownCheckRequest(
   const allRunsFinished = runsForTeam.every((run: TaskRunDoc) =>
     ["completed", "failed"].includes(run.status)
   );
-  const allWorkersReported = runsForTeam.every(
-    (run: TaskRunDoc) => run.status === "completed"
-  );
   const completedRuns = runsForTeam.filter(
     (run: TaskRunDoc) => run.status === "completed"
   );
 
   const shouldEvaluate =
     allRunsFinished &&
-    allWorkersReported &&
     completedRuns.length >= 2 &&
     !existingEvaluation;
 
   const singleRunWinnerId =
-    runsForTeam.length === 1 && completedRuns.length === 1
+    allRunsFinished && completedRuns.length === 1 && !existingEvaluation
       ? completedRuns[0]._id
       : null;
 
-  if (
-    shouldEvaluate &&
+  // Set crown evaluation status to pending for both multi-run (shouldEvaluate) and single-run cases
+  const needsCrownStatusUpdate =
+    (shouldEvaluate || singleRunWinnerId) &&
     currentStatus !== "pending" &&
-    currentStatus !== "in_progress"
-  ) {
+    currentStatus !== "in_progress" &&
+    !existingEvaluation;
+
+  if (needsCrownStatusUpdate) {
     try {
       await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
         taskId,
@@ -636,7 +767,6 @@ async function handleCrownCheckRequest(
     ok: true,
     taskId,
     allRunsFinished,
-    allWorkersReported,
     shouldEvaluate,
     singleRunWinnerId,
     existingEvaluation: existingEvaluation
@@ -720,20 +850,128 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
     });
   }
 
+  // Extract isFallback and evaluationNote from evaluationResponse JSON if not provided directly
+  // This maintains backward compatibility with workers that don't send these fields separately
+  let isFallback = validation.data.isFallback;
+  let evaluationNote = validation.data.evaluationNote;
+
+  if (isFallback === undefined || evaluationNote === undefined) {
+    try {
+      const parsedEvalResponse = JSON.parse(validation.data.evaluationResponse);
+      if (isFallback === undefined && typeof parsedEvalResponse.isFallback === "boolean") {
+        isFallback = parsedEvalResponse.isFallback;
+      }
+      if (evaluationNote === undefined && typeof parsedEvalResponse.evaluationNote === "string") {
+        evaluationNote = parsedEvalResponse.evaluationNote;
+      }
+    } catch (error) {
+      // evaluationResponse might not be valid JSON - this is expected for older workers
+      console.error("[convex.crown] Failed to parse evaluationResponse for fallback fields", {
+        taskId,
+        error,
+      });
+    }
+  }
+
   try {
+    const summaryMissing =
+      !validation.data.summary || validation.data.summary.trim().length === 0;
+
+    let summary = validation.data.summary;
+
+    if (winnerRunId && summaryMissing) {
+      const parsedFromRequest = parseCrownEvaluationPrompt(
+        validation.data.evaluationPrompt
+      );
+
+      let parsedFromTask: ReturnType<typeof parseCrownEvaluationPrompt> | null =
+        null;
+      if (!parsedFromRequest && task.crownEvaluationRetryData) {
+        try {
+          const stored = JSON.parse(task.crownEvaluationRetryData) as {
+            evaluationPrompt?: string;
+          };
+          if (stored.evaluationPrompt) {
+            parsedFromTask = parseCrownEvaluationPrompt(stored.evaluationPrompt);
+          }
+        } catch (error) {
+          console.error("[convex.crown] Failed to parse stored retry data", {
+            taskId,
+            error,
+          });
+        }
+      }
+
+      const parsed = parsedFromRequest ?? parsedFromTask;
+      const candidate = parsed?.candidates.find(
+        (candidateItem) => candidateItem.runId === winnerRunId
+      );
+
+      if (!parsed || !candidate) {
+        const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId,
+          teamId: workerAuth.payload.teamId,
+          userId: workerAuth.payload.userId,
+          winnerRunId: null,
+          reason: "Summarization failed (missing summary)",
+          summary: undefined,
+          evaluationPrompt: validation.data.evaluationPrompt,
+          evaluationResponse: validation.data.evaluationResponse,
+          candidateRunIds,
+          pullRequest: validation.data.pullRequest,
+          pullRequestTitle: validation.data.pullRequestTitle,
+          pullRequestDescription: validation.data.pullRequestDescription,
+          isFallback,
+          evaluationNote:
+            "Summarization failed (missing summary) and Convex could not reconstruct the winner diff",
+        });
+        return jsonResponse({ ok: true, winnerRunId: winningId });
+      }
+
+      try {
+        const summaryResponse = await ctx.runAction(api.crown.actions.summarize, {
+          prompt: parsed.prompt,
+          gitDiff: candidate.gitDiff,
+          teamSlugOrId: workerAuth.payload.teamId,
+        });
+        summary = summaryResponse.summary.slice(0, 8000);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId,
+          teamId: workerAuth.payload.teamId,
+          userId: workerAuth.payload.userId,
+          winnerRunId: null,
+          reason: "Summarization failed",
+          summary: undefined,
+          evaluationPrompt: validation.data.evaluationPrompt,
+          evaluationResponse: validation.data.evaluationResponse,
+          candidateRunIds,
+          pullRequest: validation.data.pullRequest,
+          pullRequestTitle: validation.data.pullRequestTitle,
+          pullRequestDescription: validation.data.pullRequestDescription,
+          isFallback,
+          evaluationNote: `Summarization failed: ${message}`,
+        });
+        return jsonResponse({ ok: true, winnerRunId: winningId });
+      }
+    }
+
     const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
       taskId,
       teamId: workerAuth.payload.teamId,
       userId: workerAuth.payload.userId,
       winnerRunId,
       reason: validation.data.reason,
-      summary: validation.data.summary,
+      summary,
       evaluationPrompt: validation.data.evaluationPrompt,
       evaluationResponse: validation.data.evaluationResponse,
       candidateRunIds,
       pullRequest: validation.data.pullRequest,
       pullRequestTitle: validation.data.pullRequestTitle,
       pullRequestDescription: validation.data.pullRequestDescription,
+      isFallback,
+      evaluationNote,
     });
 
     return jsonResponse({ ok: true, winnerRunId: winningId });
@@ -785,6 +1023,23 @@ export const crownWorkerComplete = httpAction(async (ctx, req) => {
       })
     : null;
 
+  // Trigger repo discovery for custom environment tasks
+  // This enables git diff UI to work immediately without client-side discovery
+  if (
+    updatedRun?.vscode?.containerName &&
+    !updatedRun.discoveredRepos?.length &&
+    updatedRun.environmentId
+  ) {
+    console.log(
+      "[convex.crown] Scheduling repo discovery for custom env task:",
+      taskRunId
+    );
+    await ctx.scheduler.runAfter(0, internal.discoverReposAction.discoverRepos, {
+      runId: taskRunId,
+      sandboxId: updatedRun.vscode.containerName,
+    });
+  }
+
   const containerSettings = await ctx.runQuery(
     internal.containerSettings.getContainerSettingsInternal,
     {
@@ -807,43 +1062,53 @@ export const crownWorkerComplete = httpAction(async (ctx, req) => {
 
   // Try to create/link a preview run for this task run if it has PR info
   // This enables screenshot capture and GitHub comment posting for crown tasks
-  try {
-    const previewResult = await ctx.runMutation(
-      internal.previewRuns.enqueueFromTaskRun,
-      { taskRunId }
-    );
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
 
-    if (previewResult.created && previewResult.previewRunId) {
-      console.log("[convex.crown] Preview run created/linked for task run", {
-        taskRunId,
-        previewRunId: previewResult.previewRunId,
-        isNew: previewResult.isNew,
-      });
+  if (!screenshotWorkflowEnabled) {
+    console.log("[convex.crown] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      taskRunId,
+    });
+  } else {
+    try {
+      const previewResult = await ctx.runMutation(
+        internal.previewRuns.enqueueFromTaskRun,
+        { taskRunId }
+      );
 
-      // If a new preview run was created, dispatch it to start the preview job
-      if (previewResult.isNew) {
-        await ctx.scheduler.runAfter(
-          0,
-          internal.preview_jobs.requestDispatch,
-          { previewRunId: previewResult.previewRunId }
-        );
-        console.log("[convex.crown] Preview job dispatch scheduled", {
+      if (previewResult.created && previewResult.previewRunId) {
+        console.log("[convex.crown] Preview run created/linked for task run", {
           taskRunId,
           previewRunId: previewResult.previewRunId,
+          isNew: previewResult.isNew,
+        });
+
+        // If a new preview run was created, dispatch it to start the preview job
+        if (previewResult.isNew) {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.preview_jobs.requestDispatch,
+            { previewRunId: previewResult.previewRunId }
+          );
+          console.log("[convex.crown] Preview job dispatch scheduled", {
+            taskRunId,
+            previewRunId: previewResult.previewRunId,
+          });
+        }
+      } else {
+        console.log("[convex.crown] No preview run created for task run", {
+          taskRunId,
+          reason: previewResult.reason,
         });
       }
-    } else {
-      console.log("[convex.crown] No preview run created for task run", {
+    } catch (error) {
+      // Don't fail the completion if preview run creation fails
+      console.error("[convex.crown] Failed to create preview run for task run", {
         taskRunId,
-        reason: previewResult.reason,
+        error,
       });
     }
-  } catch (error) {
-    // Don't fail the completion if preview run creation fails
-    console.error("[convex.crown] Failed to create preview run for task run", {
-      taskRunId,
-      error,
-    });
   }
 
   const response = {

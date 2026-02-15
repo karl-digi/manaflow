@@ -194,7 +194,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       qualityLevel = 6,
       compressionLevel = 2,
       autoConnect = true,
-      autoReconnect = true,
+      autoReconnect = false,
       reconnectDelay = 1000,
       maxReconnectDelay = 30000,
       maxReconnectAttempts = 0,
@@ -316,10 +316,25 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         if (isUnmountedRef.current) return;
 
         const wsUrl = urlRef.current;
-        const rfb = new RFB(containerRef.current, wsUrl, {
+        const previouslyFocused = document.activeElement;
+        const containerEl = containerRef.current;
+        if (!containerEl) return;
+        const focusWasOutsideVnc =
+          previouslyFocused &&
+          previouslyFocused !== containerEl &&
+          !containerEl.contains(previouslyFocused);
+
+        const rfb = new RFB(containerEl, wsUrl, {
           credentials: undefined,
           wsProtocols: ["binary"],
         });
+        if (focusWasOutsideVnc && previouslyFocused instanceof HTMLElement) {
+          try {
+            previouslyFocused.focus({ preventScroll: true });
+          } catch (e) {
+            console.error("[VncViewer] Failed to restore focus:", e);
+          }
+        }
 
         rfb.scaleViewport = scaleViewport;
         rfb.clipViewport = clipViewport;
@@ -348,6 +363,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
           if (!isClean && shouldReconnectRef.current) {
             scheduleReconnect("Connection lost unexpectedly");
+          } else if (!isClean) {
+            updateStatus("error", "Connection lost unexpectedly");
           }
         });
 
@@ -980,7 +997,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
           ref={containerRef}
           className="absolute inset-0"
           style={{ background }}
-          tabIndex={0}
+          tabIndex={-1}
           data-drag-disable-pointer
         />
 

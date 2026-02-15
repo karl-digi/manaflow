@@ -1,750 +1,176 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-02-06T00:03:47Z",
+  "updatedAt": "2026-02-15T08:39:26Z",
   "presets": [
     {
-      "presetId": "4vcpu_16gb_48gb",
+      "presetId": "4vcpu_8gb_32gb",
       "label": "Standard workspace",
       "cpu": "4 vCPU",
-      "memory": "16 GB RAM",
-      "disk": "48 GB SSD",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
       "versions": [
         {
           "version": 1,
-          "snapshotId": "snapshot_ytlhlcfm",
-          "capturedAt": "2025-11-18T01:16:45Z"
+          "snapshotId": "snapshot_5a255f9t",
+          "capturedAt": "2025-12-24T16:42:16Z"
         },
         {
           "version": 2,
-          "snapshotId": "snapshot_yvodwo7a",
-          "capturedAt": "2025-11-18T02:03:35Z"
+          "snapshotId": "snapshot_sldfbwgu",
+          "capturedAt": "2026-01-06T16:17:58Z"
         },
         {
           "version": 3,
-          "snapshotId": "snapshot_i2v6nwzf",
-          "capturedAt": "2025-11-18T06:44:29Z"
+          "snapshotId": "snapshot_6zpgcstw",
+          "capturedAt": "2026-01-08T18:06:49Z"
         },
         {
           "version": 4,
-          "snapshotId": "snapshot_svdf7qmg",
-          "capturedAt": "2025-11-23T09:45:47Z"
+          "snapshotId": "snapshot_ize4ovlm",
+          "capturedAt": "2026-01-10T07:37:40Z"
         },
         {
           "version": 5,
-          "snapshotId": "snapshot_4l1fzyvr",
-          "capturedAt": "2025-11-26T20:11:45Z"
+          "snapshotId": "snapshot_5ox19cdh",
+          "capturedAt": "2026-01-11T18:47:47Z"
         },
         {
           "version": 6,
-          "snapshotId": "snapshot_of44b6xs",
-          "capturedAt": "2025-11-29T07:57:23Z"
+          "snapshotId": "snapshot_er9tudzj",
+          "capturedAt": "2026-01-14T11:20:10Z"
         },
         {
           "version": 7,
-          "snapshotId": "snapshot_wpcxzz6p",
-          "capturedAt": "2025-11-29T21:23:40Z"
+          "snapshotId": "snapshot_2mkva5w7",
+          "capturedAt": "2026-01-15T07:31:14Z"
         },
         {
           "version": 8,
-          "snapshotId": "snapshot_u00k1p82",
-          "capturedAt": "2025-11-29T22:00:34Z"
+          "snapshotId": "snapshot_x1vtlygx",
+          "capturedAt": "2026-01-16T02:48:45Z"
         },
         {
           "version": 9,
-          "snapshotId": "snapshot_bxgzvjun",
-          "capturedAt": "2025-12-01T06:19:30Z"
+          "snapshotId": "snapshot_tztn3mpw",
+          "capturedAt": "2026-01-17T12:24:44Z"
         },
         {
           "version": 10,
-          "snapshotId": "snapshot_75gexwe9",
-          "capturedAt": "2025-12-02T02:01:34Z"
+          "snapshotId": "snapshot_8lakqugu",
+          "capturedAt": "2026-01-18T17:04:51Z"
         },
         {
           "version": 11,
-          "snapshotId": "snapshot_r8vql9h8",
-          "capturedAt": "2025-12-02T22:40:18Z"
+          "snapshotId": "snapshot_fkw7hxnk",
+          "capturedAt": "2026-01-25T03:50:36Z"
         },
         {
           "version": 12,
-          "snapshotId": "snapshot_xrlir8y6",
-          "capturedAt": "2025-12-02T23:03:02Z"
+          "snapshotId": "snapshot_geedjmbt",
+          "capturedAt": "2026-01-25T18:54:58Z"
         },
         {
           "version": 13,
-          "snapshotId": "snapshot_6b7swr45",
-          "capturedAt": "2025-12-03T08:44:36Z"
+          "snapshotId": "snapshot_nc7vchfb",
+          "capturedAt": "2026-02-01T18:56:05Z"
         },
         {
           "version": 14,
-          "snapshotId": "snapshot_hszt8v6s",
-          "capturedAt": "2025-12-04T01:19:39Z"
+          "snapshotId": "snapshot_40tltpm1",
+          "capturedAt": "2026-02-08T19:01:33Z"
         },
         {
           "version": 15,
-          "snapshotId": "snapshot_6az195xq",
-          "capturedAt": "2025-12-04T01:41:29Z"
-        },
-        {
-          "version": 16,
-          "snapshotId": "snapshot_g6va110f",
-          "capturedAt": "2025-12-04T02:56:35Z"
-        },
-        {
-          "version": 17,
-          "snapshotId": "snapshot_mpzw0j37",
-          "capturedAt": "2025-12-04T06:13:17Z"
-        },
-        {
-          "version": 18,
-          "snapshotId": "snapshot_st54kpzd",
-          "capturedAt": "2025-12-05T00:13:32Z"
-        },
-        {
-          "version": 19,
-          "snapshotId": "snapshot_11n06bp8",
-          "capturedAt": "2025-12-09T07:14:58Z"
-        },
-        {
-          "version": 20,
-          "snapshotId": "snapshot_xsue4hev",
-          "capturedAt": "2025-12-09T07:26:37Z"
-        },
-        {
-          "version": 21,
-          "snapshotId": "snapshot_m6kqy7mx",
-          "capturedAt": "2025-12-09T22:46:52Z"
-        },
-        {
-          "version": 22,
-          "snapshotId": "snapshot_d214mmqt",
-          "capturedAt": "2025-12-09T23:52:34Z"
-        },
-        {
-          "version": 23,
-          "snapshotId": "snapshot_vkfzdrxw",
-          "capturedAt": "2025-12-10T01:26:47Z"
-        },
-        {
-          "version": 24,
-          "snapshotId": "snapshot_eezx6d0u",
-          "capturedAt": "2025-12-10T05:09:22Z"
-        },
-        {
-          "version": 25,
-          "snapshotId": "snapshot_nnwoiamw",
-          "capturedAt": "2025-12-11T02:25:08Z"
-        },
-        {
-          "version": 26,
-          "snapshotId": "snapshot_4cmhhy1v",
-          "capturedAt": "2025-12-11T03:22:01Z"
-        },
-        {
-          "version": 27,
-          "snapshotId": "snapshot_jke3ua1z",
-          "capturedAt": "2025-12-11T04:29:02Z"
-        },
-        {
-          "version": 28,
-          "snapshotId": "snapshot_bspdwy9w",
-          "capturedAt": "2025-12-11T04:54:58Z"
-        },
-        {
-          "version": 29,
-          "snapshotId": "snapshot_4r8t7lhg",
-          "capturedAt": "2025-12-11T05:17:32Z"
-        },
-        {
-          "version": 30,
-          "snapshotId": "snapshot_2h2hl1c6",
-          "capturedAt": "2025-12-11T05:53:36Z"
-        },
-        {
-          "version": 31,
-          "snapshotId": "snapshot_6mgdl8ne",
-          "capturedAt": "2025-12-11T07:03:15Z"
-        },
-        {
-          "version": 32,
-          "snapshotId": "snapshot_0n2arkfb",
-          "capturedAt": "2025-12-11T07:13:03Z"
-        },
-        {
-          "version": 33,
-          "snapshotId": "snapshot_bzpn87aw",
-          "capturedAt": "2025-12-11T11:10:58Z"
-        },
-        {
-          "version": 34,
-          "snapshotId": "snapshot_bv46m6us",
-          "capturedAt": "2025-12-16T07:06:17Z"
-        },
-        {
-          "version": 35,
-          "snapshotId": "snapshot_n53wv98d",
-          "capturedAt": "2025-12-16T07:55:53Z"
-        },
-        {
-          "version": 36,
-          "snapshotId": "snapshot_adpauztr",
-          "capturedAt": "2025-12-19T06:05:43Z"
-        },
-        {
-          "version": 37,
-          "snapshotId": "snapshot_2pmvtzwh",
-          "capturedAt": "2025-12-20T04:49:48Z"
-        },
-        {
-          "version": 38,
-          "snapshotId": "snapshot_m1vnk1cl",
-          "capturedAt": "2025-12-20T05:25:41Z"
-        },
-        {
-          "version": 39,
-          "snapshotId": "snapshot_x7zrp581",
-          "capturedAt": "2025-12-20T07:13:45Z"
-        },
-        {
-          "version": 40,
-          "snapshotId": "snapshot_ix0qd3wr",
-          "capturedAt": "2025-12-20T08:59:07Z"
-        },
-        {
-          "version": 41,
-          "snapshotId": "snapshot_urlxhopc",
-          "capturedAt": "2025-12-24T02:38:55Z"
-        },
-        {
-          "version": 42,
-          "snapshotId": "snapshot_ztk8hh65",
-          "capturedAt": "2025-12-24T04:35:30Z"
-        },
-        {
-          "version": 43,
-          "snapshotId": "snapshot_wk2z1t2v",
-          "capturedAt": "2025-12-25T22:17:35Z"
-        },
-        {
-          "version": 44,
-          "snapshotId": "snapshot_gnjo1w2g",
-          "capturedAt": "2025-12-26T06:35:44Z"
-        },
-        {
-          "version": 45,
-          "snapshotId": "snapshot_kdgfqv7d",
-          "capturedAt": "2026-01-04T22:39:38Z"
-        },
-        {
-          "version": 46,
-          "snapshotId": "snapshot_ru6tzt83",
-          "capturedAt": "2026-01-08T02:09:24Z"
-        },
-        {
-          "version": 47,
-          "snapshotId": "snapshot_u9fxqpq9",
-          "capturedAt": "2026-01-08T03:42:39Z"
-        },
-        {
-          "version": 48,
-          "snapshotId": "snapshot_m0lw91ep",
-          "capturedAt": "2026-01-08T04:04:00Z"
-        },
-        {
-          "version": 49,
-          "snapshotId": "snapshot_phq07yhf",
-          "capturedAt": "2026-01-12T01:38:31Z"
-        },
-        {
-          "version": 50,
-          "snapshotId": "snapshot_ogsdfcq6",
-          "capturedAt": "2026-01-12T20:28:00Z"
-        },
-        {
-          "version": 51,
-          "snapshotId": "snapshot_4iblegc0",
-          "capturedAt": "2026-01-13T05:11:43Z"
-        },
-        {
-          "version": 52,
-          "snapshotId": "snapshot_ick4sqy8",
-          "capturedAt": "2026-01-13T11:09:25Z"
-        },
-        {
-          "version": 53,
-          "snapshotId": "snapshot_yj4xfvzq",
-          "capturedAt": "2026-01-13T22:48:32Z"
-        },
-        {
-          "version": 54,
-          "snapshotId": "snapshot_b7ixfa2w",
-          "capturedAt": "2026-01-14T01:16:16Z"
-        },
-        {
-          "version": 55,
-          "snapshotId": "snapshot_vgtyf0nq",
-          "capturedAt": "2026-01-14T02:51:19Z"
-        },
-        {
-          "version": 56,
-          "snapshotId": "snapshot_taf39ph6",
-          "capturedAt": "2026-01-14T03:45:31Z"
-        },
-        {
-          "version": 57,
-          "snapshotId": "snapshot_p9vgqaay",
-          "capturedAt": "2026-01-14T07:44:51Z"
-        },
-        {
-          "version": 58,
-          "snapshotId": "snapshot_zxj541w7",
-          "capturedAt": "2026-01-16T19:23:23Z"
-        },
-        {
-          "version": 59,
-          "snapshotId": "snapshot_hk6jonjg",
-          "capturedAt": "2026-01-16T21:09:02Z"
-        },
-        {
-          "version": 60,
-          "snapshotId": "snapshot_tac3s7qu",
-          "capturedAt": "2026-01-17T02:05:43Z"
-        },
-        {
-          "version": 61,
-          "snapshotId": "snapshot_5g92pacf",
-          "capturedAt": "2026-01-21T03:39:53Z"
-        },
-        {
-          "version": 62,
-          "snapshotId": "snapshot_i6s8rsr6",
-          "capturedAt": "2026-01-21T04:09:09Z"
-        },
-        {
-          "version": 63,
-          "snapshotId": "snapshot_0gzeycov",
-          "capturedAt": "2026-01-21T10:00:52Z"
-        },
-        {
-          "version": 64,
-          "snapshotId": "snapshot_09jelk9x",
-          "capturedAt": "2026-01-21T11:17:17Z"
-        },
-        {
-          "version": 65,
-          "snapshotId": "snapshot_ziotespn",
-          "capturedAt": "2026-01-23T02:10:32Z"
-        },
-        {
-          "version": 66,
-          "snapshotId": "snapshot_8vobh0fo",
-          "capturedAt": "2026-01-26T02:28:49Z"
-        },
-        {
-          "version": 67,
-          "snapshotId": "snapshot_0decxnyi",
-          "capturedAt": "2026-01-27T01:03:05Z"
-        },
-        {
-          "version": 68,
-          "snapshotId": "snapshot_zj8g5iu4",
-          "capturedAt": "2026-01-27T01:38:20Z"
-        },
-        {
-          "version": 69,
-          "snapshotId": "snapshot_02rzr7v1",
-          "capturedAt": "2026-01-27T06:29:58Z"
-        },
-        {
-          "version": 70,
-          "snapshotId": "snapshot_2w82l9mg",
-          "capturedAt": "2026-01-27T22:27:55Z"
-        },
-        {
-          "version": 71,
-          "snapshotId": "snapshot_321ymg1o",
-          "capturedAt": "2026-02-06T00:03:40Z"
+          "snapshotId": "snapshot_mgmhjyrd",
+          "capturedAt": "2026-02-15T08:48:19Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
     },
     {
-      "presetId": "8vcpu_32gb_48gb",
+      "presetId": "6vcpu_8gb_32gb",
       "label": "Performance workspace",
-      "cpu": "8 vCPU",
-      "memory": "32 GB RAM",
-      "disk": "48 GB SSD",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
       "versions": [
         {
           "version": 1,
-          "snapshotId": "snapshot_zw2z3krp",
-          "capturedAt": "2025-11-18T01:16:45Z"
+          "snapshotId": "snapshot_d5hz9r0j",
+          "capturedAt": "2025-12-24T16:41:50Z"
         },
         {
           "version": 2,
-          "snapshotId": "snapshot_u906mxl0",
-          "capturedAt": "2025-11-18T02:02:19Z"
+          "snapshotId": "snapshot_60pamhdp",
+          "capturedAt": "2026-01-06T16:17:38Z"
         },
         {
           "version": 3,
-          "snapshotId": "snapshot_jeo4kgmm",
-          "capturedAt": "2025-11-18T06:43:53Z"
+          "snapshotId": "snapshot_fcd9h6ow",
+          "capturedAt": "2026-01-08T18:04:03Z"
         },
         {
           "version": 4,
-          "snapshotId": "snapshot_i57mwbv2",
-          "capturedAt": "2025-11-23T09:44:10Z"
+          "snapshotId": "snapshot_yv8a1y3f",
+          "capturedAt": "2026-01-10T07:37:24Z"
         },
         {
           "version": 5,
-          "snapshotId": "snapshot_8x6vsofr",
-          "capturedAt": "2025-11-26T20:11:28Z"
+          "snapshotId": "snapshot_tmbv8d91",
+          "capturedAt": "2026-01-11T18:45:59Z"
         },
         {
           "version": 6,
-          "snapshotId": "snapshot_z9rtr2no",
-          "capturedAt": "2025-11-29T07:56:55Z"
+          "snapshotId": "snapshot_ih20n7db",
+          "capturedAt": "2026-01-14T11:20:19Z"
         },
         {
           "version": 7,
-          "snapshotId": "snapshot_vr7uc2h1",
-          "capturedAt": "2025-11-29T21:23:30Z"
+          "snapshotId": "snapshot_49i1lqee",
+          "capturedAt": "2026-01-15T07:30:14Z"
         },
         {
           "version": 8,
-          "snapshotId": "snapshot_8b1361wp",
-          "capturedAt": "2025-11-29T22:01:05Z"
+          "snapshotId": "snapshot_1zpa6usz",
+          "capturedAt": "2026-01-16T02:49:18Z"
         },
         {
           "version": 9,
-          "snapshotId": "snapshot_vyzv7lc5",
-          "capturedAt": "2025-12-01T06:19:18Z"
+          "snapshotId": "snapshot_2opmodf9",
+          "capturedAt": "2026-01-17T12:26:14Z"
         },
         {
           "version": 10,
-          "snapshotId": "snapshot_aammgkbb",
-          "capturedAt": "2025-12-02T02:03:50Z"
+          "snapshotId": "snapshot_cq0i2hpy",
+          "capturedAt": "2026-01-18T17:02:58Z"
         },
         {
           "version": 11,
-          "snapshotId": "snapshot_qxy1k0hq",
-          "capturedAt": "2025-12-02T22:39:48Z"
+          "snapshotId": "snapshot_g1wxo7e3",
+          "capturedAt": "2026-01-25T03:53:08Z"
         },
         {
           "version": 12,
-          "snapshotId": "snapshot_tst7w0q1",
-          "capturedAt": "2025-12-02T23:02:45Z"
+          "snapshotId": "snapshot_l4e0eyhy",
+          "capturedAt": "2026-01-25T18:57:39Z"
         },
         {
           "version": 13,
-          "snapshotId": "snapshot_zil2h2rg",
-          "capturedAt": "2025-12-03T08:43:44Z"
+          "snapshotId": "snapshot_htjy9ek7",
+          "capturedAt": "2026-02-01T18:56:17Z"
         },
         {
           "version": 14,
-          "snapshotId": "snapshot_smvgcirt",
-          "capturedAt": "2025-12-04T01:19:10Z"
+          "snapshotId": "snapshot_ychnckx4",
+          "capturedAt": "2026-02-08T19:02:34Z"
         },
         {
           "version": 15,
-          "snapshotId": "snapshot_0kz5x004",
-          "capturedAt": "2025-12-04T01:41:09Z"
-        },
-        {
-          "version": 16,
-          "snapshotId": "snapshot_9ng3y6jd",
-          "capturedAt": "2025-12-04T02:54:46Z"
-        },
-        {
-          "version": 17,
-          "snapshotId": "snapshot_u6orf3jx",
-          "capturedAt": "2025-12-04T06:13:45Z"
-        },
-        {
-          "version": 18,
-          "snapshotId": "snapshot_6isj88bc",
-          "capturedAt": "2025-12-05T00:13:30Z"
-        },
-        {
-          "version": 19,
-          "snapshotId": "snapshot_jzej4jlj",
-          "capturedAt": "2025-12-09T07:14:39Z"
-        },
-        {
-          "version": 20,
-          "snapshotId": "snapshot_1jpawdk6",
-          "capturedAt": "2025-12-09T07:26:17Z"
-        },
-        {
-          "version": 21,
-          "snapshotId": "snapshot_ab7gxmih",
-          "capturedAt": "2025-12-09T22:45:58Z"
-        },
-        {
-          "version": 22,
-          "snapshotId": "snapshot_8ypfo3lq",
-          "capturedAt": "2025-12-09T23:52:34Z"
-        },
-        {
-          "version": 23,
-          "snapshotId": "snapshot_jqe2lrhp",
-          "capturedAt": "2025-12-10T01:26:21Z"
-        },
-        {
-          "version": 24,
-          "snapshotId": "snapshot_8mklccsm",
-          "capturedAt": "2025-12-10T05:09:05Z"
-        },
-        {
-          "version": 25,
-          "snapshotId": "snapshot_slqj8599",
-          "capturedAt": "2025-12-11T02:23:45Z"
-        },
-        {
-          "version": 26,
-          "snapshotId": "snapshot_o420kaor",
-          "capturedAt": "2025-12-11T03:21:47Z"
-        },
-        {
-          "version": 27,
-          "snapshotId": "snapshot_30evjb6q",
-          "capturedAt": "2025-12-11T04:28:47Z"
-        },
-        {
-          "version": 28,
-          "snapshotId": "snapshot_xqqb632n",
-          "capturedAt": "2025-12-11T04:55:54Z"
-        },
-        {
-          "version": 29,
-          "snapshotId": "snapshot_4llcjsoc",
-          "capturedAt": "2025-12-11T05:16:39Z"
-        },
-        {
-          "version": 30,
-          "snapshotId": "snapshot_p163nmro",
-          "capturedAt": "2025-12-11T05:52:38Z"
-        },
-        {
-          "version": 31,
-          "snapshotId": "snapshot_hy1c0mqd",
-          "capturedAt": "2025-12-11T07:03:24Z"
-        },
-        {
-          "version": 32,
-          "snapshotId": "snapshot_n15mbtq3",
-          "capturedAt": "2025-12-11T07:12:36Z"
-        },
-        {
-          "version": 33,
-          "snapshotId": "snapshot_yf1j2634",
-          "capturedAt": "2025-12-11T11:11:02Z"
-        },
-        {
-          "version": 34,
-          "snapshotId": "snapshot_xzvnwwc1",
-          "capturedAt": "2025-12-16T07:05:47Z"
-        },
-        {
-          "version": 35,
-          "snapshotId": "snapshot_wgp0rrue",
-          "capturedAt": "2025-12-16T07:55:28Z"
-        },
-        {
-          "version": 36,
-          "snapshotId": "snapshot_r0bk3bi9",
-          "capturedAt": "2025-12-19T06:04:48Z"
-        },
-        {
-          "version": 37,
-          "snapshotId": "snapshot_bw7tmekm",
-          "capturedAt": "2025-12-20T04:47:52Z"
-        },
-        {
-          "version": 38,
-          "snapshotId": "snapshot_l1nu1zqk",
-          "capturedAt": "2025-12-20T05:24:26Z"
-        },
-        {
-          "version": 39,
-          "snapshotId": "snapshot_32fv6fsg",
-          "capturedAt": "2025-12-20T07:12:26Z"
-        },
-        {
-          "version": 40,
-          "snapshotId": "snapshot_jbihlmxw",
-          "capturedAt": "2025-12-20T08:57:41Z"
-        },
-        {
-          "version": 41,
-          "snapshotId": "snapshot_mtl73ecs",
-          "capturedAt": "2025-12-24T02:38:05Z"
-        },
-        {
-          "version": 42,
-          "snapshotId": "snapshot_3yms1udr",
-          "capturedAt": "2025-12-24T04:35:32Z"
-        },
-        {
-          "version": 43,
-          "snapshotId": "snapshot_4y7nn46q",
-          "capturedAt": "2025-12-25T22:16:49Z"
-        },
-        {
-          "version": 44,
-          "snapshotId": "snapshot_whbzjn0r",
-          "capturedAt": "2025-12-26T06:32:46Z"
-        },
-        {
-          "version": 45,
-          "snapshotId": "snapshot_whba4mbt",
-          "capturedAt": "2026-01-04T22:36:40Z"
-        },
-        {
-          "version": 46,
-          "snapshotId": "snapshot_n7lq2mu6",
-          "capturedAt": "2026-01-08T02:07:41Z"
-        },
-        {
-          "version": 47,
-          "snapshotId": "snapshot_kvp8mmib",
-          "capturedAt": "2026-01-08T03:41:43Z"
-        },
-        {
-          "version": 48,
-          "snapshotId": "snapshot_hnwrt0re",
-          "capturedAt": "2026-01-08T04:02:54Z"
-        },
-        {
-          "version": 49,
-          "snapshotId": "snapshot_qrql1trf",
-          "capturedAt": "2026-01-12T01:36:53Z"
-        },
-        {
-          "version": 50,
-          "snapshotId": "snapshot_mimigiw1",
-          "capturedAt": "2026-01-12T20:27:30Z"
-        },
-        {
-          "version": 51,
-          "snapshotId": "snapshot_5j0o2y97",
-          "capturedAt": "2026-01-13T05:12:11Z"
-        },
-        {
-          "version": 52,
-          "snapshotId": "snapshot_35dr9ffx",
-          "capturedAt": "2026-01-13T11:08:42Z"
-        },
-        {
-          "version": 53,
-          "snapshotId": "snapshot_zl3kgy2b",
-          "capturedAt": "2026-01-13T22:48:59Z"
-        },
-        {
-          "version": 54,
-          "snapshotId": "snapshot_16uxo5yt",
-          "capturedAt": "2026-01-14T01:13:21Z"
-        },
-        {
-          "version": 55,
-          "snapshotId": "snapshot_da07az6n",
-          "capturedAt": "2026-01-14T02:49:52Z"
-        },
-        {
-          "version": 56,
-          "snapshotId": "snapshot_i2na2azp",
-          "capturedAt": "2026-01-14T03:44:15Z"
-        },
-        {
-          "version": 57,
-          "snapshotId": "snapshot_8apf9s6p",
-          "capturedAt": "2026-01-14T07:41:59Z"
-        },
-        {
-          "version": 58,
-          "snapshotId": "snapshot_v7hqwnl1",
-          "capturedAt": "2026-01-16T19:21:33Z"
-        },
-        {
-          "version": 59,
-          "snapshotId": "snapshot_e1ofdbpj",
-          "capturedAt": "2026-01-16T21:09:07Z"
-        },
-        {
-          "version": 60,
-          "snapshotId": "snapshot_hhybc4sj",
-          "capturedAt": "2026-01-17T02:04:29Z"
-        },
-        {
-          "version": 61,
-          "snapshotId": "snapshot_mukix3mh",
-          "capturedAt": "2026-01-21T03:37:26Z"
-        },
-        {
-          "version": 62,
-          "snapshotId": "snapshot_g18cbqgj",
-          "capturedAt": "2026-01-21T04:07:02Z"
-        },
-        {
-          "version": 63,
-          "snapshotId": "snapshot_3d2u3up6",
-          "capturedAt": "2026-01-21T10:00:24Z"
-        },
-        {
-          "version": 64,
-          "snapshotId": "snapshot_tv4jhunk",
-          "capturedAt": "2026-01-21T11:16:39Z"
-        },
-        {
-          "version": 65,
-          "snapshotId": "snapshot_pckmaysy",
-          "capturedAt": "2026-01-23T02:11:33Z"
-        },
-        {
-          "version": 66,
-          "snapshotId": "snapshot_mn6opll5",
-          "capturedAt": "2026-01-26T02:24:22Z"
-        },
-        {
-          "version": 67,
-          "snapshotId": "snapshot_1bzk6hto",
-          "capturedAt": "2026-01-27T01:03:05Z"
-        },
-        {
-          "version": 68,
-          "snapshotId": "snapshot_9vzwke5k",
-          "capturedAt": "2026-01-27T01:43:32Z"
-        },
-        {
-          "version": 69,
-          "snapshotId": "snapshot_s95678bx",
-          "capturedAt": "2026-01-27T06:29:56Z"
-        },
-        {
-          "version": 70,
-          "snapshotId": "snapshot_mr8wyw8u",
-          "capturedAt": "2026-01-27T22:30:48Z"
-        },
-        {
-          "version": 71,
-          "snapshotId": "snapshot_q971vie6",
-          "capturedAt": "2026-02-06T00:03:47Z"
+          "snapshotId": "snapshot_fe0cgqlw",
+          "capturedAt": "2026-02-15T08:39:26Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
-    },
-    {
-      "presetId": "6vcpu_24gb_48gb",
-      "label": "Standard workspace",
-      "cpu": "6 vCPU",
-      "memory": "24 GB RAM",
-      "disk": "48 GB SSD",
-      "versions": [
-        {
-          "version": 1,
-          "snapshotId": "snapshot_pcmfvjra",
-          "capturedAt": "2025-11-18T22:38:55Z"
-        }
-      ]
     }
   ]
 }

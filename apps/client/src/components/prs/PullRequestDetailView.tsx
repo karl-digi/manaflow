@@ -758,7 +758,16 @@ export function PullRequestDetailView({
 
     const allPassing = runs.every((run) => {
       const conclusion = run.conclusion;
-      return typeof conclusion === "string" && RUN_PASSING_CONCLUSIONS.has(conclusion);
+      // If conclusion is explicitly a passing value, it passes
+      if (typeof conclusion === "string" && RUN_PASSING_CONCLUSIONS.has(conclusion)) {
+        return true;
+      }
+      // If status is completed but conclusion is undefined/missing, treat as passing
+      // This handles checks that complete without setting a conclusion (e.g., Vercel Preview)
+      if (run.status === "completed" && conclusion === undefined) {
+        return true;
+      }
+      return false;
     });
 
     if (!allPassing) {

@@ -1,9 +1,18 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
+import { getPveLxcClient } from "@/lib/utils/pve-lxc-client";
+import { PVE_LXC_SNAPSHOT_PRESETS } from "@/lib/utils/pve-lxc-defaults";
+import { getActiveSandboxProvider } from "@/lib/utils/sandbox-provider";
+import {
+  type SandboxInstance,
+  wrapMorphInstance,
+  wrapPveLxcInstance,
+} from "@/lib/utils/sandbox-instance";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import { SNAPSHOT_PROVIDERS } from "@cmux/shared/provider-types";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
@@ -71,11 +80,24 @@ const sanitizePortsOrThrow = (ports: readonly number[]): number[] => {
 
 const serviceNameForPort = (port: number): string => `port-${port}`;
 
+const detectInstanceProvider = (
+  instanceId: string
+): "morph" | "pve-lxc" | "pve-vm" | "other" => {
+  if (instanceId.startsWith("morphvm_")) return "morph";
+  if (instanceId.startsWith("pvelxc-")) {
+    return "pve-lxc";
+  }
+  if (instanceId.startsWith("pvevm-") || instanceId.startsWith("pve_vm_")) {
+    return "pve-vm";
+  }
+  return "other";
+};
+
 const CreateEnvironmentBody = z
   .object({
     teamSlugOrId: z.string(),
     name: z.string(),
-    morphInstanceId: z.string(),
+    instanceId: z.string(),
     envVarsContent: z.string(), // The entire .env file content
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
@@ -89,6 +111,7 @@ const CreateEnvironmentResponse = z
   .object({
     id: z.string(),
     snapshotId: z.string(),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
   })
   .openapi("CreateEnvironmentResponse");
 
@@ -96,7 +119,9 @@ const GetEnvironmentResponse = z
   .object({
     id: z.string(),
     name: z.string(),
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
+    templateVmid: z.number().optional(),
     dataVaultKey: z.string(),
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
@@ -117,6 +142,13 @@ const GetEnvironmentVarsResponse = z
     envVarsContent: z.string(),
   })
   .openapi("GetEnvironmentVarsResponse");
+
+const UpdateEnvironmentVarsBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    envVarsContent: z.string(),
+  })
+  .openapi("UpdateEnvironmentVarsBody");
 
 const UpdateEnvironmentBody = z
   .object({
@@ -147,7 +179,7 @@ const UpdateEnvironmentPortsBody = z
   .object({
     teamSlugOrId: z.string(),
     ports: z.array(z.number()),
-    morphInstanceId: z.string().optional(),
+    instanceId: z.string().optional(),
   })
   .openapi("UpdateEnvironmentPortsBody");
 
@@ -162,7 +194,9 @@ const SnapshotVersionResponse = z
   .object({
     id: z.string(),
     version: z.number(),
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
+    templateVmid: z.number().optional(),
     createdAt: z.number(),
     createdByUserId: z.string(),
     label: z.string().optional(),
@@ -179,7 +213,7 @@ const ListSnapshotVersionsResponse = z
 const CreateSnapshotVersionBody = z
   .object({
     teamSlugOrId: z.string(),
-    morphInstanceId: z.string(),
+    instanceId: z.string(),
     label: z.string().optional(),
     activate: z.boolean().optional(),
     maintenanceScript: z.string().optional(),
@@ -191,6 +225,7 @@ const CreateSnapshotVersionResponse = z
   .object({
     snapshotVersionId: z.string(),
     snapshotId: z.string(),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
     version: z.number(),
   })
   .openapi("CreateSnapshotVersionResponse");
@@ -203,7 +238,9 @@ const ActivateSnapshotVersionBody = z
 
 const ActivateSnapshotVersionResponse = z
   .object({
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(SNAPSHOT_PROVIDERS),
+    templateVmid: z.number().optional(),
     version: z.number(),
   })
   .openapi("ActivateSnapshotVersionResponse");
@@ -257,17 +294,13 @@ environmentsRouter.openapi(
           ? sanitizePortsOrThrow(body.exposedPorts)
           : [];
 
-      // Create Morph snapshot from instance
-      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await withMorphRetry(
-        () => client.instances.get({ instanceId: body.morphInstanceId }),
-        "instances.get (create environment)"
-      );
-
-      // Ensure instance belongs to this team (when metadata exists)
-      const instanceTeamId = instance.metadata?.teamId;
-      if (instanceTeamId && instanceTeamId !== team.uuid) {
-        return c.text("Forbidden: Instance does not belong to this team", 403);
+      const provider = getActiveSandboxProvider().provider;
+      const instanceProvider = detectInstanceProvider(body.instanceId);
+      if (instanceProvider !== "other" && instanceProvider !== provider) {
+        return c.text(
+          "Forbidden: Instance provider does not match active sandbox provider",
+          403
+        );
       }
 
       const persistDataVaultPromise = (async () => {
@@ -280,9 +313,58 @@ environmentsRouter.openapi(
         return { dataVaultKey };
       })();
 
-      await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+      let snapshotId: string;
+      let snapshotProvider:
+        | "morph"
+        | "pve-lxc"
+        | "pve-vm"
+        | "docker"
+        | "daytona"
+        | "other";
+      let templateVmid: number | undefined;
 
-      const snapshot = await instance.snapshot();
+      const resolvedProvider =
+        instanceProvider !== "other" ? instanceProvider : provider;
+
+      if (resolvedProvider === "pve-lxc") {
+        const pveClient = getPveLxcClient();
+        const pveInstance = await pveClient.instances.get({
+          instanceId: body.instanceId,
+        });
+
+        // Ensure container is running before executing cleanup commands
+        if (pveInstance.status !== "running") {
+          await pveInstance.start();
+        }
+
+        await pveInstance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const template = await pveClient.createTemplateFromContainer(
+          body.instanceId
+        );
+        snapshotId = template.snapshotId;
+        templateVmid = template.templateVmid;
+        snapshotProvider = "pve-lxc";
+      } else {
+        // Create Morph snapshot from instance
+        const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+        const instance = await withMorphRetry(
+          () => client.instances.get({ instanceId: body.instanceId }),
+          "instances.get (create environment)"
+        );
+
+        // Ensure instance belongs to this team (when metadata exists)
+        const instanceTeamId = instance.metadata?.teamId;
+        if (instanceTeamId && instanceTeamId !== team.uuid) {
+          return c.text("Forbidden: Instance does not belong to this team", 403);
+        }
+
+        await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const snapshot = await instance.snapshot();
+        snapshotId = snapshot.id;
+        snapshotProvider = "morph";
+      }
 
       const convexClient = getConvex({ accessToken });
       const { dataVaultKey } = await persistDataVaultPromise;
@@ -291,7 +373,9 @@ environmentsRouter.openapi(
         {
           teamSlugOrId: body.teamSlugOrId,
           name: body.name,
-          morphSnapshotId: snapshot.id,
+          snapshotId,
+          snapshotProvider,
+          templateVmid,
           dataVaultKey,
           selectedRepos: body.selectedRepos,
           description: body.description,
@@ -303,7 +387,8 @@ environmentsRouter.openapi(
 
       return c.json({
         id: environmentId,
-        snapshotId: snapshot.id,
+        snapshotId,
+        snapshotProvider,
       });
     } catch (error) {
       if (error instanceof HTTPException) {
@@ -354,19 +439,26 @@ environmentsRouter.openapi(
       });
 
       // Map Convex documents to API response shape
-      const result = environments.map((env) => ({
-        id: env._id,
-        name: env.name,
-        morphSnapshotId: env.morphSnapshotId,
-        dataVaultKey: env.dataVaultKey,
-        selectedRepos: env.selectedRepos,
-        description: env.description,
-        maintenanceScript: env.maintenanceScript,
-        devScript: env.devScript,
-        exposedPorts: env.exposedPorts,
-        createdAt: env.createdAt,
-        updatedAt: env.updatedAt,
-      }));
+      const result = environments.map((env) => {
+        if (!env.snapshotId || !env.snapshotProvider) {
+          throw new Error(`Environment ${env._id} is missing snapshot metadata`);
+        }
+        return {
+          id: env._id,
+          name: env.name,
+          snapshotId: env.snapshotId,
+          snapshotProvider: env.snapshotProvider,
+          templateVmid: env.templateVmid ?? undefined,
+          dataVaultKey: env.dataVaultKey,
+          selectedRepos: env.selectedRepos,
+          description: env.description,
+          maintenanceScript: env.maintenanceScript,
+          devScript: env.devScript,
+          exposedPorts: env.exposedPorts,
+          createdAt: env.createdAt,
+          updatedAt: env.updatedAt,
+        };
+      });
 
       return c.json(result);
     } catch (error) {
@@ -425,10 +517,15 @@ environmentsRouter.openapi(
         return c.text("Environment not found", 404);
       }
       // Map Convex document to API response shape
+      if (!environment.snapshotId || !environment.snapshotProvider) {
+        throw new Error(`Environment ${environment._id} is missing snapshot metadata`);
+      }
       const mapped = {
         id: environment._id,
         name: environment.name,
-        morphSnapshotId: environment.morphSnapshotId,
+        snapshotId: environment.snapshotId,
+        snapshotProvider: environment.snapshotProvider,
+        templateVmid: environment.templateVmid ?? undefined,
         dataVaultKey: environment.dataVaultKey,
         selectedRepos: environment.selectedRepos,
         description: environment.description,
@@ -516,6 +613,82 @@ environmentsRouter.openapi(
   }
 );
 
+// Update environment variables for a specific environment
+environmentsRouter.openapi(
+  createRoute({
+    method: "patch" as const,
+    path: "/environments/{id}/vars",
+    tags: ["Environments"],
+    summary: "Update environment variables for a specific environment",
+    request: {
+      params: z.object({
+        id: z.string(),
+      }),
+      body: {
+        content: {
+          "application/json": {
+            schema: UpdateEnvironmentVarsBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: GetEnvironmentVarsResponse,
+          },
+        },
+        description: "Environment variables updated successfully",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Environment not found" },
+      500: { description: "Failed to update environment variables" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+
+    try {
+      await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      const convexClient = getConvex({ accessToken });
+      const environmentId = typedZid("environments").parse(id);
+      const environment = await convexClient.query(api.environments.get, {
+        teamSlugOrId: body.teamSlugOrId,
+        id: environmentId,
+      });
+
+      if (!environment) {
+        return c.text("Environment not found", 404);
+      }
+
+      const store =
+        await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+      await store.setValue(environment.dataVaultKey, body.envVarsContent, {
+        secret: env.STACK_DATA_VAULT_SECRET,
+      });
+
+      return c.json({ envVarsContent: body.envVarsContent });
+    } catch (error) {
+      if (error instanceof HTTPException) {
+        throw error;
+      }
+      console.error("Failed to update environment variables:", error);
+      return c.text("Failed to update environment variables", 500);
+    }
+  }
+);
+
 // Update metadata for an environment
 environmentsRouter.openapi(
   createRoute({
@@ -584,10 +757,16 @@ environmentsRouter.openapi(
         return c.text("Environment not found", 404);
       }
 
+      if (!updated.snapshotId || !updated.snapshotProvider) {
+        throw new Error(`Environment ${updated._id} is missing snapshot metadata`);
+      }
+
       return c.json({
         id: updated._id,
         name: updated.name,
-        morphSnapshotId: updated.morphSnapshotId,
+        snapshotId: updated.snapshotId,
+        snapshotProvider: updated.snapshotProvider,
+        templateVmid: updated.templateVmid ?? undefined,
         dataVaultKey: updated.dataVaultKey,
         selectedRepos: updated.selectedRepos ?? undefined,
         description: updated.description ?? undefined,
@@ -666,30 +845,42 @@ environmentsRouter.openapi(
           }>
         | undefined;
 
-      if (body.morphInstanceId) {
-        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-        const instance = await withMorphRetry(
-          () => morphClient.instances.get({ instanceId: body.morphInstanceId! }),
-          "instances.get (update ports)"
-        );
-
-        const metadata = instance.metadata;
-        const instanceTeamId = metadata?.teamId;
-        if (instanceTeamId && instanceTeamId !== team.uuid) {
-          return c.text(
-            "Forbidden: Instance does not belong to this team",
-            403
+      if (body.instanceId) {
+        const instanceProvider = detectInstanceProvider(body.instanceId);
+        let workingInstance: SandboxInstance;
+        if (instanceProvider === "pve-lxc") {
+          const pveClient = getPveLxcClient();
+          const pveInstance = await pveClient.instances.get({
+            instanceId: body.instanceId,
+          });
+          workingInstance = wrapPveLxcInstance(pveInstance);
+        } else if (instanceProvider === "morph") {
+          const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+          const instance = await withMorphRetry(
+            () => morphClient.instances.get({ instanceId: body.instanceId! }),
+            "instances.get (update ports)"
           );
-        }
-        const metadataEnvironmentId = metadata?.environmentId;
-        if (metadataEnvironmentId && metadataEnvironmentId !== id) {
-          return c.text(
-            "Forbidden: Instance does not belong to this environment",
-            403
-          );
+
+          const metadata = instance.metadata;
+          const instanceTeamId = metadata?.teamId;
+          if (instanceTeamId && instanceTeamId !== team.uuid) {
+            return c.text(
+              "Forbidden: Instance does not belong to this team",
+              403
+            );
+          }
+          const metadataEnvironmentId = metadata?.environmentId;
+          if (metadataEnvironmentId && metadataEnvironmentId !== id) {
+            return c.text(
+              "Forbidden: Instance does not belong to this environment",
+              403
+            );
+          }
+          workingInstance = wrapMorphInstance(instance);
+        } else {
+          return c.text("Sandbox instance provider not supported", 404);
         }
 
-        const workingInstance = instance;
         const { servicesToHide, portsToExpose, servicesToKeep } =
           determineHttpServiceUpdates(
             workingInstance.networking.httpServices,
@@ -704,7 +895,7 @@ environmentsRouter.openapi(
           const serviceName = serviceNameForPort(port);
           return (async () => {
             try {
-              return await workingInstance.exposeHttpService(serviceName, port);
+              await workingInstance.exposeHttpService(serviceName, port);
             } catch (error) {
               console.error(
                 `[environments.updatePorts] Failed to expose ${serviceName}`,
@@ -717,10 +908,31 @@ environmentsRouter.openapi(
           })();
         });
 
-        const [_, newlyExposedServices] = await Promise.all([
+        await Promise.all([
           Promise.all(hidePromises),
           Promise.all(exposePromises),
         ]);
+
+        const reloadInstance = async () => {
+          if (instanceProvider === "pve-lxc") {
+            const pveClient = getPveLxcClient();
+            const pveInstance = await pveClient.instances.get({
+              instanceId: body.instanceId!,
+            });
+            return wrapPveLxcInstance(pveInstance);
+          }
+          if (instanceProvider === "morph") {
+            const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+            const instance = await withMorphRetry(
+              () => morphClient.instances.get({ instanceId: body.instanceId! }),
+              "instances.get (update ports reload)"
+            );
+            return wrapMorphInstance(instance);
+          }
+          return workingInstance;
+        };
+
+        workingInstance = await reloadInstance();
 
         const serviceUrls = new Map<number, string>();
 
@@ -728,8 +940,14 @@ environmentsRouter.openapi(
           serviceUrls.set(service.port, service.url);
         }
 
-        for (const service of newlyExposedServices) {
-          serviceUrls.set(service.port, service.url);
+        for (const port of sanitizedPorts) {
+          const serviceName = serviceNameForPort(port);
+          const matched = workingInstance.networking.httpServices.find(
+            (service) => service.name === serviceName || service.port === port
+          );
+          if (matched?.url) {
+            serviceUrls.set(port, matched.url);
+          }
         }
 
         services = Array.from(serviceUrls.entries())
@@ -817,17 +1035,26 @@ environmentsRouter.openapi(
         return c.text("Environment not found", 404);
       }
 
-      const mapped = versions.map((version) => ({
-        id: String(version._id),
-        version: version.version,
-        morphSnapshotId: version.morphSnapshotId,
-        createdAt: version.createdAt,
-        createdByUserId: version.createdByUserId,
-        label: version.label ?? undefined,
-        isActive: version.isActive,
-        maintenanceScript: version.maintenanceScript ?? undefined,
-        devScript: version.devScript ?? undefined,
-      }));
+      const mapped = versions.map((version) => {
+        if (!version.snapshotId || !version.snapshotProvider) {
+          throw new Error(
+            `Snapshot version ${version._id} is missing snapshot metadata`
+          );
+        }
+        return {
+          id: String(version._id),
+          version: version.version,
+          snapshotId: version.snapshotId,
+          snapshotProvider: version.snapshotProvider,
+          templateVmid: version.templateVmid ?? undefined,
+          createdAt: version.createdAt,
+          createdByUserId: version.createdByUserId,
+          label: version.label ?? undefined,
+          isActive: version.isActive,
+          maintenanceScript: version.maintenanceScript ?? undefined,
+          devScript: version.devScript ?? undefined,
+        };
+      });
 
       return c.json(mapped);
     } catch (error) {
@@ -887,35 +1114,81 @@ environmentsRouter.openapi(
       });
 
       const convexClient = getConvex({ accessToken });
-      const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await withMorphRetry(
-        () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
-        "instances.get (create snapshot)"
-      );
-
-      const metadata = instance.metadata;
-      const instanceTeamId = metadata?.teamId;
-      if (instanceTeamId && instanceTeamId !== team.uuid) {
-        return c.text("Forbidden: Instance does not belong to this team", 403);
-      }
-      const metadataEnvironmentId = metadata?.environmentId;
-      if (metadataEnvironmentId && metadataEnvironmentId !== id) {
+      const provider = getActiveSandboxProvider().provider;
+      const instanceProvider = detectInstanceProvider(body.instanceId);
+      if (instanceProvider !== "other" && instanceProvider !== provider) {
         return c.text(
-          "Forbidden: Instance does not belong to this environment",
+          "Forbidden: Instance provider does not match active sandbox provider",
           403
         );
       }
 
-      await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+      let snapshotId: string;
+      let snapshotProvider:
+        | "morph"
+        | "pve-lxc"
+        | "pve-vm"
+        | "docker"
+        | "daytona"
+        | "other";
+      let templateVmid: number | undefined;
 
-      const snapshot = await instance.snapshot();
+      const resolvedProvider =
+        instanceProvider !== "other" ? instanceProvider : provider;
+
+      if (resolvedProvider === "pve-lxc") {
+        const pveClient = getPveLxcClient();
+        const pveInstance = await pveClient.instances.get({
+          instanceId: body.instanceId,
+        });
+
+        if (pveInstance.status !== "running") {
+          await pveInstance.start();
+        }
+
+        await pveInstance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const template = await pveClient.createTemplateFromContainer(
+          body.instanceId
+        );
+        snapshotId = template.snapshotId;
+        templateVmid = template.templateVmid;
+        snapshotProvider = "pve-lxc";
+      } else {
+        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+        const instance = await withMorphRetry(
+          () => morphClient.instances.get({ instanceId: body.instanceId }),
+          "instances.get (create snapshot)"
+        );
+
+        const metadata = instance.metadata;
+        const instanceTeamId = metadata?.teamId;
+        if (instanceTeamId && instanceTeamId !== team.uuid) {
+          return c.text("Forbidden: Instance does not belong to this team", 403);
+        }
+        const metadataEnvironmentId = metadata?.environmentId;
+        if (metadataEnvironmentId && metadataEnvironmentId !== id) {
+          return c.text(
+            "Forbidden: Instance does not belong to this environment",
+            403
+          );
+        }
+
+        await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const snapshot = await instance.snapshot();
+        snapshotId = snapshot.id;
+        snapshotProvider = "morph";
+      }
 
       const creation = await convexClient.mutation(
         api.environmentSnapshots.create,
         {
           teamSlugOrId: body.teamSlugOrId,
           environmentId,
-          morphSnapshotId: snapshot.id,
+          snapshotId,
+          snapshotProvider,
+          templateVmid,
           label: body.label,
           activate: body.activate,
           maintenanceScript: body.maintenanceScript,
@@ -925,7 +1198,8 @@ environmentsRouter.openapi(
 
       return c.json({
         snapshotVersionId: String(creation.snapshotVersionId),
-        snapshotId: snapshot.id,
+        snapshotId,
+        snapshotProvider,
         version: creation.version,
       });
     } catch (error) {
@@ -1056,9 +1330,82 @@ environmentsRouter.openapi(
 
     try {
       const convexClient = getConvex({ accessToken });
+      const environmentId = typedZid("environments").parse(id);
+
+      const environment = await convexClient.query(api.environments.get, {
+        teamSlugOrId,
+        id: environmentId,
+      });
+
+      if (!environment) {
+        return c.text("Environment not found", 404);
+      }
+
+      const snapshotVersions =
+        (await convexClient.query(api.environmentSnapshots.list, {
+          teamSlugOrId,
+          environmentId,
+        })) ?? [];
+
+      const provider =
+        environment.snapshotProvider ?? getActiveSandboxProvider().provider;
+
+      if (provider === "pve-lxc") {
+        const pveClient = getPveLxcClient();
+        const presetTemplateVmids = new Set(
+          PVE_LXC_SNAPSHOT_PRESETS.flatMap((preset) =>
+            preset.versions.map((v) => v.templateVmid)
+          )
+        );
+
+        const templateVmids = new Set<number>();
+        if (environment.templateVmid) {
+          templateVmids.add(environment.templateVmid);
+        }
+        snapshotVersions.forEach((version) => {
+          if (version.templateVmid) {
+            templateVmids.add(version.templateVmid);
+          }
+        });
+
+        for (const vmid of templateVmids) {
+          if (!Number.isFinite(vmid)) continue;
+
+          // Protect base templates and low VMIDs reserved for presets
+          if (vmid < 200 || presetTemplateVmids.has(vmid)) {
+            console.log(
+              `[environments.delete] Skipping PVE template cleanup for protected VMID ${vmid}`
+            );
+            continue;
+          }
+
+          try {
+            await pveClient.deleteContainer(vmid);
+            console.log(
+              `[environments.delete] Deleted PVE template container ${vmid}`
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            // Treat already-deleted templates as non-fatal
+            if (message.includes("404") || message.includes("Not found")) {
+              console.warn(
+                `[environments.delete] PVE template ${vmid} already deleted`
+              );
+              continue;
+            }
+            console.error(
+              `[environments.delete] Failed to delete PVE template ${vmid}:`,
+              message
+            );
+            return c.text("Failed to delete environment", 500);
+          }
+        }
+      }
+
       await convexClient.mutation(api.environments.remove, {
         teamSlugOrId,
-        id: typedZid("environments").parse(id),
+        id: environmentId,
       });
 
       return c.body(null, 204);

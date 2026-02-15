@@ -1,4 +1,5 @@
 import type { Id } from "@cmux/convex/dataModel";
+import type { RuntimeProvider } from "@cmux/shared/provider-types";
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
 import { dockerLogger } from "../utils/fileLogger";
@@ -28,7 +29,7 @@ export interface VSCodeInstanceInfo {
   workspaceUrl: string;
   instanceId: string;
   taskRunId: Id<"taskRuns">;
-  provider: "docker" | "morph" | "daytona";
+  provider: RuntimeProvider;
   /** If true, VSCode URLs were already persisted to Convex by www */
   vscodePersisted?: boolean;
 }
@@ -308,6 +309,28 @@ export abstract class VSCodeInstance extends EventEmitter {
       this.workerSocket.disconnect();
       this.workerSocket = null;
       this.workerConnected = false;
+    }
+  }
+
+  /**
+   * Reconnect to worker at a new URL. Used when container restarts with new ports.
+   */
+  async reconnectToWorker(workerUrl: string): Promise<void> {
+    dockerLogger.info(
+      `[VSCodeInstance ${this.instanceId}] Reconnecting to worker at ${workerUrl}`
+    );
+    await this.disconnectFromWorker();
+    try {
+      await this.connectToWorker(workerUrl);
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Successfully reconnected to worker`
+      );
+    } catch (error) {
+      dockerLogger.error(
+        `[VSCodeInstance ${this.instanceId}] Failed to reconnect to worker:`,
+        error
+      );
+      // Don't throw - let the instance continue even if worker reconnect fails
     }
   }
 

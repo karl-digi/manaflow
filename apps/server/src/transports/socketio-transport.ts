@@ -1,8 +1,10 @@
-import type {
-  ClientToServerEvents,
-  InterServerEvents,
-  ServerToClientEvents,
-  SocketData,
+import {
+  buildTrustedProxyDomainSet,
+  isTrustedProxyHostname,
+  type ClientToServerEvents,
+  type InterServerEvents,
+  type ServerToClientEvents,
+  type SocketData,
 } from "@cmux/shared";
 import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
@@ -22,6 +24,9 @@ export function createSocketIOTransport(
   const dynamicAllowed = new Set(
     (allowedOriginsEnv?.split(",") ?? []).map((s) => s.trim()).filter(Boolean)
   );
+  const trustedProxyDomains = buildTrustedProxyDomainSet([
+    process.env.PVE_PUBLIC_DOMAIN,
+  ]);
 
   const isOriginAllowed = (origin?: string | null) => {
     if (!origin) return true; // Electron/file:// often has no Origin
@@ -30,6 +35,8 @@ export function createSocketIOTransport(
       if (defaultAllowed.has(origin) || dynamicAllowed.has(origin)) return true;
       // Allow localhost during development regardless of port
       if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+      // Allow trusted proxy URL patterns only (PVE LXC, Morph, etc.)
+      if (isTrustedProxyHostname(u.hostname, trustedProxyDomains)) return true;
     } catch {
       // Non-URL origin strings: be permissive
       return true;

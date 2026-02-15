@@ -1,0 +1,518 @@
+# Manaflow (cmux)
+
+Manaflow is an open-source alternative to Claude Code web, Codex Cloud, and Devin that enables parallel execution of AI coding agents. It allows developers to spawn multiple coding agent CLIs (Claude Code, Codex CLI, Gemini CLI, Amp, Opencode, and others) simultaneously across different tasks. Each agent runs in its own isolated VS Code workspace powered by Morph cloud sandboxes or local Docker containers, providing full git diff views, terminal access, and dev server previews.
+
+The platform is built as a monorepo using Bun, with a React/TanStack frontend, Hono REST API backend, and Convex real-time database. It integrates with GitHub for repository management, pull request creation, and automated code reviews with AI-powered heatmap diff visualization that highlights risky code changes for efficient review.
+
+## API Reference
+
+### Start a Sandbox Environment
+
+Creates and starts a new cloud sandbox with an isolated VS Code workspace, optionally cloning a repository and configuring environment variables.
+
+```bash
+curl -X POST https://api.cmux.dev/api/sandboxes/start \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "repoUrl": "https://github.com/owner/repo",
+    "branch": "main",
+    "newBranch": "feature/my-feature",
+    "ttlSeconds": 3600,
+    "metadata": {
+      "taskType": "feature-development"
+    }
+  }'
+
+# Response:
+# {
+#   "instanceId": "morphvm_abc123",
+#   "vscodeUrl": "https://vscode.morph.so/abc123",
+#   "workerUrl": "https://worker.morph.so/abc123",
+#   "provider": "morph",
+#   "vscodePersisted": true
+# }
+```
+
+### Stop/Pause a Sandbox
+
+Pauses a running sandbox instance, preserving its state for later resumption.
+
+```bash
+curl -X POST https://api.cmux.dev/api/sandboxes/morphvm_abc123/stop \
+  -H "Authorization: Bearer <access_token>"
+
+# Response: 204 No Content
+```
+
+### Get Sandbox Status
+
+Retrieves the current status and URLs of a sandbox instance.
+
+```bash
+curl -X GET "https://api.cmux.dev/api/sandboxes/morphvm_abc123/status" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# {
+#   "running": true,
+#   "vscodeUrl": "https://vscode.morph.so/abc123",
+#   "workerUrl": "https://worker.morph.so/abc123",
+#   "provider": "morph"
+# }
+```
+
+### Get SSH Connection Details
+
+Returns SSH connection info for accessing a sandbox directly via terminal.
+
+```bash
+curl -X GET "https://api.cmux.dev/api/sandboxes/morphvm_abc123/ssh?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# {
+#   "morphInstanceId": "morphvm_abc123",
+#   "sshCommand": "ssh abc123token@ssh.cloud.morph.so",
+#   "accessToken": "abc123token",
+#   "user": "root",
+#   "status": "running"
+# }
+```
+
+### Resume a Paused Sandbox
+
+Resumes a previously paused sandbox instance to accept connections again.
+
+```bash
+curl -X POST "https://api.cmux.dev/api/sandboxes/morphvm_abc123/resume?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# {
+#   "resumed": true
+# }
+```
+
+### Apply Environment Variables to Sandbox
+
+Updates environment variables in a running sandbox instance.
+
+```bash
+curl -X POST https://api.cmux.dev/api/sandboxes/morphvm_abc123/env \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "envVarsContent": "DATABASE_URL=postgres://...\nAPI_KEY=secret123"
+  }'
+
+# Response:
+# {
+#   "applied": true
+# }
+```
+
+### Prewarm Sandbox Instance
+
+Creates a prewarmed sandbox in the background for faster task startup when the user begins typing.
+
+```bash
+curl -X POST https://api.cmux.dev/api/sandboxes/prewarm \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "repoUrl": "https://github.com/owner/repo",
+    "branch": "main"
+  }'
+
+# Response:
+# {
+#   "id": "prewarm_xyz789",
+#   "alreadyExists": false
+# }
+```
+
+### Create Environment with Snapshot
+
+Creates a reusable environment from a running sandbox instance, capturing its state as a Morph snapshot.
+
+```bash
+curl -X POST https://api.cmux.dev/api/environments \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "name": "Node.js Development",
+    "morphInstanceId": "morphvm_abc123",
+    "envVarsContent": "NODE_ENV=development\nPORT=3000",
+    "selectedRepos": ["owner/repo1", "owner/repo2"],
+    "description": "Node.js 20 with common dev tools",
+    "maintenanceScript": "npm install",
+    "devScript": "npm run dev",
+    "exposedPorts": [3000, 5432]
+  }'
+
+# Response:
+# {
+#   "id": "env_abc123",
+#   "snapshotId": "snapshot_xyz789"
+# }
+```
+
+### List Environments
+
+Retrieves all environments configured for a team.
+
+```bash
+curl -X GET "https://api.cmux.dev/api/environments?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# [
+#   {
+#     "id": "env_abc123",
+#     "name": "Node.js Development",
+#     "morphSnapshotId": "snapshot_xyz789",
+#     "dataVaultKey": "env_secret_key",
+#     "selectedRepos": ["owner/repo1"],
+#     "description": "Node.js 20 with common dev tools",
+#     "maintenanceScript": "npm install",
+#     "devScript": "npm run dev",
+#     "exposedPorts": [3000, 5432],
+#     "createdAt": 1704067200000,
+#     "updatedAt": 1704067200000
+#   }
+# ]
+```
+
+### Get Environment Variables
+
+Retrieves the environment variables stored for an environment (securely stored in StackAuth DataVault).
+
+```bash
+curl -X GET "https://api.cmux.dev/api/environments/env_abc123/vars?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# {
+#   "envVarsContent": "NODE_ENV=development\nPORT=3000\nDATABASE_URL=..."
+# }
+```
+
+### Create Environment Snapshot Version
+
+Creates a new snapshot version from a running instance, allowing version control of environment states.
+
+```bash
+curl -X POST https://api.cmux.dev/api/environments/env_abc123/snapshots \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "morphInstanceId": "morphvm_abc123",
+    "label": "Added Redis support",
+    "activate": true,
+    "maintenanceScript": "npm install && redis-server --daemonize yes"
+  }'
+
+# Response:
+# {
+#   "snapshotVersionId": "snapver_abc123",
+#   "snapshotId": "snapshot_new789",
+#   "version": 2
+# }
+```
+
+### List Pull Requests
+
+Lists pull requests across repositories connected via GitHub App installation.
+
+```bash
+curl -X GET "https://api.cmux.dev/api/integrations/github/prs?team=my-team&state=open&per_page=20" \
+  -H "Authorization: Bearer <access_token>"
+
+# Response:
+# {
+#   "total_count": 42,
+#   "pullRequests": [
+#     {
+#       "id": 123456,
+#       "number": 42,
+#       "title": "Add new feature",
+#       "state": "open",
+#       "user": {
+#         "login": "developer",
+#         "id": 789,
+#         "avatar_url": "https://avatars.githubusercontent.com/u/789"
+#       },
+#       "repository_full_name": "owner/repo",
+#       "html_url": "https://github.com/owner/repo/pull/42",
+#       "created_at": "2024-01-15T10:30:00Z",
+#       "updated_at": "2024-01-16T14:20:00Z",
+#       "comments": 5
+#     }
+#   ]
+# }
+```
+
+### Start Automated Code Review
+
+Initiates an AI-powered code review for a pull request with heatmap visualization.
+
+```bash
+curl -X POST https://api.cmux.dev/api/code-review/start \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "githubLink": "https://github.com/owner/repo/pull/42",
+    "prNumber": 42,
+    "headCommitRef": "abc123def456",
+    "baseCommitRef": "main",
+    "heatmapModel": "anthropic-opus-4-5",
+    "tooltipLanguage": "en"
+  }'
+
+# Response:
+# {
+#   "job": {
+#     "jobId": "job_abc123",
+#     "teamId": "team_xyz",
+#     "repoFullName": "owner/repo",
+#     "repoUrl": "https://github.com/owner/repo",
+#     "prNumber": 42,
+#     "commitRef": "abc123def456",
+#     "headCommitRef": "abc123def456",
+#     "baseCommitRef": "main",
+#     "jobType": "pull_request",
+#     "requestedByUserId": "user_123",
+#     "state": "pending",
+#     "createdAt": 1704067200000,
+#     "updatedAt": 1704067200000
+#   },
+#   "deduplicated": false
+# }
+```
+
+### Simple Code Review (Streaming)
+
+Performs a lightweight AI code review on provided diffs with Server-Sent Events streaming.
+
+```bash
+curl -X POST "https://api.cmux.dev/api/code-review/simple?model=claude-sonnet&tooltipLanguage=en" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "fileDiffs": [
+      {
+        "filePath": "src/utils/helper.ts",
+        "diffText": "@@ -10,6 +10,8 @@\n function helper() {\n+  const unsafeData = eval(userInput);\n   return result;\n }"
+      }
+    ],
+    "diffLabel": "security-review"
+  }'
+
+# SSE Response stream:
+# data: {"type":"status","message":"starting"}
+# data: {"type":"file","filePath":"src/utils/helper.ts"}
+# data: {"type":"line","filePath":"src/utils/helper.ts","changeType":"add","diffLine":2,"codeLine":"  const unsafeData = eval(userInput);","mostImportantWord":"eval","shouldReviewWhy":"Security vulnerability: eval() with user input enables code injection","score":0.95,"scoreNormalized":0.95}
+# data: {"type":"file-complete","filePath":"src/utils/helper.ts","status":"reviewed","summary":"Critical security issue found"}
+# data: {"type":"complete"}
+```
+
+### Health Check
+
+Verifies API availability and server status.
+
+```bash
+curl -X GET https://api.cmux.dev/api/health
+
+# Response:
+# {
+#   "status": "ok"
+# }
+```
+
+## CLI Usage
+
+### Start Manaflow Server
+
+Launches the local Manaflow server with a repository path.
+
+```bash
+# Start with current directory as repository
+cmux .
+
+# Start with specific repository path
+cmux /path/to/my/repo
+
+# Start on custom port
+cmux -p 8080 /path/to/repo
+
+# Start without auto-killing ports
+cmux --no-autokill-ports .
+```
+
+### Uninstall Manaflow
+
+Removes Manaflow data and shows uninstall instructions.
+
+```bash
+cmux uninstall
+
+# Output:
+# 🗑️  Uninstalling cmux...
+# Removing data directory: ~/.cmux
+# ✓ Data directory removed successfully
+#
+# To complete the uninstallation:
+# If installed globally with npm:
+#   npm uninstall -g cmux
+# If installed globally with bun:
+#   bun uninstall -g cmux
+```
+
+## Convex Database Schema
+
+### Tasks Table
+
+Stores task definitions with associated metadata, images, and PR status.
+
+```typescript
+// packages/convex/convex/schema.ts
+tasks: defineTable({
+  text: v.string(),
+  isCompleted: v.boolean(),
+  isArchived: v.optional(v.boolean()),
+  pinned: v.optional(v.boolean()),
+  isPreview: v.optional(v.boolean()),
+  isLocalWorkspace: v.optional(v.boolean()),
+  isCloudWorkspace: v.optional(v.boolean()),
+  description: v.optional(v.string()),
+  pullRequestTitle: v.optional(v.string()),
+  pullRequestDescription: v.optional(v.string()),
+  projectFullName: v.optional(v.string()),
+  baseBranch: v.optional(v.string()),
+  generatedBranchName: v.optional(v.string()),
+  userId: v.string(),
+  teamId: v.string(),
+  environmentId: v.optional(v.id("environments")),
+  mergeStatus: v.optional(v.union(
+    v.literal("none"),
+    v.literal("pr_draft"),
+    v.literal("pr_open"),
+    v.literal("pr_merged"),
+    v.literal("pr_closed")
+  )),
+})
+```
+
+### Task Runs Table
+
+Tracks individual execution runs with sandbox instance details and PR information.
+
+```typescript
+// packages/convex/convex/schema.ts
+taskRuns: defineTable({
+  taskId: v.id("tasks"),
+  prompt: v.string(),
+  agentName: v.optional(v.string()),
+  summary: v.optional(v.string()),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("running"),
+    v.literal("completed"),
+    v.literal("failed"),
+    v.literal("skipped")
+  ),
+  vscode: v.optional(v.object({
+    provider: v.union(v.literal("docker"), v.literal("morph"), v.literal("daytona")),
+    containerName: v.optional(v.string()),
+    status: v.union(v.literal("starting"), v.literal("running"), v.literal("stopped")),
+    url: v.optional(v.string()),
+    workspaceUrl: v.optional(v.string()),
+    ports: v.optional(v.object({
+      vscode: v.string(),
+      worker: v.string(),
+      vnc: v.optional(v.string()),
+    })),
+  })),
+  pullRequestUrl: v.optional(v.string()),
+  pullRequestState: v.optional(v.union(
+    v.literal("none"),
+    v.literal("draft"),
+    v.literal("open"),
+    v.literal("merged"),
+    v.literal("closed")
+  )),
+})
+```
+
+### Environments Table
+
+Stores reusable sandbox environment configurations with snapshot references.
+
+```typescript
+// packages/convex/convex/schema.ts
+environments: defineTable({
+  name: v.string(),
+  teamId: v.string(),
+  userId: v.string(),
+  morphSnapshotId: v.string(),
+  dataVaultKey: v.string(),
+  selectedRepos: v.optional(v.array(v.string())),
+  description: v.optional(v.string()),
+  maintenanceScript: v.optional(v.string()),
+  devScript: v.optional(v.string()),
+  exposedPorts: v.optional(v.array(v.number())),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+```
+
+## Development Setup
+
+### Starting the Development Server
+
+The development environment uses Docker for local sandboxes and Convex for the backend database.
+
+```bash
+# Install dependencies
+bun install
+
+# Start the development server (includes Docker, Convex, and all services)
+./scripts/dev.sh
+
+# Optional: Force rebuild Docker images
+./scripts/dev.sh --force-docker-build
+
+# View service logs
+tail -f logs/convex-dev.log  # Convex backend
+tail -f logs/server.log       # Backend API server
+tail -f logs/client.log       # Frontend Vite dev server
+```
+
+### Running Tests
+
+Tests use Vitest and are placed alongside the files they test.
+
+```bash
+# Run all tests
+bun run test
+
+# Run type checking
+bun run typecheck
+
+# Run linting and checks
+bun check
+```
+
+## Summary
+
+Manaflow provides a powerful platform for parallelizing AI coding agent workflows with full isolation and observability. Teams can create reusable sandbox environments with pre-configured dependencies, environment variables, and startup scripts that spawn instantly for any task. The GitHub integration enables seamless repository cloning, branch management, and pull request creation directly from agent workspaces.
+
+The primary integration patterns include: (1) using the REST API to programmatically start sandboxes, manage environments, and trigger code reviews; (2) leveraging the real-time Convex subscriptions for live task status updates and agent output streaming; (3) connecting via SSH for direct terminal access to sandbox instances; and (4) utilizing the heatmap code review system to automatically highlight risky changes in pull requests for efficient human review.

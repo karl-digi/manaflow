@@ -35,7 +35,7 @@ const TABLE_CONFIG: Record<string, { uniqueKey: string[] }> = {
   teamPermissions: { uniqueKey: ["teamId", "userId", "permissionId"] },
   teamMemberships: { uniqueKey: ["teamId", "userId"] },
   environments: { uniqueKey: ["teamId", "name"] },
-  environmentSnapshotVersions: { uniqueKey: ["teamId", "morphSnapshotId"] },
+  environmentSnapshotVersions: { uniqueKey: ["teamId", "snapshotId"] },
   pullRequests: { uniqueKey: ["teamId", "repoFullName", "number"] },
   providerConnections: { uniqueKey: ["installationId"] },
   previewConfigs: { uniqueKey: ["teamId", "repoFullName"] },

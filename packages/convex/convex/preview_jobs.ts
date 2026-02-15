@@ -3,6 +3,7 @@ import {
   stopInstanceInstanceInstanceIdDelete,
 } from "@cmux/morphcloud-openapi-client";
 import { v } from "convex/values";
+import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import { runPreviewJob } from "./preview_jobs_worker";
@@ -189,6 +190,17 @@ export const executePreviewJob = internalAction({
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
+    const screenshotWorkflowEnabled =
+      env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+      env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
+    if (!screenshotWorkflowEnabled) {
+      console.log("[preview-jobs] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+        previewRunId: args.previewRunId,
+      });
+      return;
+    }
+
     await runPreviewJob(ctx, args.previewRunId);
   },
 });

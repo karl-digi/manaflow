@@ -11,6 +11,7 @@
 #   --skip-convex[=BOOL]    Skip Convex backend (default: true)
 #   --show-compose-logs     Show Docker Compose logs in console
 #   --electron              Start Electron app
+#   --electron-debug[=PORT] Enable Chrome DevTools remote debugging (default port: 9222)
 #   --convex-agent          Run convex dev in agent mode
 #
 # Environment variables:
@@ -108,30 +109,50 @@ if ! acquire_lock; then
         echo -e "\033[0;33mAnother dev.sh instance is running (PID: $existing_pid). Stopping it...\033[0m"
 
         # Kill process group and descendants
-        kill -TERM -- "-$existing_pid" 2>/dev/null || true
-        sleep 1
-        kill -9 -- "-$existing_pid" 2>/dev/null || true
+        # Try killing the process group first (negative PID), then fall back to the PID itself
+        kill -TERM -- "-$existing_pid" 2>/dev/null || kill -TERM "$existing_pid" 2>/dev/null || true
 
-        # Clean up docker compose if path is known
-        if [ -f "$PATHFILE" ]; then
-            project_path=$(cat "$PATHFILE" 2>/dev/null || true)
-            if [ -d "$project_path/.devcontainer" ]; then
-                echo "Stopping docker compose..."
-                for compose_file in "$project_path/.devcontainer"/docker-compose*.yml; do
-                    [ -f "$compose_file" ] && docker compose -f "$compose_file" down 2>/dev/null || true
-                done
-            fi
+        # Wait for the process to exit (up to 3 seconds)
+        wait_count=0
+        while [ $wait_count -lt 6 ] && is_dev_script_pid "$existing_pid"; do
+            sleep 0.5
+            wait_count=$((wait_count + 1))
+        done
+
+        # Force kill if still running
+        if is_dev_script_pid "$existing_pid"; then
+            kill -9 -- "-$existing_pid" 2>/dev/null || kill -9 "$existing_pid" 2>/dev/null || true
+            sleep 1
         fi
 
-        # Clean up lock files
-        rm -rf "$LOCKDIR" 2>/dev/null || true
-        rm -f "$LOCKFILE" "$PIDFILE" "$PATHFILE" 2>/dev/null || true
+        # Verify the process is actually gone before cleaning up locks
+        if is_dev_script_pid "$existing_pid"; then
+            echo -e "\033[0;31mWarning: Failed to stop previous dev.sh instance (PID: $existing_pid)\033[0m"
+            echo "The old instance may still be running. Try killing it manually."
+        else
+            # Process is confirmed terminated - safe to clean up
 
-        # Retry acquiring lock
-        sleep 1
-        if acquire_lock; then
-            lock_failed=false
-            echo -e "\033[0;32mPrevious instance stopped. Starting new dev server...\033[0m"
+            # Clean up docker compose if path is known
+            if [ -f "$PATHFILE" ]; then
+                project_path=$(cat "$PATHFILE" 2>/dev/null || true)
+                if [ -d "$project_path/.devcontainer" ]; then
+                    echo "Stopping docker compose..."
+                    for compose_file in "$project_path/.devcontainer"/docker-compose*.yml; do
+                        [ -f "$compose_file" ] && docker compose -f "$compose_file" down 2>/dev/null || true
+                    done
+                fi
+            fi
+
+            # Clean up lock files only after confirming process terminated
+            rm -rf "$LOCKDIR" 2>/dev/null || true
+            rm -f "$LOCKFILE" "$PIDFILE" "$PATHFILE" 2>/dev/null || true
+
+            # Retry acquiring lock
+            sleep 1
+            if acquire_lock; then
+                lock_failed=false
+                echo -e "\033[0;32mPrevious instance stopped. Starting new dev server...\033[0m"
+            fi
         fi
     fi
 
@@ -190,6 +211,8 @@ SHOW_COMPOSE_LOGS=false
 # Default to skipping Convex unless explicitly disabled via env/flag
 SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
+ELECTRON_DEBUG=false
+ELECTRON_DEBUG_PORT=9222
 SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
 CONVEX_AGENT_MODE=false
 
@@ -209,6 +232,27 @@ while [[ $# -gt 0 ]]; do
             ;;
         --electron)
             RUN_ELECTRON=true
+            shift
+            ;;
+        --electron-debug)
+            ELECTRON_DEBUG=true
+            # Check if next arg is a port number
+            if [[ -n "${2:-}" && "${2}" =~ ^[0-9]+$ ]]; then
+                ELECTRON_DEBUG_PORT="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --electron-debug=*)
+            ELECTRON_DEBUG=true
+            val="${1#*=}"
+            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                ELECTRON_DEBUG_PORT="$val"
+            else
+                echo "Invalid port for --electron-debug: $val. Use a number." >&2
+                exit 1
+            fi
             shift
             ;;
         --skip-convex)
@@ -298,6 +342,8 @@ DOCKER_BUILD_ARGS=(-t cmux-worker:0.0.1)
 if [ -n "${CMUX_DOCKER_PLATFORM:-}" ]; then
     DOCKER_BUILD_ARGS+=(--platform "${CMUX_DOCKER_PLATFORM}")
 fi
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
+DOCKER_BUILD_ARGS+=(--build-arg "IDE_DEPS_CHANNEL=${IDE_DEPS_CHANNEL}")
 
 # Allow passing a GitHub token to avoid API rate limiting during docker builds.
 # Prefer an existing GITHUB_TOKEN environment variable, otherwise fall back to `gh auth token`.
@@ -388,7 +434,11 @@ cleanup() {
         return
     fi
     CLEANUP_STARTED=true
-    trap - EXIT INT TERM HUP QUIT
+    # Ignore ALL signals during cleanup to ensure it completes
+    trap '' INT TERM HUP QUIT PIPE
+    trap - EXIT
+    # Disable errexit to prevent early exit on command failures
+    set +e
 
     echo -e "\n${BLUE}Shutting down...${NC}"
 
@@ -410,6 +460,9 @@ cleanup() {
     # Force kill any remaining descendants
     kill_descendants $$ 9 "$$"
 
+    # Clean up any orphaned port listeners - CRITICAL for Linux
+    "$SCRIPT_DIR/_port-clean.sh" 5173 9776 9779 2>/dev/null || true
+
     # Clean up any docker compose in this project's .devcontainer (if exists)
     if [ -d "$APP_DIR/.devcontainer" ]; then
         for compose_file in "$APP_DIR/.devcontainer"/docker-compose*.yml; do
@@ -422,7 +475,7 @@ cleanup() {
     rm -f "$PIDFILE" "$PATHFILE" 2>/dev/null || true
 
     echo -e "${GREEN}Cleanup complete${NC}"
-    exit
+    exit 0
 }
 
 # Set up trap to cleanup on script exit
@@ -453,8 +506,9 @@ fi
 prefix_output() {
     local label="$1"
     local color="$2"
-    while IFS= read -r line; do
-        echo -e "${color}[${label}]${NC} $line"
+    trap '' PIPE
+    while IFS= read -r line 2>/dev/null || [[ -n "$line" ]]; do
+        echo -e "${color}[${label}]${NC} $line" 2>/dev/null || break
     done
 }
 # Export the function so it's available in subshells
@@ -524,23 +578,48 @@ wait_for_log_message() {
 
 # Start Convex backend (different for devcontainer vs host)
 if [ "$SKIP_CONVEX" = "true" ]; then
-    echo -e "${YELLOW}Skipping Convex (SKIP_CONVEX=true)${NC}"
+    echo -e "${YELLOW}Skipping local Convex backend (SKIP_CONVEX=true)${NC}"
+
+    # Check if using Convex Cloud (CONVEX_DEPLOY_KEY is set)
+    # If so, we still need to initialize env vars on the cloud backend
+    if grep -q "^CONVEX_DEPLOY_KEY=" "$APP_DIR/.env" 2>/dev/null; then
+        echo -e "${BLUE}Detected CONVEX_DEPLOY_KEY, initializing Convex Cloud env vars...${NC}"
+        if ! "$APP_DIR/scripts/setup-convex-env.sh"; then
+            echo -e "${RED}Failed to initialize Convex Cloud environment variables${NC}"
+            echo -e "${YELLOW}Hint: Make sure .env file has valid CONVEX_DEPLOY_KEY${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Convex Cloud environment variables initialized${NC}"
+    fi
 else
     if [ "$IS_DEVCONTAINER" = "true" ]; then
         # In devcontainer, Convex is already running as part of docker-compose
         echo -e "${GREEN}Convex backend already running in devcontainer...${NC}"
     else
         # On host, start Convex via docker-compose
-        (cd .devcontainer && exec bash -c 'trap "kill -9 0" EXIT; \
+        (cd .devcontainer && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; \
           COMPOSE_PROJECT_NAME=cmux-convex docker compose -f docker-compose.convex.yml up 2>&1 | tee "$LOG_DIR/docker-compose.log" | { \
             if [ "${SHOW_COMPOSE_LOGS}" = "true" ]; then \
               prefix_output "DOCKER-COMPOSE" "$MAGENTA"; \
             else \
               cat >/dev/null; \
             fi; \
-          }') &
+          }') </dev/null &
         DOCKER_COMPOSE_PID=$!
         check_process $DOCKER_COMPOSE_PID "Docker Compose"
+
+        # Initialize Convex environment variables (required for fresh start)
+        # setup-convex-env.sh waits for the backend to be ready before setting env vars
+        echo -e "${BLUE}Initializing Convex environment variables...${NC}"
+        if ! "$APP_DIR/scripts/setup-convex-env.sh"; then
+            echo -e "${RED}Failed to initialize Convex environment variables${NC}"
+            echo -e "${YELLOW}Hint: Make sure .env file exists with required variables:${NC}"
+            echo -e "${YELLOW}  - STACK_WEBHOOK_SECRET${NC}"
+            echo -e "${YELLOW}  - BASE_APP_URL${NC}"
+            echo -e "${YELLOW}  - CMUX_TASK_RUN_JWT_SECRET${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Convex environment variables initialized${NC}"
     fi
 fi
 
@@ -548,9 +627,9 @@ fi
 # Start convex dev (works the same in both environments)
 if [ "$CONVEX_AGENT_MODE" = "true" ]; then
     echo -e "${GREEN}Starting convex dev in agent mode...${NC}"
-    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; CONVEX_AGENT_MODE=anonymous npx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
+    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; CONVEX_AGENT_MODE=anonymous npx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') </dev/null &
 else
-    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; bunx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
+    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; bunx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') </dev/null &
 fi
 CONVEX_DEV_PID=$!
 check_process $CONVEX_DEV_PID "Convex Dev"
@@ -558,19 +637,28 @@ CONVEX_PID=$CONVEX_DEV_PID
 
 # Start the backend server
 echo -e "${GREEN}Starting backend server on port 9776...${NC}"
-(cd "$APP_DIR/apps/server" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/server.log" | prefix_output "SERVER" "$YELLOW"') &
+(cd "$APP_DIR/apps/server" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/server.log" | prefix_output "SERVER" "$YELLOW"') </dev/null &
 SERVER_PID=$!
 check_process $SERVER_PID "Backend Server"
 
+# Start the openapi client generator before frontend/www so generated files are ready
+echo -e "${GREEN}Starting openapi client generator...${NC}"
+(cd "$APP_DIR/apps/www" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') </dev/null &
+OPENAPI_CLIENT_PID=$!
+check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
+OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
+OPENAPI_READY_MARKER="initial client generation complete"
+wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
+
 # Start the frontend
 echo -e "${GREEN}Starting frontend on port 5173...${NC}"
-(cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev --host 0.0.0.0 2>&1 | tee "$LOG_DIR/client.log" | prefix_output "CLIENT" "$CYAN"') &
+(cd "$APP_DIR/apps/client" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev --host 0.0.0.0 2>&1 | tee "$LOG_DIR/client.log" | prefix_output "CLIENT" "$CYAN"') </dev/null &
 CLIENT_PID=$!
 check_process $CLIENT_PID "Frontend Client"
 
 # Start the www app
 echo -e "${GREEN}Starting www app on port 9779...${NC}"
-(cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/www.log" | prefix_output "WWW" "$GREEN"') &
+(cd "$APP_DIR/apps/www" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/www.log" | prefix_output "WWW" "$GREEN"') </dev/null &
 WWW_PID=$!
 check_process $WWW_PID "WWW App"
 
@@ -596,19 +684,16 @@ check_process $WWW_PID "WWW App"
   done
 ') &
 
-# Start the openapi client generator
-echo -e "${GREEN}Starting openapi client generator...${NC}"
-(cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
-OPENAPI_CLIENT_PID=$!
-check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
-OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
-OPENAPI_READY_MARKER="watch-openapi complete"
-wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
-
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then
-    echo -e "${GREEN}Starting Electron app...${NC}"
-    (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+    if [ "$ELECTRON_DEBUG" = "true" ]; then
+        echo -e "${GREEN}Starting Electron app with remote debugging on port $ELECTRON_DEBUG_PORT...${NC}"
+        export ELECTRON_DEBUG_PORT
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev:electron -- --remote-debugging-port='"$ELECTRON_DEBUG_PORT"' 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') </dev/null &
+    else
+        echo -e "${GREEN}Starting Electron app...${NC}"
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') </dev/null &
+    fi
     ELECTRON_PID=$!
     check_process $ELECTRON_PID "Electron App"
 fi
@@ -622,6 +707,9 @@ if [ "$SKIP_CONVEX" != "true" ]; then
 fi
 if [ "$RUN_ELECTRON" = "true" ]; then
     echo -e "${BLUE}Electron app is starting...${NC}"
+    if [ "$ELECTRON_DEBUG" = "true" ]; then
+        echo -e "${BLUE}Chrome DevTools: chrome://inspect or http://localhost:$ELECTRON_DEBUG_PORT${NC}"
+    fi
 fi
 echo -e "\nPress Ctrl+C to stop all services"
 

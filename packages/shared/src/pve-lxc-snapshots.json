@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 2,
+  "updatedAt": "2026-02-14T22:31:56Z",
+  "presets": [
+    {
+      "presetId": "4vcpu_8gb_32gb",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
+      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage.",
+      "versions": [
+        {
+          "version": 43,
+          "snapshotId": "snapshot_c112c38e",
+          "templateVmid": 9039,
+          "capturedAt": "2026-02-07T22:47:14Z"
+        },
+        {
+          "version": 44,
+          "snapshotId": "snapshot_0c079d9b",
+          "templateVmid": 9031,
+          "capturedAt": "2026-02-08T06:41:52Z"
+        },
+        {
+          "version": 45,
+          "snapshotId": "snapshot_764720ec",
+          "templateVmid": 9042,
+          "capturedAt": "2026-02-08T22:35:31Z"
+        },
+        {
+          "version": 46,
+          "snapshotId": "snapshot_9b7724a5",
+          "templateVmid": 9001,
+          "capturedAt": "2026-02-14T22:31:26Z"
+        }
+      ]
+    },
+    {
+      "presetId": "6vcpu_8gb_40gb",
+      "label": "Performance workspace",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "40 GB SSD",
+      "description": "Extra headroom for larger codebases or heavier workloads.",
+      "versions": [
+        {
+          "version": 31,
+          "snapshotId": "snapshot_2c6bde93",
+          "templateVmid": 9040,
+          "capturedAt": "2026-02-07T22:47:49Z"
+        },
+        {
+          "version": 32,
+          "snapshotId": "snapshot_19d17edd",
+          "templateVmid": 9041,
+          "capturedAt": "2026-02-08T06:42:24Z"
+        },
+        {
+          "version": 33,
+          "snapshotId": "snapshot_aff9d612",
+          "templateVmid": 9043,
+          "capturedAt": "2026-02-08T22:36:05Z"
+        },
+        {
+          "version": 34,
+          "snapshotId": "snapshot_380e00e6",
+          "templateVmid": 9002,
+          "capturedAt": "2026-02-14T22:31:56Z"
+        }
+      ]
+    }
+  ],
+  "baseTemplateVmid": 9000,
+  "node": "karl-ws"
+}

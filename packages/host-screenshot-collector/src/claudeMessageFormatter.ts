@@ -91,9 +91,9 @@ export function formatClaudeMessage(message: SDKMessage): string {
           return `🔄 Status: ${status}`;
         }
         default: {
-          // Type assertion for exhaustiveness check
-          const _exhaustive: never = message;
-          return `🔧 System: unknown`;
+          // Handle unknown/legacy subtypes gracefully without assuming schema fields.
+          const unknownSubtype = (message as { subtype?: string }).subtype ?? "unknown";
+          return `🔧 System: ${unknownSubtype}`;
         }
       }
     }

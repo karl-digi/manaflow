@@ -7,20 +7,40 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 
 const (
 	// Preset ID from packages/shared/src/e2b-templates.json (stable identifier)
-	defaultTemplatePresetID = "cmux-devbox-docker"
+	// Using lite template (no Docker-in-Docker) as default for faster boot times
+	defaultTemplatePresetID = "cmux-devbox-lite"
 
 	// Template name in E2B (fallback if template list endpoint is unavailable)
-	defaultTemplateName = "cmux-devbox-docker"
+	defaultTemplateName    = "cmux-devbox-lite"
+	defaultTemplateNameDev = "cmux-devbox-lite-dev"
 
 	// Modal preset IDs from packages/shared/src/modal-templates.json
 	modalDefaultPresetID = "cmux-devbox-gpu"
 )
+
+// getDefaultTemplateName returns the default E2B template name.
+// Uses dev template if buildMode is "dev" (set via ldflags at compile time).
+// Can be overridden with CLOUDROUTER_DEV_MODE=1 (force dev) or CLOUDROUTER_DEV_MODE=0 (force prod).
+func getDefaultTemplateName() string {
+	// Allow env var override
+	if envMode := os.Getenv("CLOUDROUTER_DEV_MODE"); envMode != "" {
+		if envMode == "1" {
+			return defaultTemplateNameDev
+		}
+		return defaultTemplateName
+	}
+	// Use build mode (set via ldflags)
+	if buildMode == "dev" {
+		return defaultTemplateNameDev
+	}
+	return defaultTemplateName
+}
 
 var (
 	startFlagName     string
@@ -78,8 +98,6 @@ GPU options (--gpu):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
-
-  The following GPUs require approval (contact founders@manaflow.ai):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models
@@ -166,20 +184,15 @@ Examples:
 			}
 		}
 
-		// Gate expensive GPUs client-side
-		if startFlagGPU != "" {
-			baseGPU := strings.ToUpper(strings.Split(startFlagGPU, ":")[0])
-			gatedGPUs := map[string]bool{
-				"L40S": true, "A100": true, "A100-80GB": true,
-				"H100": true, "H200": true, "B200": true,
-			}
-			if gatedGPUs[baseGPU] {
-				return fmt.Errorf("GPU type %q requires approval. Contact founders@manaflow.ai to get this GPU enabled for your account", startFlagGPU)
-			}
-		}
-
 		client := api.NewClient()
 		provider := startFlagProvider
+
+		// If no provider specified, fetch default from server config
+		if provider == "" {
+			if config, err := client.GetConfig(); err == nil && config.DefaultProvider != "" {
+				provider = config.DefaultProvider
+			}
+		}
 
 		// If --gpu is specified without --provider, default to modal
 		if startFlagGPU != "" && provider == "" {
@@ -237,6 +250,14 @@ Examples:
 							}
 						}
 					}
+				} else if provider == "pve-lxc" {
+					// PVE LXC provider - pick first pve-lxc template
+					for _, t := range templates {
+						if t.Provider == "pve-lxc" {
+							templateID = t.ID
+							break
+						}
+					}
 				} else {
 					// E2B provider (always uses docker template)
 					for _, t := range templates {
@@ -250,8 +271,8 @@ Examples:
 
 			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
-			if templateID == "" && provider != "modal" {
-				templateID = defaultTemplateName
+			if templateID == "" && provider != "modal" && provider != "pve-lxc" {
+				templateID = getDefaultTemplateName()
 			}
 		}
 
@@ -347,7 +368,7 @@ Examples:
 			jupyterAuthURL = resp.JupyterURL
 		}
 
-		// Build type label: "Docker" for e2b, "GPU (type)" for modal
+		// Build type label: "Docker" for e2b, "GPU (type)" for modal, "PVE LXC" for pve-lxc
 		typeLabel := "Docker"
 		if resp.Provider == "modal" {
 			if resp.GPU != "" {
@@ -355,6 +376,8 @@ Examples:
 			} else {
 				typeLabel = "GPU"
 			}
+		} else if resp.Provider == "pve-lxc" {
+			typeLabel = "PVE LXC"
 		}
 
 		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
@@ -400,7 +423,7 @@ func init() {
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
 
 	// Provider selection (internal: e2b = Docker, modal = GPU)
-	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
+	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal, pve-lxc")
 
 	// GPU and resource options
 	startCmd.Flags().StringVar(&startFlagGPU, "gpu", "", "GPU type (T4, L4, A10G, L40S, A100, H100, H200, B200)")

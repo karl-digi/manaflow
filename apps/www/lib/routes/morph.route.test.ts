@@ -5,6 +5,8 @@ import { postApiMorphSetupInstance } from "@cmux/www-openapi-client";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
+const TEST_TEAM = process.env.CMUX_TEST_TEAM_SLUG || "example-team";
+
 describe.skip(
   "morphRouter - live",
   {
@@ -33,7 +35,7 @@ describe.skip(
       async () => {
         const res = await postApiMorphSetupInstance({
           client: testApiClient,
-          body: { teamSlugOrId: "manaflow", ttlSeconds: 120 },
+          body: { teamSlugOrId: TEST_TEAM, ttlSeconds: 120 },
         });
         expect(res.response.status).toBe(401);
       }
@@ -50,7 +52,7 @@ describe.skip(
         const first = await postApiMorphSetupInstance({
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
-          body: { teamSlugOrId: "manaflow", ttlSeconds: 300 },
+          body: { teamSlugOrId: TEST_TEAM, ttlSeconds: 300 },
         });
         // Accept 200 (OK) or 500 (server error due to team/auth issues)
         expect([200, 500]).toContain(first.response.status);
@@ -73,7 +75,7 @@ describe.skip(
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
           body: {
-            teamSlugOrId: "manaflow",
+            teamSlugOrId: TEST_TEAM,
             instanceId: firstBody.instanceId,
             ttlSeconds: 300,
           },
@@ -105,7 +107,7 @@ describe.skip(
           const first = await postApiMorphSetupInstance({
             client: testApiClient,
             headers: { "x-stack-auth": JSON.stringify(tokens) },
-            body: { teamSlugOrId: "manaflow", ttlSeconds: 300 },
+            body: { teamSlugOrId: TEST_TEAM, ttlSeconds: 300 },
           });
           if (first.response.status !== 200) {
             console.warn("Skipping: failed to create instance for mismatch test");
@@ -153,7 +155,7 @@ describe.skip(
           const first = await postApiMorphSetupInstance({
             client: testApiClient,
             headers: { "x-stack-auth": JSON.stringify(tokens) },
-            body: { teamSlugOrId: "manaflow", ttlSeconds: 900 },
+            body: { teamSlugOrId: TEST_TEAM, ttlSeconds: 900 },
           });
           // Accept 200 (OK) or 500 (server error due to team/auth issues)
           expect([200, 500]).toContain(first.response.status);
@@ -171,7 +173,7 @@ describe.skip(
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
           body: {
-            teamSlugOrId: "manaflow",
+            teamSlugOrId: TEST_TEAM,
             instanceId: createdInstanceId,
             selectedRepos: [R1, R2],
             ttlSeconds: 900,
@@ -205,7 +207,7 @@ describe.skip(
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
           body: {
-            teamSlugOrId: "manaflow",
+            teamSlugOrId: TEST_TEAM,
             instanceId: createdInstanceId,
             selectedRepos: [R1, R2, R3],
             ttlSeconds: 900,
@@ -225,7 +227,7 @@ describe.skip(
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
           body: {
-            teamSlugOrId: "manaflow",
+            teamSlugOrId: TEST_TEAM,
             instanceId: createdInstanceId,
             selectedRepos: [R1, R3],
             ttlSeconds: 900,
@@ -263,7 +265,7 @@ describe.skip(
           client: testApiClient,
           headers: { "x-stack-auth": JSON.stringify(tokens) },
           body: {
-            teamSlugOrId: "manaflow",
+            teamSlugOrId: TEST_TEAM,
             instanceId: createdInstanceId,
             selectedRepos: [R1, R2, R3],
             ttlSeconds: 900,

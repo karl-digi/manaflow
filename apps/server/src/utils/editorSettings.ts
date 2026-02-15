@@ -596,6 +596,8 @@ touch "$LOCK_FILE"
         contentBase64: encode(profileHook),
         mode: "644",
       });
+
+      startupCommands.push(`bash "${installScriptPath}" || true`);
     }
   }
 
@@ -748,6 +750,8 @@ touch "$LOCK_FILE"
       contentBase64: encode(profileHook),
       mode: "644",
     });
+
+    startupCommands.push(`bash "${installScriptPath}" || true`);
   }
 
   if (authFiles.length === 0 && startupCommands.length === 0) {

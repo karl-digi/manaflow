@@ -788,50 +788,61 @@ function PreviewTestDashboardInner({
                           )}
 
                           {/* Videos section */}
-                          {job.screenshotSet.videos && job.screenshotSet.videos.length > 0 && (
-                            <div>
-                              <h4 className="mb-3 text-sm font-medium text-white">
-                                Videos ({job.screenshotSet.videos.length})
-                              </h4>
-                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                                {job.screenshotSet.videos.map((video) => (
-                                  <div
-                                    key={video.storageId}
-                                    className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800"
-                                  >
-                                    {video.url ? (
-                                      <video
-                                        src={video.url}
-                                        controls
-                                        className="aspect-video w-full object-cover"
-                                        preload="metadata"
-                                      >
-                                        Your browser does not support the video tag.
-                                      </video>
-                                    ) : (
-                                      <div className="flex aspect-video items-center justify-center bg-neutral-900">
-                                        <VideoIcon className="h-8 w-8 text-neutral-600" />
-                                      </div>
-                                    )}
-                                    {(video.description || video.fileName) && (
-                                      <div className="px-3 py-2">
-                                        {video.description && (
-                                          <p className="text-sm text-neutral-300">
-                                            {video.description}
-                                          </p>
-                                        )}
-                                        {video.fileName && (
-                                          <p className="mt-1 text-xs text-neutral-500">
-                                            {video.fileName}
-                                          </p>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
+                          {job.screenshotSet.videos &&
+                            job.screenshotSet.videos.length > 0 && (
+                              <div>
+                                <h4 className="mb-3 text-sm font-medium text-white">
+                                  Videos ({job.screenshotSet.videos.length})
+                                </h4>
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                  {job.screenshotSet.videos.map((video) => (
+                                    <div
+                                      key={video.storageId}
+                                      className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800"
+                                    >
+                                      {video.url ? (
+                                        // Render GIF/APNG as animated images, not videos
+                                        video.mimeType === "image/gif" ||
+                                        video.mimeType === "image/apng" ? (
+                                          <img
+                                            src={video.url}
+                                            alt={video.description ?? video.fileName ?? "Preview"}
+                                            className="aspect-video w-full object-cover"
+                                          />
+                                        ) : (
+                                          <video
+                                            src={video.url}
+                                            controls
+                                            className="aspect-video w-full object-cover"
+                                            preload="metadata"
+                                          >
+                                            Your browser does not support the video tag.
+                                          </video>
+                                        )
+                                      ) : (
+                                        <div className="flex aspect-video items-center justify-center bg-neutral-900">
+                                          <VideoIcon className="h-8 w-8 text-neutral-600" />
+                                        </div>
+                                      )}
+                                      {(video.description || video.fileName) && (
+                                        <div className="px-3 py-2">
+                                          {video.description && (
+                                            <p className="text-sm text-neutral-300">
+                                              {video.description}
+                                            </p>
+                                          )}
+                                          {video.fileName && (
+                                            <p className="mt-1 text-xs text-neutral-500">
+                                              {video.fileName}
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            )}
 
                           {/* Screenshots section */}
                           <div>

@@ -22,7 +22,7 @@ const testImportMetaEnv = {
 export default defineConfig({
   plugins: [
     tsconfigPaths({
-      // Only scan from apps/client to avoid dev-docs submodules with unresolved tsconfig extends
+      // Only scan from apps/client to avoid walking synced dev-docs documentation files
       root: import.meta.dirname,
     }),
   ],

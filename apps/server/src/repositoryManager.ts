@@ -8,6 +8,7 @@ import {
   type GitHooksConfig,
 } from "./gitHooks";
 import { serverLogger } from "./utils/fileLogger";
+import { hasEmbeddedCredentials, sanitizeGitUrl } from "./utils/gitUrl";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
 
 const execAsync = promisify(exec);
@@ -384,7 +385,24 @@ export class RepositoryManager {
         `git remote get-url origin`,
         { cwd: repoPath, suppressErrorLogging: true }
       );
-      const originUrl = stdout.trim();
+      let originUrl = stdout.trim();
+
+      // Auto-fix: If URL has embedded credentials, clean it up to avoid stale tokens
+      if (hasEmbeddedCredentials(originUrl)) {
+        serverLogger.warn(
+          "Found embedded credentials in git remote URL, cleaning up..."
+        );
+        const sanitized = sanitizeGitUrl(originUrl);
+        originUrl = sanitized;
+        try {
+          await this.executeGitCommand(
+            `git remote set-url origin "${sanitized}"`,
+            { cwd: repoPath, suppressErrorLogging: true }
+          );
+        } catch (error) {
+          serverLogger.warn("Failed to sanitize remote origin URL:", error);
+        }
+      }
 
       // Only try to authenticate GitHub URLs
       if (originUrl.startsWith("https://github.com/")) {
@@ -759,6 +777,23 @@ export class RepositoryManager {
             `git remote set-url origin "${remoteUrl}"`,
             { cwd: originPath }
           );
+
+          // Verify cleanup succeeded
+          const { stdout: currentUrl } = await this.executeGitCommand(
+            `git remote get-url origin`,
+            { cwd: originPath }
+          );
+          const trimmed = currentUrl.trim();
+          if (hasEmbeddedCredentials(trimmed)) {
+            serverLogger.warn(
+              "First cleanup attempt failed, retrying with sanitized URL"
+            );
+            await this.executeGitCommand(
+              `git remote set-url origin "${sanitizeGitUrl(trimmed)}"`,
+              { cwd: originPath }
+            );
+          }
+
           serverLogger.info("Reset remote origin to clean URL");
         } catch (error) {
           serverLogger.warn("Failed to reset remote origin URL:", error);
@@ -970,7 +1005,12 @@ export class RepositoryManager {
       );
       // Parse worktree list properly to avoid false positives from partial path matching
       // e.g., "/path/to/foo" should not match "/path/to/foobar"
-      const normalizedTargetPath = path.resolve(worktreePath);
+      // Git reports canonical paths (e.g., macOS /tmp -> /private/tmp), while
+      // path.resolve() does not resolve symlinks. Use realpath() when possible
+      // to ensure consistent comparisons across platforms.
+      const normalizedTargetPath = await fs
+        .realpath(worktreePath)
+        .catch(() => path.resolve(worktreePath));
       const lines = stdout.split("\n");
       for (const line of lines) {
         if (line.startsWith("worktree ")) {

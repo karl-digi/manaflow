@@ -1,0 +1,5 @@
+provider: github
+owner: karlorz
+repo: cmux
+releaseType: release
+updaterCacheDirName: cmux-next-updater

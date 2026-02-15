@@ -60,9 +60,8 @@ function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
 
 export const CLAUDE_OPUS_4_6_CONFIG: AgentConfig = {
   name: "claude/opus-4.6",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
@@ -80,13 +79,12 @@ export const CLAUDE_OPUS_4_6_CONFIG: AgentConfig = {
 
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   name: "claude/opus-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
-    "claude-opus-4-5",
+    "claude-opus-4-5-20251101",
     "--ide",
     "$PROMPT",
   ],
@@ -100,13 +98,12 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
 
 export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   name: "claude/sonnet-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
-    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20250929",
     "--ide",
     "$PROMPT",
   ],
@@ -120,13 +117,12 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
 
 export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   name: "claude/haiku-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
-    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
     "--ide",
     "$PROMPT",
   ],

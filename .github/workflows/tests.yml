@@ -85,4 +85,7 @@ jobs:
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
           NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
           NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+          # Test user and team
+          STACK_TEST_USER_ID: ${{ secrets.STACK_TEST_USER_ID }}
+          CMUX_TEST_TEAM_SLUG: ${{ secrets.CMUX_TEST_TEAM_SLUG }}
         run: bun run test

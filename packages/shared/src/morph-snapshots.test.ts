@@ -27,13 +27,17 @@ describe("morph snapshots manifest", () => {
       const latest = preset.versions[preset.versions.length - 1];
       expect(latest).toBeDefined();
       expect(preset.latestVersion).toEqual(latest);
+      // Check canonical snapshot ID format
       expect(preset.id).toBe(latest.snapshotId);
+      expect(preset.id).toMatch(/^snapshot_[a-z0-9]+$/i);
+      // Check original Morph snapshot ID is preserved
+      expect(preset.snapshotId).toBe(latest.snapshotId);
     }
   });
 
   it("keeps the default snapshot id in sync with the first preset", () => {
     expect(DEFAULT_MORPH_SNAPSHOT_ID).toBe(
-      MORPH_SNAPSHOT_PRESETS[0].latestVersion.snapshotId,
+      MORPH_SNAPSHOT_PRESETS[0].id,
     );
   });
 });

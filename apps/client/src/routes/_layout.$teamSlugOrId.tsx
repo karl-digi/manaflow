@@ -27,9 +27,25 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
       });
     }
     const { teamSlugOrId } = params;
-    const teamMemberships = await convexQueryClient.convexClient.query(
-      api.teams.listTeamMemberships
-    );
+    let teamMemberships;
+    try {
+      teamMemberships = await convexQueryClient.convexClient.query(
+        api.teams.listTeamMemberships
+      );
+    } catch (error) {
+      // Auth token may be invalid/expired - redirect to sign-in
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Not authenticated")) {
+        console.error("[beforeLoad] Convex auth failed, redirecting to sign-in:", message);
+        throw redirect({
+          to: "/sign-in",
+          search: {
+            after_auth_return_to: location.pathname,
+          },
+        });
+      }
+      throw error;
+    }
     const teamMembership = teamMemberships.find((membership) => {
       const team = membership.team;
       const membershipTeamId = team?.teamId ?? membership.teamId;

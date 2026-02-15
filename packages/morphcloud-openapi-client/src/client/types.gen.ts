@@ -703,6 +703,10 @@ export type SnapshotInstanceRequest = {
     metadata?: {
         [key: string]: string;
     } | null;
+    /**
+     * Sync
+     */
+    sync?: boolean;
 };
 
 /**

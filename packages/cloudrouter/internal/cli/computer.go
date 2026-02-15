@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -37,24 +40,32 @@ func shellQuote(s string) string {
 }
 
 // runSSHCommand runs a command inside the sandbox via SSH over WebSocket tunnel.
-// Uses cloudrouter's built-in __ssh-proxy as SSH ProxyCommand.
 // Returns stdout, stderr, and exit code.
 func runSSHCommand(workerURL, token, command string) (string, string, int, error) {
-	wsURL := toWebSocketURL(workerURL, token)
+	// Build WebSocket URL
+	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = wsURL + "/ssh?token=" + url.QueryEscape(token)
 
-	selfPath, err := getSelfPath()
-	if err != nil {
-		return "", "", -1, err
+	// Try curl-based SSH first (preferred - simpler, no Go bridge needed)
+	curlPath := getCurlWithWebSocket()
+	if curlPath != "" {
+		return runSSHCommandWithCurl(curlPath, wsURL, command)
 	}
 
-	proxyCmd := fmt.Sprintf("%s __ssh-proxy '%s'", selfPath, wsURL)
+	// Fall back to Go WebSocket bridge
+	return runSSHCommandWithBridge(wsURL, token, command)
+}
+
+// runSSHCommandWithCurl runs a command via SSH using curl as ProxyCommand.
+func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int, error) {
+	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
 	sshArgs := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		"-o", "PubkeyAuthentication=no",
 		"-o", fmt.Sprintf("ProxyCommand=%s", proxyCmd),
-		fmt.Sprintf("%s@e2b-sandbox", token),
+		"user@e2b-sandbox",
 		command,
 	}
 
@@ -63,13 +74,112 @@ func runSSHCommand(workerURL, token, command string) (string, string, int, error
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err = cmd.Run()
+	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			exitCode = ee.ExitCode()
 		} else {
 			return "", "", -1, fmt.Errorf("ssh failed: %w", err)
+		}
+	}
+
+	// Filter out SSH warnings from stderr
+	stderrStr := stderr.String()
+	stderrStr = filterSSHWarnings(stderrStr)
+
+	return stdout.String(), stderrStr, exitCode, nil
+}
+
+// runSSHCommandWithBridge runs a command via SSH using Go WebSocket bridge.
+func runSSHCommandWithBridge(wsURL, token, command string) (string, string, int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", "", -1, fmt.Errorf("failed to create local listener: %w", err)
+	}
+	defer listener.Close()
+
+	localPort := listener.Addr().(*net.TCPAddr).Port
+
+	connCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		connCh <- conn
+	}()
+
+	// Build SSH command using sshpass or SSH_ASKPASS
+	sshScript, scriptPath, err := buildSSHCommand(localPort)
+	if err != nil {
+		return "", "", -1, err
+	}
+	if scriptPath != "" {
+		defer os.Remove(scriptPath)
+	}
+
+	// Run SSH command
+	sshArgs := []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"-o", "PubkeyAuthentication=no",
+		"-p", fmt.Sprintf("%d", localPort),
+		fmt.Sprintf("%s@127.0.0.1", token),
+		command,
+	}
+
+	// Use the wrapper script if sshpass is available, otherwise bare ssh
+	var cmd *exec.Cmd
+	if strings.Contains(sshScript, "sshpass") {
+		cmd = exec.Command(sshScript, "dummy") // sshpass wrapper handles ssh invocation
+		// Actually, the wrapper script from buildSSHCommand is meant for rsync -e,
+		// so we need to construct the SSH call differently for command execution.
+		cmd = exec.Command("ssh", sshArgs...)
+	} else {
+		cmd = exec.Command("ssh", sshArgs...)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return "", "", -1, fmt.Errorf("failed to start ssh: %w", err)
+	}
+
+	// Wait for connection from SSH
+	var conn net.Conn
+	select {
+	case conn = <-connCh:
+	case err := <-errCh:
+		cmd.Process.Kill()
+		return "", "", -1, fmt.Errorf("failed to accept connection: %w", err)
+	case <-time.After(30 * time.Second):
+		cmd.Process.Kill()
+		cmd.Wait()
+		return "", "", -1, fmt.Errorf("timeout waiting for SSH connection")
+	}
+
+	// Bridge to WebSocket
+	proxyDone := make(chan error, 1)
+	go func() {
+		proxyDone <- bridgeToWebSocket(conn, wsURL)
+	}()
+
+	sshErr := cmd.Wait()
+	conn.Close()
+	<-proxyDone
+
+	exitCode := 0
+	if sshErr != nil {
+		if ee, ok := sshErr.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else {
+			return "", "", -1, fmt.Errorf("ssh failed: %w", sshErr)
 		}
 	}
 

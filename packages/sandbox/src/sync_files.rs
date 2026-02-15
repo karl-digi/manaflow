@@ -365,6 +365,7 @@ pub async fn upload_sync_files_with_list(
         command: vec!["/bin/sh".into(), "-c".into(), move_script.into()],
         workdir: None,
         env: Vec::new(),
+        timeout_ms: None,
     };
 
     let exec_url = format!("{}/sandboxes/{}/exec", base_url.trim_end_matches('/'), id);
@@ -547,6 +548,7 @@ pub async fn upload_prebuilt_sync_files(
         command: vec!["/bin/sh".into(), "-c".into(), move_script.into()],
         workdir: None,
         env: Vec::new(),
+        timeout_ms: None,
     };
 
     let exec_url = format!("{}/sandboxes/{}/exec", base_url.trim_end_matches('/'), id);

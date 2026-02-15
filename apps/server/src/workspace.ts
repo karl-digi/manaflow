@@ -134,6 +134,8 @@ export async function setupProjectWorkspace(args: {
   repoUrl: string;
   branch?: string;
   worktreeInfo: WorktreeInfo;
+  /** Optional authenticated URL for git operations (with embedded token). repoUrl is stored as remote. */
+  authenticatedRepoUrl?: string;
 }): Promise<WorkspaceResult> {
   try {
     const { worktreeInfo } = args;
@@ -154,10 +156,12 @@ export async function setupProjectWorkspace(args: {
     await fs.mkdir(worktreeInfo.worktreesPath, { recursive: true });
 
     // Use RepositoryManager to handle clone/fetch with deduplication
+    // If authenticatedRepoUrl provided, use it for git operations but store clean repoUrl as remote
     await repoManager.ensureRepository(
-      args.repoUrl,
+      args.authenticatedRepoUrl ?? args.repoUrl,
       worktreeInfo.originPath,
-      args.branch
+      args.branch,
+      args.authenticatedRepoUrl ? args.repoUrl : undefined
     );
 
     // Get the default branch if not specified

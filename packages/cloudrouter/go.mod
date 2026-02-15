@@ -1,4 +1,4 @@
-module github.com/manaflow-ai/cloudrouter
+module github.com/karlorz/cloudrouter
 
 go 1.24.0
 

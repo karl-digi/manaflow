@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	skillsBaseURL = "https://raw.githubusercontent.com/manaflow-ai/cloudrouter/main/skills"
+	skillsBaseURL = "https://raw.githubusercontent.com/karlorz/cmux/main/skills"
 )
 
 var skillsCmd = &cobra.Command{

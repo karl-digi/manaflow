@@ -1,12 +1,5 @@
 import { ensureIframeFocusGuard } from "./iframeFocusGuard";
 
-// Extend the Element interface to include moveBefore
-declare global {
-  interface Element {
-    moveBefore?(node: Node, child: Node | null): void;
-  }
-}
-
 type IframeEntry = {
   iframe: HTMLIFrameElement;
   wrapper: HTMLDivElement;
@@ -473,6 +466,14 @@ class PersistentIframeManager {
     if (syncTimeout !== undefined) {
       cancelAnimationFrame(syncTimeout);
       this.syncTimeouts.delete(key);
+    }
+
+    // Clear iframe src to stop all internal network activity (prevents Wake on HTTP)
+    // Setting to about:blank stops the iframe's content from making any further requests
+    try {
+      entry.iframe.src = "about:blank";
+    } catch {
+      // Ignore errors - iframe may already be detached
     }
 
     if (entry.wrapper.parentElement) {

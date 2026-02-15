@@ -15,6 +15,7 @@ ARG NODE_VERSION=24.9.0
 ARG GO_VERSION=1.25.2
 ARG GITHUB_TOKEN
 ARG IDE_PROVIDER=cmux-code
+ARG IDE_DEPS_CHANNEL=stable
 
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-base
 
@@ -156,6 +157,7 @@ ARG NODE_VERSION
 ARG NVM_VERSION
 ARG GO_VERSION
 ARG IDE_PROVIDER
+ARG IDE_DEPS_CHANNEL
 
 ENV NVM_DIR=/root/.nvm \
   PATH="/usr/local/bin:${PATH}"
@@ -357,6 +359,15 @@ COPY --parents apps/*/package.json packages/*/package.json scripts/package.json 
 RUN --mount=type=cache,target=/root/.bun/install/cache \
   bun install --frozen-lockfile --production
 
+# Keep IDE dependencies fresh with a configurable channel (stable by default).
+COPY configs/ide-deps.json ./configs/ide-deps.json
+COPY scripts/bump-ide-deps.ts ./scripts/bump-ide-deps.ts
+COPY scripts/lib ./scripts/lib
+COPY scripts/snapshot.py ./scripts/snapshot.py
+COPY Dockerfile ./Dockerfile
+ARG IDE_DEPS_CHANNEL
+RUN bun run bump-ide-deps --channel "${IDE_DEPS_CHANNEL:-stable}"
+
 RUN mkdir -p /builtins && \
   echo '{"name":"builtins","type":"module","version":"1.0.0"}' > /builtins/package.json
 WORKDIR /builtins
@@ -488,7 +499,16 @@ bun build ./apps/worker/src/runBrowserAgentFromPrompt.ts \
 mv ./apps/worker/build/browser-agent/runBrowserAgentFromPrompt.js ./apps/worker/build/runBrowserAgentFromPrompt.js
 rm -rf ./apps/worker/build/browser-agent
 echo "Built worker"
-mkdir -p ./apps/worker/build/node_modules
+mkdir -p /cmux/apps/worker/build/node_modules
+# Install express-compatible path-to-regexp 0.1.x explicitly
+# bun hoisting can place dependencies differently, so we install directly
+(
+  cd /cmux/apps/worker/build/node_modules
+  npm pack path-to-regexp@0.1.12 --silent
+  tar -xzf path-to-regexp-0.1.12.tgz
+  mv package path-to-regexp
+  rm -f path-to-regexp-0.1.12.tgz
+)
 shopt -s nullglob
 declare -A COPIED_PACKAGES=()
 
@@ -507,15 +527,15 @@ copy_scope_directory() {
   local source_dir="$1"
   local scope_name
   scope_name="$(basename "$source_dir")"
-  mkdir -p "./apps/worker/build/node_modules/$scope_name"
+  mkdir -p "/cmux/apps/worker/build/node_modules/$scope_name"
   for scoped_entry in "$source_dir"/*; do
     if [ ! -e "$scoped_entry" ]; then
       continue
     fi
     local scoped_name
     scoped_name="$(basename "$scoped_entry")"
-    rm -rf "./apps/worker/build/node_modules/$scope_name/$scoped_name"
-    cp -RL "$scoped_entry" "./apps/worker/build/node_modules/$scope_name/$scoped_name"
+    rm -rf "/cmux/apps/worker/build/node_modules/$scope_name/$scoped_name"
+    cp -RL "$scoped_entry" "/cmux/apps/worker/build/node_modules/$scope_name/$scoped_name"
   done
 }
 
@@ -530,8 +550,8 @@ copy_bundle_directory() {
     if [[ "$entry_name" == @* ]]; then
       copy_scope_directory "$entry"
     else
-      rm -rf "./apps/worker/build/node_modules/$entry_name"
-      cp -RL "$entry" "./apps/worker/build/node_modules/$entry_name"
+      rm -rf "/cmux/apps/worker/build/node_modules/$entry_name"
+      cp -RL "$entry" "/cmux/apps/worker/build/node_modules/$entry_name"
     fi
   done
 }
@@ -547,7 +567,7 @@ copy_dependency_tree() {
   sanitized="$(sanitize_package_name "$package")"
   local found=false
 
-  for bundle_dir in node_modules/.bun/"${sanitized}"@*/node_modules; do
+  for bundle_dir in /cmux/node_modules/.bun/"${sanitized}"@*/node_modules; do
     if [ ! -d "$bundle_dir" ]; then
       continue
     fi
@@ -596,8 +616,8 @@ copy_dependency_tree() {
 }
 
 copy_dependency_tree "magnitude-core"
-cp -r ./apps/worker/build /builtins/build
-cp ./apps/worker/wait-for-docker.sh /usr/local/bin/
+cp -r /cmux/apps/worker/build /builtins/build
+cp /cmux/apps/worker/wait-for-docker.sh /usr/local/bin/
 chmod +x /usr/local/bin/wait-for-docker.sh
 EOF
 
@@ -846,7 +866,7 @@ ENV PATH="/usr/local/bin:$PATH"
 ENV BUN_INSTALL_CACHE_DIR=/cmux/node_modules/.bun
 
 # Global CLIs are sourced from configs/ide-deps.json.
-COPY configs/ide-deps.json /tmp/ide-deps.json
+COPY --from=builder /cmux/configs/ide-deps.json /tmp/ide-deps.json
 RUN --mount=type=cache,target=/root/.bun/install/cache <<'EOF'
 set -eux
 packages="$(node - <<'NODE'
@@ -1085,6 +1105,8 @@ RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy
   echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.zshrc && \
   printf 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"\n' > /etc/profile.d/local-bin.sh && \
   chmod +x /etc/profile.d/local-bin.sh
+
+COPY configs/profile.d/cmux-env.sh /etc/profile.d/cmux-env.sh
 
 # Install tmux configuration for better mouse scrolling behavior
 COPY configs/tmux.conf /etc/tmux.conf

@@ -10,6 +10,7 @@ import { MonacoGitDiffViewerWithSidebar } from "@/components/monaco/monaco-git-d
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useDiscoverRepos } from "@/hooks/useDiscoverRepos";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
 import { stackClientApp } from "@/lib/stack";
@@ -285,23 +286,51 @@ export const Route = createFileRoute(
 
         const trimmedProjectFullName = task.projectFullName?.trim();
         const targetRepos = new Set<string>();
+
+        // Add environment's selectedRepos (skip env: references)
         for (const repo of selectedTaskRun.environment?.selectedRepos ?? []) {
           const trimmed = repo?.trim();
-          if (trimmed) {
+          if (trimmed && !trimmed.startsWith("env:")) {
             targetRepos.add(trimmed);
           }
         }
-        if (trimmedProjectFullName) {
+
+        // Add projectFullName if it's a real repo (not env:xxx)
+        if (trimmedProjectFullName && !trimmedProjectFullName.startsWith("env:")) {
           targetRepos.add(trimmedProjectFullName);
+        }
+
+        // Add discovered repos from sandbox
+        for (const repo of selectedTaskRun.discoveredRepos ?? []) {
+          const trimmed = repo?.trim();
+          if (trimmed && !trimmed.startsWith("env:")) {
+            targetRepos.add(trimmed);
+          }
         }
 
         if (targetRepos.size === 0) {
           return;
         }
 
-        const baseRefForDiff = normalizeGitRef(task.baseBranch || "main");
+        // Find parent run if this is a child run
+        const parentTaskRun = selectedTaskRun.parentRunId
+          ? taskRuns.find((run) => run._id === selectedTaskRun.parentRunId)
+          : null;
+
+        // Determine base ref for diff comparison with priority:
+        // 1. Parent run's branch (for child runs)
+        // 2. Starting commit SHA (for new tasks in custom environments)
+        // 3. Task's base branch (explicit user choice)
+        let baseRefForDiff: string | undefined;
+        if (parentTaskRun?.newBranch) {
+          baseRefForDiff = normalizeGitRef(parentTaskRun.newBranch);
+        } else if (selectedTaskRun.startingCommitSha) {
+          baseRefForDiff = selectedTaskRun.startingCommitSha; // Direct SHA
+        } else if (task.baseBranch) {
+          baseRefForDiff = normalizeGitRef(task.baseBranch);
+        }
         const headRefForDiff = normalizeGitRef(selectedTaskRun.newBranch);
-        if (!headRefForDiff || !baseRefForDiff) {
+        if (!headRefForDiff) {
           return;
         }
 
@@ -426,6 +455,7 @@ function RunDiffPage() {
   });
 
   const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotConfig = runDiffContextQuery.data?.screenshotConfig;
   const screenshotSetsLoading =
     runDiffContextQuery.isLoading && screenshotSets.length === 0;
 
@@ -465,12 +495,34 @@ function RunDiffPage() {
     return Array.from(new Set(trimmed));
   }, [selectedRun]);
 
+  // Combine all repo sources: projectFullName, environment repos, and discovered repos
   const repoFullNames = useMemo(() => {
-    if (task?.projectFullName) {
-      return [task.projectFullName];
+    const names = new Set<string>();
+
+    // 1. Add projectFullName if it's a real repo (not env:xxx)
+    const projectName = task?.projectFullName?.trim();
+    if (projectName && !projectName.startsWith("env:")) {
+      names.add(projectName);
     }
-    return environmentRepos;
-  }, [task?.projectFullName, environmentRepos]);
+
+    // 2. Add environment's selectedRepos (skip env: references)
+    for (const repo of environmentRepos) {
+      const trimmed = repo?.trim();
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
+    }
+
+    // 3. Add discovered repos from sandbox (for custom environments)
+    for (const repo of selectedRun?.discoveredRepos ?? []) {
+      const trimmed = repo?.trim();
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
+    }
+
+    return Array.from(names);
+  }, [task?.projectFullName, environmentRepos, selectedRun?.discoveredRepos]);
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
   const shouldPrefixDiffs = repoFullNames.length > 1;
@@ -480,10 +532,27 @@ function RunDiffPage() {
   // Passing stale hints from the base branch (e.g., main) can cause the diff to use the wrong comparison
   // base, resulting in extra unrelated files appearing in the diff.
 
-  // Fetch diffs for heatmap review (this reuses the cached data from RunDiffSection)
-  const baseRefForHeatmap = normalizeGitRef(task?.baseBranch || "main");
+  // Find parent run if this is a child run (for comparing against parent's branch)
+  const parentRun = useMemo(() => {
+    if (!selectedRun?.parentRunId || !taskRuns) return null;
+    return taskRuns.find((run) => run._id === selectedRun.parentRunId) ?? null;
+  }, [selectedRun?.parentRunId, taskRuns]);
+
+  // Determine base ref for diff comparison with priority:
+  // 1. Parent run's branch (for child runs)
+  // 2. Starting commit SHA (for new tasks in custom environments)
+  // 3. Task's base branch (explicit user choice)
+  const baseRefForHeatmap = useMemo(() => {
+    if (parentRun?.newBranch) {
+      return normalizeGitRef(parentRun.newBranch);
+    }
+    if (selectedRun?.startingCommitSha) {
+      return selectedRun.startingCommitSha; // Direct SHA
+    }
+    return task?.baseBranch ? normalizeGitRef(task.baseBranch) : undefined;
+  }, [parentRun?.newBranch, selectedRun?.startingCommitSha, task?.baseBranch]);
   const headRefForHeatmap = normalizeGitRef(selectedRun?.newBranch);
-  const diffQueryEnabled = Boolean(primaryRepo) && Boolean(baseRefForHeatmap) && Boolean(headRefForHeatmap);
+  const diffQueryEnabled = Boolean(primaryRepo) && Boolean(headRefForHeatmap);
   const diffQuery = useRQ({
     ...gitDiffQueryOptions({
       repoFullName: primaryRepo ?? "",
@@ -933,7 +1002,9 @@ function RunDiffPage() {
   ]);
 
   const taskRunId = selectedRun?._id ?? runId;
-  const baseBranch = task?.baseBranch ?? "main";
+  // Use explicit baseBranch if set, otherwise "main" for local workspace display
+  // (the native diff code will auto-detect, but we need a display value)
+  const baseBranch = task?.baseBranch || "main";
 
   const handleOpenLocalWorkspace = useCallback(() => {
     // If query is still loading, don't allow creation to prevent duplicates
@@ -995,6 +1066,75 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
 
+  // Discover repos hook - for custom environments where agent clones repos
+  const discoverReposMutation = useDiscoverRepos();
+
+  // Handler to trigger repo discovery in the sandbox
+  const handleDiscoverRepos = useCallback(() => {
+    const sandboxId = selectedRun?.vscode?.containerName;
+    if (!sandboxId || !selectedRun?._id) {
+      toast.error("Sandbox not available");
+      return;
+    }
+
+    discoverReposMutation.mutate({
+      sandboxId,
+      taskRunId: selectedRun._id,
+      teamSlugOrId,
+    });
+  }, [selectedRun?.vscode?.containerName, selectedRun?._id, teamSlugOrId, discoverReposMutation]);
+
+  // Check if we can discover repos (sandbox is running)
+  const canDiscoverRepos = selectedRun?.vscode?.status === "running" && selectedRun?.vscode?.containerName;
+
+  // Track if we've already attempted discovery for this run
+  const [hasAttemptedDiscovery, setHasAttemptedDiscovery] = useState(false);
+
+  // Reset discovery attempt tracking when run changes
+  useEffect(() => {
+    setHasAttemptedDiscovery(false);
+  }, [selectedRun?._id]);
+
+  // Auto-discover repos when diff view opens and no repos are found
+  useEffect(() => {
+    // Skip if:
+    // - Already have repos (from projectFullName, environment, or previous discovery)
+    // - Can't discover (sandbox not running)
+    // - Already attempted discovery
+    // - Already have discovered repos
+    // - Discovery is in progress
+    if (
+      repoFullNames.length > 0 ||
+      !canDiscoverRepos ||
+      hasAttemptedDiscovery ||
+      (selectedRun?.discoveredRepos?.length ?? 0) > 0 ||
+      discoverReposMutation.isPending
+    ) {
+      return;
+    }
+
+    const sandboxId = selectedRun?.vscode?.containerName;
+    if (!sandboxId || !selectedRun?._id) {
+      return;
+    }
+
+    setHasAttemptedDiscovery(true);
+    discoverReposMutation.mutate({
+      sandboxId,
+      taskRunId: selectedRun._id,
+      teamSlugOrId,
+    });
+  }, [
+    repoFullNames.length,
+    canDiscoverRepos,
+    hasAttemptedDiscovery,
+    selectedRun?.discoveredRepos?.length,
+    selectedRun?.vscode?.containerName,
+    selectedRun?._id,
+    teamSlugOrId,
+    discoverReposMutation,
+  ]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -1004,10 +1144,12 @@ function RunDiffPage() {
     );
   }
 
-  const baseRef = normalizeGitRef(task?.baseBranch || "main");
+  // When baseBranch is not set, pass undefined to let native code auto-detect
+  const baseRef = task?.baseBranch
+    ? normalizeGitRef(task.baseBranch)
+    : undefined;
   const headRef = normalizeGitRef(selectedRun.newBranch);
-  const hasDiffSources =
-    Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
+  const hasDiffSources = Boolean(primaryRepo) && Boolean(headRef);
 
   // Only show the "Open local workspace" button for regular tasks (not local/cloud workspaces)
   const isWorkspace = task?.isLocalWorkspace || task?.isCloudWorkspace;
@@ -1065,12 +1207,12 @@ function RunDiffPage() {
               <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
                 Loading screenshots...
               </div>
-            ) : screenshotSets.length > 0 ? (
+            ) : (
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
-                highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+                screenshotConfig={screenshotConfig}
               />
-            ) : null}
+            )}
             <div
               className="flex-1 min-h-0"
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
@@ -1110,8 +1252,28 @@ function RunDiffPage() {
                     />
                   )
                 ) : (
-                  <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
-                    Missing repo or branches to show diff.
+                  <div className="flex h-full flex-col items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300 gap-4">
+                    {discoverReposMutation.isPending ? (
+                      // Auto-scanning in progress
+                      <span>Scanning for repositories...</span>
+                    ) : hasAttemptedDiscovery ? (
+                      // Scan completed but no repos found
+                      <>
+                        <span>No repositories found in workspace.</span>
+                        {canDiscoverRepos && (
+                          <button
+                            type="button"
+                            onClick={handleDiscoverRepos}
+                            className="px-4 py-2 text-sm font-medium rounded-md bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 transition-colors"
+                          >
+                            Retry Scan
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      // No repos and can't scan (sandbox not running)
+                      <span>Missing repo or branches to show diff.</span>
+                    )}
                   </div>
                 )}
               </Suspense>

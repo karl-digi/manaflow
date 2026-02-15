@@ -8,11 +8,11 @@ const fs = require('fs');
 const path = require('path');
 
 const PLATFORMS = {
-  'darwin-arm64': '@manaflow-ai/cloudrouter-darwin-arm64',
-  'darwin-x64': '@manaflow-ai/cloudrouter-darwin-x64',
-  'linux-arm64': '@manaflow-ai/cloudrouter-linux-arm64',
-  'linux-x64': '@manaflow-ai/cloudrouter-linux-x64',
-  'win32-x64': '@manaflow-ai/cloudrouter-win32-x64',
+  'darwin-arm64': '@karlorz/cloudrouter-darwin-arm64',
+  'darwin-x64': '@karlorz/cloudrouter-darwin-x64',
+  'linux-arm64': '@karlorz/cloudrouter-linux-arm64',
+  'linux-x64': '@karlorz/cloudrouter-linux-x64',
+  'win32-x64': '@karlorz/cloudrouter-win32-x64',
 };
 
 function getPlatformPackage() {
@@ -31,18 +31,18 @@ function getPlatformPackage() {
 function findBinary(packageName) {
   const binName = process.platform === 'win32' ? 'cloudrouter.exe' : 'cloudrouter';
   // Extract the short name for scoped package paths
-  const shortName = packageName.replace('@manaflow-ai/', '');
+  const shortName = packageName.replace('/', '');
 
   // Try to find the binary in node_modules
   const possiblePaths = [
     // Hoisted to top-level node_modules (local install) - scoped
-    path.join(__dirname, '..', '..', '@manaflow-ai', shortName, 'bin'),
+    path.join(__dirname, '..', '..', '', shortName, 'bin'),
     // In our own node_modules - scoped
-    path.join(__dirname, '..', 'node_modules', '@manaflow-ai', shortName, 'bin'),
+    path.join(__dirname, '..', 'node_modules', '', shortName, 'bin'),
     // Global install - sibling package - scoped
-    path.join(__dirname, '..', '..', '..', '@manaflow-ai', shortName, 'bin'),
+    path.join(__dirname, '..', '..', '..', '', shortName, 'bin'),
     // pnpm global - scoped
-    path.join(__dirname, '..', '..', '.pnpm', 'node_modules', '@manaflow-ai', shortName, 'bin'),
+    path.join(__dirname, '..', '..', '.pnpm', 'node_modules', '', shortName, 'bin'),
   ];
 
   // Also try require.resolve to find the package

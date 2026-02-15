@@ -13,6 +13,7 @@ import { useClipboard } from "@mantine/hooks";
 import {
   useMutation,
   useQueries,
+  useQueryClient,
   type DefaultError,
 } from "@tanstack/react-query";
 import {
@@ -95,6 +96,9 @@ function AdditionsAndDeletions({
   defaultBaseRef?: string;
   defaultHeadRef?: string;
 }) {
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const repoConfigs = useMemo(() => {
     const normalizedDefaults = {
       base: normalizeGitRef(defaultBaseRef),
@@ -153,6 +157,35 @@ function AdditionsAndDeletions({
     return Boolean(query.error);
   });
 
+  // useCallback must be called before any early returns to comply with React's rules of hooks
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    const toastId = toast.loading("Refreshing git diff...");
+    try {
+      // Fetch fresh data with forceRefresh to bypass SWR cache window
+      await Promise.all(
+        repoConfigs.map((config) =>
+          queryClient.fetchQuery(
+            gitDiffQueryOptions({
+              repoFullName: config.repoFullName,
+              baseRef: config.baseRef,
+              headRef: config.headRef ?? "",
+              forceRefresh: true,
+            })
+          )
+        )
+      );
+      // Also invalidate other git-diff queries to ensure consistency
+      await queryClient.invalidateQueries({ queryKey: ["git-diff"] });
+      toast.success("Git diff refreshed", { id: toastId });
+    } catch (error) {
+      console.error("[AdditionsAndDeletions] Failed to refresh git diff:", error);
+      toast.error("Failed to refresh git diff", { id: toastId });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [queryClient, repoConfigs]);
+
   if (!isLoading && firstError?.error) {
     return (
       <div className="flex items-center gap-2 text-[11px] ml-2 shrink-0">
@@ -196,6 +229,22 @@ function AdditionsAndDeletions({
           </span>
         )}
       </Skeleton>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={isLoading || isRefreshing}
+        className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Refresh git diff"
+        title="Refresh git diff"
+        style={isElectron ? { WebkitAppRegion: "no-drag" } as React.CSSProperties : undefined}
+      >
+        <RefreshCw
+          className={cn(
+            "w-3.5 h-3.5",
+            isRefreshing && "animate-spin"
+          )}
+        />
+      </button>
     </div>
   );
 }
@@ -235,13 +284,32 @@ export function TaskDetailHeader({
     [selectedRun?.worktreePath, task?.worktreePath],
   );
 
+  // Find parent run if this is a child run (for comparing against parent's branch)
+  const parentRun = useMemo(() => {
+    if (!selectedRun?.parentRunId || !taskRuns) return null;
+    return taskRuns.find((run) => run._id === selectedRun.parentRunId) ?? null;
+  }, [selectedRun?.parentRunId, taskRuns]);
+
+  // Determine base ref for diff comparison with priority:
+  // 1. Parent run's branch (for child runs)
+  // 2. Starting commit SHA (for new tasks in custom environments)
+  // 3. Task's base branch (explicit user choice)
   const normalizedBaseBranch = useMemo(() => {
+    // Priority 1: Parent run's branch (for child runs)
+    if (parentRun?.newBranch) {
+      return normalizeGitRef(parentRun.newBranch);
+    }
+    // Priority 2: Starting commit SHA (for new tasks in custom environments)
+    if (selectedRun?.startingCommitSha) {
+      return selectedRun.startingCommitSha; // Direct SHA, no normalization needed
+    }
+    // Priority 3: Task's base branch (explicit user choice)
     const candidate = task?.baseBranch;
     if (candidate && candidate.trim()) {
       return normalizeGitRef(candidate);
     }
-    return normalizeGitRef("main");
-  }, [task?.baseBranch]);
+    return undefined;
+  }, [parentRun?.newBranch, selectedRun?.startingCommitSha, task?.baseBranch]);
   const normalizedHeadBranch = useMemo(
     () => normalizeGitRef(selectedRun?.newBranch),
     [selectedRun?.newBranch],
@@ -257,14 +325,27 @@ export function TaskDetailHeader({
 
   const repoFullNames = useMemo(() => {
     const names = new Set<string>();
-    if (task?.projectFullName?.trim()) {
-      names.add(task.projectFullName.trim());
+    const projectName = task?.projectFullName?.trim();
+    // Skip environment-based project names (format: env:<environmentId>)
+    if (projectName && !projectName.startsWith("env:")) {
+      names.add(projectName);
     }
     for (const repo of environmentRepos) {
-      names.add(repo);
+      const trimmed = repo?.trim();
+      // Skip environment references in selectedRepos as well
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
+    }
+    // Add discovered repos from sandbox (for custom environments)
+    for (const repo of selectedRun?.discoveredRepos ?? []) {
+      const trimmed = repo?.trim();
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
     }
     return Array.from(names);
-  }, [task?.projectFullName, environmentRepos]);
+  }, [task?.projectFullName, environmentRepos, selectedRun?.discoveredRepos]);
 
   const repoDiffTargets = useMemo<RepoDiffTarget[]>(() => {
     const baseRef = normalizedBaseBranch || undefined;
@@ -622,13 +703,15 @@ function SocketActions({
     const names = new Set<string>();
     for (const target of repoDiffTargets) {
       const trimmed = target.repoFullName?.trim();
-      if (trimmed) {
+      // Skip environment-based project names (format: env:<environmentId>)
+      if (trimmed && !trimmed.startsWith("env:")) {
         names.add(trimmed);
       }
     }
     for (const pr of pullRequests) {
       const trimmed = pr.repoFullName?.trim();
-      if (trimmed) {
+      // Skip environment references in pull requests as well
+      if (trimmed && !trimmed.startsWith("env:")) {
         names.add(trimmed);
       }
     }

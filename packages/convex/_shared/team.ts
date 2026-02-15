@@ -47,7 +47,9 @@ export async function getTeamId(
       )
       .first();
     if (!membership) {
-      throw new Error("Forbidden: Not a member of this team");
+      throw new Error(
+        `Forbidden: Not a member of this team (teamId=${teamId}, userId=${userId})`
+      );
     }
   }
 

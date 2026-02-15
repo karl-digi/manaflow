@@ -11,7 +11,8 @@ import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 
 export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
-  ref1: string;
+  /** Base ref for diff. If undefined, native code auto-detects via refs/remotes/origin/HEAD */
+  ref1?: string;
   ref2: string;
   onControlsChange?: (controls: DiffViewerControls) => void;
   additionalRepoFullNames?: string[];
@@ -84,7 +85,8 @@ export function RunDiffHeatmapReviewSection(
     return Array.from(unique);
   }, [repoFullName, additionalRepoFullNames]);
 
-  const canFetch = repoFullNames.length > 0 && Boolean(ref1) && Boolean(ref2);
+  // ref1 can be undefined - native code will auto-detect base branch
+  const canFetch = repoFullNames.length > 0 && Boolean(ref2);
 
   const queries = useQueries({
     queries: repoFullNames.map((repo) => ({

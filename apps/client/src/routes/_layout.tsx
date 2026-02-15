@@ -32,10 +32,13 @@ export const Route = createFileRoute("/_layout")({
         },
       });
     }
-    const convexAuthReady = await convexAuthReadyPromise;
-    if (!convexAuthReady) {
-      console.log("[Route.beforeLoad] convexAuthReady:", convexAuthReady);
-    }
+    // Fire and forget - Convex handles loading states via Suspense
+    // Don't block route transition waiting for Convex auth
+    void convexAuthReadyPromise.then((isReady) => {
+      if (!isReady) {
+        console.log("[Route.beforeLoad] convexAuthReady:", isReady);
+      }
+    });
     void context.queryClient
       .ensureQueryData(localVSCodeServeWebQueryOptions())
       .catch(() => undefined);
