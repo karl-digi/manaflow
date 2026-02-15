@@ -13,14 +13,34 @@ import (
 
 const (
 	// Preset ID from packages/shared/src/e2b-templates.json (stable identifier)
-	defaultTemplatePresetID = "cmux-devbox-docker"
+	// Using lite template (no Docker-in-Docker) as default for faster boot times
+	defaultTemplatePresetID = "cmux-devbox-lite"
 
 	// Template name in E2B (fallback if template list endpoint is unavailable)
-	defaultTemplateName = "cmux-devbox-docker"
+	defaultTemplateName    = "cmux-devbox-lite"
+	defaultTemplateNameDev = "cmux-devbox-lite-dev"
 
 	// Modal preset IDs from packages/shared/src/modal-templates.json
 	modalDefaultPresetID = "cmux-devbox-gpu"
 )
+
+// getDefaultTemplateName returns the default E2B template name.
+// Uses dev template if buildMode is "dev" (set via ldflags at compile time).
+// Can be overridden with CLOUDROUTER_DEV_MODE=1 (force dev) or CLOUDROUTER_DEV_MODE=0 (force prod).
+func getDefaultTemplateName() string {
+	// Allow env var override
+	if envMode := os.Getenv("CLOUDROUTER_DEV_MODE"); envMode != "" {
+		if envMode == "1" {
+			return defaultTemplateNameDev
+		}
+		return defaultTemplateName
+	}
+	// Use build mode (set via ldflags)
+	if buildMode == "dev" {
+		return defaultTemplateNameDev
+	}
+	return defaultTemplateName
+}
 
 var (
 	startFlagName     string
@@ -252,7 +272,7 @@ Examples:
 			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
 			if templateID == "" && provider != "modal" && provider != "pve-lxc" {
-				templateID = defaultTemplateName
+				templateID = getDefaultTemplateName()
 			}
 		}
 

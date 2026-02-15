@@ -1,7 +1,22 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-02-13T00:00:00Z",
+  "updatedAt": "2026-02-15T00:00:00Z",
   "templates": [
+    {
+      "templateId": "cmux-devbox-lite",
+      "label": "Lite (4 vCPU / 16 GB, no Docker)",
+      "cpu": "4 vCPU",
+      "memory": "16 GB RAM",
+      "disk": "20 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "e2bTemplateId": "6vjxue0nr5h66eec76kj",
+          "capturedAt": "2026-02-15T14:25:57Z"
+        }
+      ],
+      "description": "Lightweight E2B workspace without Docker-in-Docker. Faster boot, lower overhead."
+    },
     {
       "templateId": "cmux-devbox-low",
       "label": "Low (4 vCPU / 16 GB)",

@@ -112,6 +112,7 @@ dev-electron:
 
 # Build and install cloudrouter CLI (dev mode)
 # cloudrouter auto-loads CLOUDROUTER_REFRESH_TOKEN from .env (no interactive login needed)
+# Dev build automatically uses cmux-devbox-lite-dev template for E2B provider
 install-cloudrouter-dev:
 	@echo "Building and installing cloudrouter (dev mode)..."
 	$(MAKE) -C packages/cloudrouter install-dev VERSION=$(CLOUDROUTER_DEV_VERSION)
@@ -120,7 +121,12 @@ install-cloudrouter-dev:
 	@if cloudrouter whoami 2>/dev/null | grep -q "User:"; then \
 		cloudrouter whoami; \
 		echo ""; \
-		echo "cloudrouter ready. Run: cloudrouter start ."; \
+		echo "cloudrouter ready!"; \
+		echo ""; \
+		echo "  cloudrouter start .           # uses cmux-devbox-lite-dev (dev build default)"; \
+		echo "  cloudrouter start . -p e2b    # uses cmux-devbox-lite-dev (E2B provider)"; \
+		echo ""; \
+		echo "To force production template: CLOUDROUTER_DEV_MODE=0 cloudrouter start ."; \
 	else \
 		echo "Not logged in."; \
 		echo ""; \

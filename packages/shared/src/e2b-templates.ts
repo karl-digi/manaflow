@@ -116,18 +116,19 @@ export const DEFAULT_E2B_TEMPLATE_ID: E2BTemplateId =
   highPreset?.id ?? firstPreset.id;
 
 /**
- * Size tiers for E2B templates: low, mid, high.
- * Default is "high" (cmux-devbox-docker).
+ * Size tiers for E2B templates: lite, low, mid, high.
+ * Default is "lite" (cmux-devbox-lite - no Docker-in-Docker).
  */
-export type E2BSizeTier = "low" | "mid" | "high";
+export type E2BSizeTier = "lite" | "low" | "mid" | "high";
 
 const E2B_SIZE_TIER_PRESET_IDS: Record<E2BSizeTier, string> = {
+  lite: "cmux-devbox-lite",
   low: "cmux-devbox-low",
   mid: "cmux-devbox-mid",
   high: "cmux-devbox-docker",
 };
 
-export const DEFAULT_E2B_SIZE_TIER: E2BSizeTier = "high";
+export const DEFAULT_E2B_SIZE_TIER: E2BSizeTier = "lite";
 
 /**
  * Get the latest E2B template ID for a size tier.

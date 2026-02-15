@@ -17,6 +17,12 @@
 bun install && make install-cloudrouter-dev && cloudrouter whoami
 # Then: make dev (terminal 1), cloudrouter start . (terminal 2)
 
+# Dev build automatically uses cmux-devbox-lite-dev template
+cloudrouter start . -p e2b  # uses cmux-devbox-lite-dev (8 GB, dev build default)
+
+# Force production template (if needed)
+CLOUDROUTER_DEV_MODE=0 cloudrouter start . -p e2b  # uses cmux-devbox-lite (16 GB)
+
 # Set default sandbox provider in Convex env (optional, default: pve-lxc)
 # SANDBOX_PROVIDER=pve-lxc  # or: morph, e2b, modal
 ```
