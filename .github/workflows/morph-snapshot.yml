@@ -62,7 +62,7 @@ jobs:
       - name: Run morph snapshot (with retry)
         env:
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
-          SNAPSHOT_ID: ${{ vars.MORPH_SNAPSHOT_ID || 'snapshot_7wbqo5jd' }}
+          SNAPSHOT_ID: ${{ vars.MORPH_SNAPSHOT_ID || 'snapshot_u2roj9fj' }}
           STANDARD_VCPUS: ${{ vars.MORPH_STANDARD_VCPUS || '4' }}
           STANDARD_MEMORY: ${{ vars.MORPH_STANDARD_MEMORY || '8192' }}
           STANDARD_DISK_SIZE: ${{ vars.MORPH_STANDARD_DISK_SIZE || '32768' }}

@@ -174,6 +174,29 @@ class HttpExecClient:
                     continue
                 raise RuntimeError(f"exec service request failed: {exc}") from exc
             except urllib.error.URLError as exc:
+                # URLError wraps connection errors like ConnectionResetError
+                reason = getattr(exc, "reason", exc)
+                if isinstance(reason, (ConnectionResetError, BrokenPipeError, OSError)) and attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    self._console.info(
+                        f"[{label}] connection error, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries}): {reason}"
+                    )
+                    time.sleep(delay)
+                    last_error = exc
+                    continue
+                raise RuntimeError(f"exec service request failed: {exc}") from exc
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                # Direct connection errors (not wrapped in URLError)
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    self._console.info(
+                        f"[{label}] connection error, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries}): {exc}"
+                    )
+                    time.sleep(delay)
+                    last_error = exc
+                    continue
                 raise RuntimeError(f"exec service request failed: {exc}") from exc
         else:
             raise RuntimeError(
