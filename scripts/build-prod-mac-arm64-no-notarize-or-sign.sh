@@ -158,7 +158,7 @@ if [[ "$SKIP_INSTALL" != "true" ]]; then
 fi
 
 start_step "Build native addon (release)"
-(cd "$ROOT_DIR/apps/server/native/core" && bunx --bun @napi-rs/cli build --platform --release)
+(cd "$ROOT_DIR/apps/server/native/core" && bunx napi build --platform --release)
 end_step
 
 start_step "Build Electron app"

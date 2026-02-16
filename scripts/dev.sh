@@ -490,7 +490,7 @@ fi
 
 # Build Rust N-API addon (required) - runs in parallel with Docker build
 echo -e "${GREEN}Building native Rust addon...${NC}"
-(cd "$APP_DIR/apps/server/native/core" && bunx --bun @napi-rs/cli build --platform) || exit 1
+(cd "$APP_DIR/apps/server/native/core" && bunx napi build --platform) || exit 1
 
 # Wait for Docker build to complete if it was started
 if [ -n "$DOCKER_BUILD_PID" ]; then

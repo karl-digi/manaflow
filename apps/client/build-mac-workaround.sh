@@ -36,7 +36,7 @@ ensure_native_core_built() {
 
   (
     cd "$native_dir"
-    bunx --bun @napi-rs/cli build --platform --release
+    bunx napi build --platform --release
   )
 
   local host_arch
