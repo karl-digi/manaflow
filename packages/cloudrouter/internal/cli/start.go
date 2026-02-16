@@ -78,6 +78,8 @@ GPU options (--gpu):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
+
+  The following GPUs require approval (contact founders@manaflow.ai):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models
@@ -161,6 +163,18 @@ Examples:
 				if name == "" {
 					name = filepath.Base(absPath)
 				}
+			}
+		}
+
+		// Gate expensive GPUs client-side
+		if startFlagGPU != "" {
+			baseGPU := strings.ToUpper(strings.Split(startFlagGPU, ":")[0])
+			gatedGPUs := map[string]bool{
+				"L40S": true, "A100": true, "A100-80GB": true,
+				"H100": true, "H200": true, "B200": true,
+			}
+			if gatedGPUs[baseGPU] {
+				return fmt.Errorf("GPU type %q requires approval. Contact founders@manaflow.ai to get this GPU enabled for your account", startFlagGPU)
 			}
 		}
 
