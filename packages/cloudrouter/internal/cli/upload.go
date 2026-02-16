@@ -25,13 +25,13 @@ var uploadCmd = &cobra.Command{
 	Long: `Upload files or directories from local filesystem to a sandbox instance using rsync.
 
 The local path defaults to the current directory if not specified.
-The remote path defaults to /home/user/workspace if not specified.
+The remote path is auto-detected based on the sandbox user (root vs regular user).
 
 Examples:
   cloudrouter upload cr_abc123                           # Upload current dir to workspace
   cloudrouter upload cr_abc123 ./my-project              # Upload specific directory
   cloudrouter upload cr_abc123 ./config.json             # Upload single file
-  cloudrouter upload cr_abc123 . -r /home/user/app       # Upload to specific remote path
+  cloudrouter upload cr_abc123 . -r /app                 # Upload to specific remote path
   cloudrouter upload cr_abc123 . --watch                 # Watch and upload on changes
   cloudrouter upload cr_abc123 . --delete                # Delete remote files not present locally`,
 	Args: cobra.RangeArgs(1, 2),
@@ -41,7 +41,6 @@ Examples:
 		if len(args) > 1 {
 			localPath = args[1]
 		}
-		remotePath := uploadFlagRemotePath
 
 		absPath, err := filepath.Abs(localPath)
 		if err != nil {
@@ -72,6 +71,12 @@ Examples:
 		token, err := client.GetAuthToken(teamSlug, sandboxID)
 		if err != nil {
 			return fmt.Errorf("failed to get auth token: %w", err)
+		}
+
+		// Auto-detect workspace path if not explicitly provided
+		remotePath := uploadFlagRemotePath
+		if remotePath == "" {
+			remotePath = detectWorkspacePath(client, teamSlug, sandboxID)
 		}
 
 		// Set rsync flags
@@ -126,7 +131,7 @@ func watchAndUpload(workerURL, token, localPath, remotePath, sandboxID string) e
 }
 
 func init() {
-	uploadCmd.Flags().StringVarP(&uploadFlagRemotePath, "remote-path", "r", "/home/user/workspace", "Remote path to upload to")
+	uploadCmd.Flags().StringVarP(&uploadFlagRemotePath, "remote-path", "r", "", "Remote path to upload to (auto-detected if not specified)")
 	uploadCmd.Flags().BoolVarP(&uploadFlagWatch, "watch", "w", false, "Watch for changes and upload continuously")
 	uploadCmd.Flags().BoolVar(&uploadFlagDelete, "delete", false, "Delete remote files not present locally")
 	uploadCmd.Flags().StringSliceVarP(&uploadFlagExclude, "exclude", "e", nil, "Patterns to exclude")

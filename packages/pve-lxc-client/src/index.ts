@@ -1441,7 +1441,7 @@ export class PveLxcClient {
           hostname
         );
         const workerUrl = await this.buildServiceUrl(
-          39377,
+          39376,  // Node.js worker (Go worker uses 39377)
           newVmid,
           hostname,
           domainSuffix,
@@ -1465,7 +1465,7 @@ export class PveLxcClient {
         if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
           services.push(
             { name: "vscode", port: 39378, url: vscodeUrl },
-            { name: "worker", port: 39377, url: workerUrl },
+            { name: "worker", port: 39376, url: workerUrl },  // Node.js worker (Go worker uses 39377)
             { name: "vnc", port: 39380, url: vncUrl },
             { name: "xterm", port: 39383, url: xtermUrl }
           );
@@ -1536,7 +1536,7 @@ export class PveLxcClient {
           hostname
         );
         const workerUrl = await this.buildServiceUrl(
-          39377,
+          39376,  // Node.js worker (Go worker uses 39377)
           vmid,
           hostname,
           domainSuffix,
@@ -1561,7 +1561,7 @@ export class PveLxcClient {
         if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
           services.push(
             { name: "vscode", port: 39378, url: vscodeUrl },
-            { name: "worker", port: 39377, url: workerUrl },
+            { name: "worker", port: 39376, url: workerUrl },  // Node.js worker (Go worker uses 39377)
             { name: "vnc", port: 39380, url: vncUrl },
             { name: "xterm", port: 39383, url: xtermUrl }
           );

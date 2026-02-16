@@ -49,7 +49,8 @@ PVE_API_ORIGIN="${PVE_API_ORIGIN:-http://127.0.0.1:8081}"
 
 # Service ports for cmux sandboxes
 VSCODE_PORT=39378
-WORKER_PORT=39377
+GO_WORKER_PORT=39377      # Go worker-daemon (SSH proxy, HTTP API)
+NODE_WORKER_PORT=39376    # Node.js worker (Socket.IO for web tasks)
 XTERM_PORT=39383
 EXEC_PORT=39375
 VNC_PORT=39380
@@ -94,7 +95,8 @@ URL PATTERN (instanceId-based, uses free Cloudflare Universal SSL):
 
     Examples:
       https://port-39378-pvelxc-abc123.example.com  (vscode)
-      https://port-39377-pvelxc-abc123.example.com  (worker)
+      https://port-39377-pvelxc-abc123.example.com  (go worker - SSH proxy)
+      https://port-39376-pvelxc-abc123.example.com  (node.js worker - Socket.IO)
       https://port-39375-pvelxc-abc123.example.com  (exec)
       https://port-39380-pvelxc-abc123.example.com  (vnc)
       https://port-39383-pvelxc-abc123.example.com  (xterm)
@@ -112,7 +114,8 @@ EXAMPLE:
 
     # URLs will be available at:
     # https://port-39378-pvelxc-abc123.example.com (vscode)
-    # https://port-39377-pvelxc-abc123.example.com (worker)
+    # https://port-39377-pvelxc-abc123.example.com (go worker - SSH proxy)
+    # https://port-39376-pvelxc-abc123.example.com (node.js worker - Socket.IO)
 EOF
 }
 
@@ -427,7 +430,8 @@ configure_caddy() {
 #
 # Examples:
 #   port-39378-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39378 (vscode)
-#   port-39377-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39377 (worker)
+#   port-39377-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39377 (go worker - SSH proxy)
+#   port-39376-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39376 (node.js worker - Socket.IO)
 #   port-39375-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39375 (exec)
 #   port-39380-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39380 (vnc)
 #   port-39383-pvelxc-abc123.${CF_DOMAIN} -> pvelxc-abc123.${domain_suffix}:39383 (xterm)
@@ -616,7 +620,8 @@ full_setup() {
     echo ""
     echo "URLs will be (instanceId-based pattern, free Cloudflare Universal SSL):"
     echo "  https://port-39378-{instanceId}.${CF_DOMAIN}  (vscode)"
-    echo "  https://port-39377-{instanceId}.${CF_DOMAIN}  (worker)"
+    echo "  https://port-39377-{instanceId}.${CF_DOMAIN}  (go worker - SSH proxy)"
+    echo "  https://port-39376-{instanceId}.${CF_DOMAIN}  (node.js worker - Socket.IO)"
     echo ""
 
     read -p "Continue? [Y/n] " -n 1 -r
@@ -638,7 +643,8 @@ full_setup() {
     echo ""
     echo "Your sandboxes are now accessible at:"
     echo "  https://port-39378-{instanceId}.${CF_DOMAIN}  (vscode)"
-    echo "  https://port-39377-{instanceId}.${CF_DOMAIN}  (worker)"
+    echo "  https://port-39377-{instanceId}.${CF_DOMAIN}  (go worker - SSH proxy)"
+    echo "  https://port-39376-{instanceId}.${CF_DOMAIN}  (node.js worker - Socket.IO)"
     echo "  https://port-39375-{instanceId}.${CF_DOMAIN}  (exec)"
     echo "  https://port-39380-{instanceId}.${CF_DOMAIN}  (vnc)"
     echo "  https://port-39383-{instanceId}.${CF_DOMAIN}  (xterm)"

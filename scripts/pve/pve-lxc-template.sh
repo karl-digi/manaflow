@@ -150,7 +150,8 @@ DEFAULT_OSTEMPLATE="${PVE_OSTEMPLATE:-local:vztmpl/ubuntu-24.04-standard_24.04-2
 
 # cmux required ports
 CMUX_PORTS=(
-    "39377"  # worker
+    "39376"  # node.js worker (Socket.IO for web tasks)
+    "39377"  # go worker (SSH proxy, HTTP API)
     "39378"  # openvscode
     "39379"  # proxy
     "39380"  # vnc

@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::WebSocket;
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -871,7 +872,7 @@ impl LxcSandboxEntry {
             index: self.index,
             name: self.name.clone(),
             created_at: self.created_at,
-            workspace: "/workspace".to_string(), // Standard workspace path in container
+            workspace: "/root/workspace".to_string(), // PVE-LXC uses root user
             status: self.status.clone(),
             network: SandboxNetwork {
                 host_interface: config.bridge.clone(),
@@ -1103,12 +1104,62 @@ impl SandboxService for PveLxcService {
         ))
     }
 
-    async fn upload_archive(&self, _id: String, _archive: Body) -> SandboxResult<()> {
-        // Upload and extract archive to container
-        // This requires implementing file transfer to the container
-        Err(SandboxError::Internal(
-            "PVE LXC upload_archive not yet implemented".to_string(),
-        ))
+    async fn upload_archive(&self, id: String, archive: Body) -> SandboxResult<()> {
+        let uuid = Uuid::parse_str(&id)
+            .map_err(|_| SandboxError::InvalidRequest(format!("Invalid UUID: {id}")))?;
+
+        let entry = {
+            let sandboxes = self.sandboxes.lock().await;
+            sandboxes.get(&uuid).cloned()
+        }
+        .ok_or(SandboxError::NotFound(uuid))?;
+
+        // Stream the tar archive to cmux-execd's /files endpoint
+        let files_url = format!("http://{}:39375/files", entry.ip);
+
+        info!(
+            "Uploading archive to PVE LXC container: id={}, vmid={}, url={}",
+            uuid, entry.vmid, files_url
+        );
+
+        // Convert the axum Body stream to a reqwest Body
+        let stream = archive.into_data_stream();
+        let body_stream =
+            stream.map(|result| result.map_err(|e| std::io::Error::other(e.to_string())));
+        let reqwest_body = reqwest::Body::wrap_stream(body_stream);
+
+        // Send the archive to the container's /files endpoint
+        // Note: We can't retry with streaming body, so we do a single attempt
+        // The cmux-execd service should be ready by the time we start uploading
+        let response = self
+            .client
+            .client
+            .post(&files_url)
+            .body(reqwest_body)
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await
+            .map_err(|e| {
+                SandboxError::Internal(format!(
+                    "Failed to upload archive to container {}: {}",
+                    entry.ip, e
+                ))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(SandboxError::Internal(format!(
+                "Failed to upload archive: {} - {}",
+                status, body
+            )));
+        }
+
+        info!(
+            "Archive uploaded successfully to container {}: id={}, vmid={}",
+            entry.ip, uuid, entry.vmid
+        );
+        Ok(())
     }
 
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>> {

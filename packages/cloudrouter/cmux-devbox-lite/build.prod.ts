@@ -18,7 +18,7 @@ async function main() {
       mode: "prod",
       // Production builds use full resources
       cpuCount: 4,
-      memoryMB: 16384,
+      memoryMB: 8192,
     });
 
     console.log("[build.prod] Template built successfully!");

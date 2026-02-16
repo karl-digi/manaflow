@@ -4,9 +4,9 @@
   "templates": [
     {
       "templateId": "cmux-devbox-lite",
-      "label": "Lite (4 vCPU / 16 GB, no Docker)",
+      "label": "Lite (4 vCPU / 8 GB, no Docker)",
       "cpu": "4 vCPU",
-      "memory": "16 GB RAM",
+      "memory": "8 GB RAM",
       "disk": "20 GB SSD",
       "versions": [
         {

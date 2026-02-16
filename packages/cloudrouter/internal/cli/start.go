@@ -82,6 +82,26 @@ func isGitURL(s string) bool {
 		strings.HasSuffix(s, ".git")
 }
 
+// detectWorkspacePath detects the default workspace path by checking user identity on the sandbox.
+// Returns /root/workspace for root user, /home/user/workspace for regular user.
+// Creates the workspace directory if it doesn't exist.
+// Important: We check whoami FIRST to avoid permission issues (e.g., /root/workspace exists but user is non-root).
+func detectWorkspacePath(client *api.Client, teamSlug, sandboxID string) string {
+	// Detect based on user identity first (not directory existence) to avoid permission issues
+	detectCmd := `if [ "$(whoami)" = "root" ]; then mkdir -p /root/workspace && echo /root/workspace; else mkdir -p /home/user/workspace && echo /home/user/workspace; fi`
+
+	resp, err := client.Exec(teamSlug, sandboxID, detectCmd, 10)
+	if err == nil && resp.ExitCode == 0 && resp.Stdout != "" {
+		path := strings.TrimSpace(resp.Stdout)
+		if path != "" {
+			return path
+		}
+	}
+
+	// Fallback to /home/user/workspace (E2B default)
+	return "/home/user/workspace"
+}
+
 var startCmd = &cobra.Command{
 	Use:     "start [path-or-git-url]",
 	Aliases: []string{"create", "new"},
@@ -320,12 +340,15 @@ Examples:
 		}
 		fmt.Println()
 
+		// Detect workspace path (auto-detect based on user/filesystem)
+		workspacePath := detectWorkspacePath(client, teamSlug, resp.DevboxID)
+
 		// Clone git repo if specified (fast!)
 		if gitURL != "" && token != "" {
 			fmt.Printf("Cloning %s...\n", gitURL)
-			cloneCmd := fmt.Sprintf("cd /home/user/workspace && git clone %s .", gitURL)
+			cloneCmd := fmt.Sprintf("cd %s && git clone %s .", workspacePath, gitURL)
 			if startFlagBranch != "" {
-				cloneCmd = fmt.Sprintf("cd /home/user/workspace && git clone -b %s %s .", startFlagBranch, gitURL)
+				cloneCmd = fmt.Sprintf("cd %s && git clone -b %s %s .", workspacePath, startFlagBranch, gitURL)
 			}
 			execResp, err := client.Exec(teamSlug, resp.DevboxID, cloneCmd, 120)
 			if err != nil {
@@ -342,7 +365,7 @@ Examples:
 			inst, err := client.GetInstance(teamSlug, resp.DevboxID)
 			if err == nil && inst.WorkerURL != "" {
 				fmt.Printf("Syncing %s to sandbox...\n", syncPath)
-				if err := runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, "/home/user/workspace"); err != nil {
+				if err := runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, workspacePath); err != nil {
 					fmt.Printf("Warning: failed to sync files: %v\n", err)
 				} else {
 					fmt.Println("✓ Files synced")
@@ -350,11 +373,11 @@ Examples:
 			}
 		}
 
-		// Build authenticated URLs
+		// Build authenticated URLs (use the detected workspace path)
 		var vscodeAuthURL, vncAuthURL, jupyterAuthURL string
 		if token != "" {
 			if resp.VSCodeURL != "" {
-				vscodeAuthURL, _ = buildAuthURL(resp.VSCodeURL, token, false)
+				vscodeAuthURL, _ = buildAuthURLWithFolder(resp.VSCodeURL, token, false, workspacePath)
 			}
 			if resp.VNCURL != "" {
 				vncAuthURL, _ = buildAuthURL(resp.VNCURL, token, true)

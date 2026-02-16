@@ -14,6 +14,11 @@ import (
 // E2B gives each port its own subdomain, so we use query params for auth
 // Both VSCode and VNC use the same ?tkn= pattern for consistent auth
 func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
+	return buildAuthURLWithFolder(baseURL, token, isVNC, "")
+}
+
+// buildAuthURLWithFolder builds a URL with token authentication and optional workspace folder
+func buildAuthURLWithFolder(baseURL, token string, isVNC bool, workspacePath string) (string, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL: %w", err)
@@ -32,8 +37,12 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 		query.Set("reconnect", "true")        // Auto-reconnect on disconnect
 		query.Set("reconnect_delay", "1000")  // 1 second reconnect delay
 	} else {
-		// Set default folder for VSCode
-		query.Set("folder", "/home/user/workspace")
+		// Set folder for VSCode (use provided path or fallback to default)
+		if workspacePath != "" {
+			query.Set("folder", workspacePath)
+		} else {
+			query.Set("folder", "/home/user/workspace")
+		}
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
@@ -81,7 +90,10 @@ Examples:
 			return fmt.Errorf("failed to get auth token: %w", err)
 		}
 
-		authURL, err := buildAuthURL(inst.VSCodeURL, token, false)
+		// Auto-detect workspace path
+		workspacePath := detectWorkspacePath(client, teamSlug, args[0])
+
+		authURL, err := buildAuthURLWithFolder(inst.VSCodeURL, token, false, workspacePath)
 		if err != nil {
 			return err
 		}

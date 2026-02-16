@@ -24,7 +24,8 @@ var syncCmd = &cobra.Command{
 	Long: `Sync files from a local directory to the sandbox using rsync over WebSocket SSH.
 This provides efficient incremental file transfers.
 
-The remote path defaults to /home/user/workspace if not specified.
+The remote path is auto-detected based on the sandbox user (root vs regular user).
+You can override it by specifying a third argument.
 
 Prerequisites: rsync must be installed locally.
   macOS:   brew install rsync
@@ -32,7 +33,7 @@ Prerequisites: rsync must be installed locally.
 
 	Examples:
 	  cloudrouter sync cr_abc123 .                    # Sync current dir to workspace
-	  cloudrouter sync cr_abc123 ./src /home/user/app # Sync to specific remote path
+	  cloudrouter sync cr_abc123 ./src /app           # Sync to specific remote path
 	  cloudrouter sync cr_abc123 . --delete           # Sync and delete extra files
 	  cloudrouter sync cr_abc123 . -n                 # Dry run (show what would sync)
 	  cloudrouter sync cr_abc123 . --watch            # Watch and sync on changes`,
@@ -47,10 +48,6 @@ Prerequisites: rsync must be installed locally.
 		localPath := "."
 		if len(args) > 1 {
 			localPath = args[1]
-		}
-		remotePath := "/home/user/workspace"
-		if len(args) > 2 {
-			remotePath = args[2]
 		}
 
 		// Get absolute path
@@ -83,6 +80,14 @@ Prerequisites: rsync must be installed locally.
 		token, err := client.GetAuthToken(teamSlug, sandboxID)
 		if err != nil {
 			return fmt.Errorf("failed to get auth token: %w", err)
+		}
+
+		// Auto-detect workspace path if not explicitly provided
+		remotePath := ""
+		if len(args) > 2 {
+			remotePath = args[2]
+		} else {
+			remotePath = detectWorkspacePath(client, teamSlug, sandboxID)
 		}
 
 		// Copy flags to rsync flags

@@ -18,13 +18,13 @@ var downloadCmd = &cobra.Command{
 	Short: "Download files from sandbox",
 	Long: `Download files from a sandbox instance to local filesystem using rsync.
 
-The remote path defaults to /home/user/workspace if not specified.
+The remote path is auto-detected based on the sandbox user (root vs regular user).
 The local path defaults to the current directory if not specified.
 
 Examples:
   cloudrouter download cr_abc123                          # Download workspace to current dir
   cloudrouter download cr_abc123 ./output                 # Download workspace to ./output
-  cloudrouter download cr_abc123 . -r /home/user/app      # Download specific remote path`,
+  cloudrouter download cr_abc123 . -r /app                # Download specific remote path`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]
@@ -32,7 +32,6 @@ Examples:
 		if len(args) > 1 {
 			localPath = args[1]
 		}
-		remotePath := downloadFlagRemotePath
 
 		// Get absolute path for local destination
 		absPath, err := filepath.Abs(localPath)
@@ -68,6 +67,12 @@ Examples:
 			return fmt.Errorf("failed to get auth token: %w", err)
 		}
 
+		// Auto-detect workspace path if not explicitly provided
+		remotePath := downloadFlagRemotePath
+		if remotePath == "" {
+			remotePath = detectWorkspacePath(client, teamSlug, sandboxID)
+		}
+
 		// Reset rsync flags
 		rsyncFlagDelete = false
 		rsyncFlagDryRun = false
@@ -80,5 +85,5 @@ Examples:
 }
 
 func init() {
-	downloadCmd.Flags().StringVarP(&downloadFlagRemotePath, "remote-path", "r", "/home/user/workspace", "Remote path to download")
+	downloadCmd.Flags().StringVarP(&downloadFlagRemotePath, "remote-path", "r", "", "Remote path to download (auto-detected if not specified)")
 }

@@ -58,23 +58,55 @@ func runSSHCommand(workerURL, token, command string) (string, string, int, error
 }
 
 // runSSHCommandWithCurl runs a command via SSH using curl as ProxyCommand.
+// The token is extracted from the wsURL query parameter and used as the SSH username.
+// Uses sshpass for empty password authentication (worker accepts any password when username=token).
 func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int, error) {
+	// Extract token from WebSocket URL for SSH username authentication
+	// The worker SSH server authenticates by checking conn.User() == token
+	parsedURL, err := url.Parse(wsURL)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("invalid WebSocket URL: %w", err)
+	}
+	token := parsedURL.Query().Get("token")
+	if token == "" {
+		return "", "", -1, fmt.Errorf("token not found in WebSocket URL")
+	}
+
 	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
+
+	// Check if sshpass is available for empty password authentication
+	sshpassPath, _ := exec.LookPath("sshpass")
+	useSshpass := sshpassPath != ""
+
 	sshArgs := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
+		"-o", "PubkeyAuthentication=no",
 		"-o", fmt.Sprintf("ProxyCommand=%s", proxyCmd),
-		"user@e2b-sandbox",
+		fmt.Sprintf("%s@e2b-sandbox", token),
 		command,
 	}
 
-	cmd := exec.Command("ssh", sshArgs...)
+	var cmd *exec.Cmd
+	if useSshpass {
+		// Use sshpass -e which reads password from SSHPASS env var (empty string)
+		sshpassArgs := append([]string{"-e", "ssh"}, sshArgs...)
+		cmd = exec.Command(sshpassPath, sshpassArgs...)
+		cmd.Env = append(os.Environ(), "SSHPASS=")
+	} else {
+		// Fall back to BatchMode to prevent password prompts (may fail without sshpass)
+		sshArgs = append(sshArgs[:len(sshArgs)-2],
+			"-o", "BatchMode=yes",
+			sshArgs[len(sshArgs)-2], sshArgs[len(sshArgs)-1])
+		cmd = exec.Command("ssh", sshArgs...)
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	exitCode := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

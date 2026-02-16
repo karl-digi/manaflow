@@ -323,7 +323,8 @@ Environment:
   if (publicDomain && !values["use-fqdn"] && instanceId) {
     console.log("\n--- Test 5: Service URLs (instanceId-based pattern) ---");
     const vscodeUrl = `https://port-39378-${instanceId}.${publicDomain}`;
-    const workerUrl = `https://port-39377-${instanceId}.${publicDomain}`;
+    const nodeWorkerUrl = `https://port-39376-${instanceId}.${publicDomain}`;  // Node.js worker (Socket.IO)
+    const goWorkerUrl = `https://port-39377-${instanceId}.${publicDomain}`;    // Go worker (SSH proxy)
 
     try {
       const vscodeRes = await fetch(vscodeUrl, {
@@ -343,17 +344,34 @@ Environment:
     }
 
     try {
-      const workerRes = await fetch(`${workerUrl}/health`, {
+      const nodeWorkerRes = await fetch(`${nodeWorkerUrl}/health`, {
         signal: AbortSignal.timeout(10000),
       });
       logResult({
-        name: "Worker service",
-        success: workerRes.ok,
-        message: `HTTP ${workerRes.status} at ${workerUrl}/health`,
+        name: "Node.js Worker service (Socket.IO)",
+        success: nodeWorkerRes.ok,
+        message: `HTTP ${nodeWorkerRes.status} at ${nodeWorkerUrl}/health`,
       });
     } catch (error) {
       logResult({
-        name: "Worker service",
+        name: "Node.js Worker service (Socket.IO)",
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      const goWorkerRes = await fetch(`${goWorkerUrl}/health`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      logResult({
+        name: "Go Worker service (SSH proxy)",
+        success: goWorkerRes.ok,
+        message: `HTTP ${goWorkerRes.status} at ${goWorkerUrl}/health`,
+      });
+    } catch (error) {
+      logResult({
+        name: "Go Worker service (SSH proxy)",
         success: false,
         message: error instanceof Error ? error.message : String(error),
       });

@@ -64,7 +64,8 @@ PVE LXC uses an instanceId-based URL pattern for service access via Cloudflare T
 | Service | Port | URL Pattern |
 |---------|------|-------------|
 | VSCode | 39378 | `https://port-39378-{instanceId}.{domain}` |
-| Worker | 39377 | `https://port-39377-{instanceId}.{domain}` |
+| Go Worker (SSH proxy) | 39377 | `https://port-39377-{instanceId}.{domain}` |
+| Node.js Worker (Socket.IO) | 39376 | `https://port-39376-{instanceId}.{domain}` |
 | Xterm | 39383 | `https://port-39383-{instanceId}.{domain}` |
 | Exec | 39375 | `https://port-39375-{instanceId}.{domain}` |
 | VNC | 39380 | `https://port-39380-{instanceId}.{domain}` |

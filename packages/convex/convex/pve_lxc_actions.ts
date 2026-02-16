@@ -54,7 +54,7 @@ function resolveSnapshot(snapshotId: string): { templateVmid: number } {
 function extractNetworkingUrls(instance: PveLxcInstance) {
   const httpServices = instance.networking.httpServices;
   const vscodeService = httpServices.find((s) => s.port === 39378);
-  const workerService = httpServices.find((s) => s.port === 39377);
+  const workerService = httpServices.find((s) => s.port === 39376);  // Node.js worker (Go worker uses 39377)
   const vncService = httpServices.find((s) => s.port === 39380);
   const xtermService = httpServices.find((s) => s.port === 39383);
 

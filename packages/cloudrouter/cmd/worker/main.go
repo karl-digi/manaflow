@@ -29,20 +29,36 @@ import (
 )
 
 const (
-	httpPort    = 39377
-	sshPort     = 10000
-	cdpPort     = 9222
-	vscodePort  = 39378
-	vncPort     = 39380
-	workspaceDir = "/home/user/workspace"
-
-	authTokenPath   = "/home/user/.worker-auth-token"
-	vscodeTokenPath = "/home/user/.vscode-token"
-	bootIDPath      = "/home/user/.token-boot-id"
-	authCookieName  = "_cmux_auth"
+	httpPort       = 39377
+	sshPort        = 10000
+	cdpPort        = 9222
+	vscodePort     = 39378
+	vncPort        = 39380
+	authCookieName = "_cmux_auth"
 )
 
 var (
+	homeDirCandidates       = []string{"/home/user", "/root"}
+	workspaceDirCandidates  = []string{"/home/user/workspace", "/root/workspace"}
+	authTokenPathCandidates = []string{
+		"/home/user/.worker-auth-token",
+		"/root/.worker-auth-token",
+	}
+	vscodeTokenPathCandidates = []string{
+		"/home/user/.vscode-token",
+		"/root/.vscode-token",
+	}
+	bootIDPathCandidates = []string{
+		"/home/user/.token-boot-id",
+		"/root/.token-boot-id",
+	}
+
+	homeDir         = resolvePreferredDir(homeDirCandidates...)
+	workspaceDir    = resolveWorkspaceDir(homeDir)
+	authTokenPath   = resolvePreferredFilePath(authTokenPathCandidates...)
+	vscodeTokenPath = resolvePreferredFilePath(vscodeTokenPathCandidates...)
+	bootIDPath      = resolvePreferredFilePath(bootIDPathCandidates...)
+
 	authToken   string
 	authTokenMu sync.RWMutex
 
@@ -69,6 +85,13 @@ type ptySession struct {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("[worker] Starting cmux worker daemon...")
+	ensureRuntimePaths()
+	log.Printf(
+		"[worker] Paths: home=%s workspace=%s token=%s",
+		homeDir,
+		workspaceDir,
+		authTokenPath,
+	)
 
 	// Initialize auth token
 	initAuthToken()
@@ -115,19 +138,11 @@ func getCurrentBootID() string {
 }
 
 func getSavedBootID() string {
-	data, err := os.ReadFile(bootIDPath)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return readFirstNonEmpty(candidateReadOrder(bootIDPath, bootIDPathCandidates)...)
 }
 
 func getExistingToken() string {
-	data, err := os.ReadFile(authTokenPath)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return readFirstNonEmpty(candidateReadOrder(authTokenPath, authTokenPathCandidates)...)
 }
 
 func generateFreshToken() string {
@@ -140,16 +155,22 @@ func generateFreshToken() string {
 	bootID := getCurrentBootID()
 
 	// Write token files
-	if err := os.WriteFile(authTokenPath, []byte(token), 0644); err != nil {
-		log.Printf("[worker] Failed to write auth token: %v", err)
-	}
-	if err := os.WriteFile(vscodeTokenPath, []byte(token), 0644); err != nil {
-		log.Printf("[worker] Failed to write vscode token: %v", err)
-	}
+	writeToCandidateFiles(
+		candidateReadOrder(authTokenPath, authTokenPathCandidates),
+		[]byte(token),
+		"auth token",
+	)
+	writeToCandidateFiles(
+		candidateReadOrder(vscodeTokenPath, vscodeTokenPathCandidates),
+		[]byte(token),
+		"vscode token",
+	)
 	if bootID != "" {
-		if err := os.WriteFile(bootIDPath, []byte(bootID), 0644); err != nil {
-			log.Printf("[worker] Failed to write boot ID: %v", err)
-		}
+		writeToCandidateFiles(
+			candidateReadOrder(bootIDPath, bootIDPathCandidates),
+			[]byte(bootID),
+			"boot ID",
+		)
 	}
 
 	log.Printf("[worker] Fresh auth token generated: %s...", token[:8])
@@ -829,9 +850,9 @@ func startSSHServer() {
 	}
 
 	// Generate or load host key
-	hostKeyPath := "/home/user/.ssh/host_key"
+	hostKeyPath := filepath.Join(homeDir, ".ssh", "host_key")
 	if _, err := os.Stat(hostKeyPath); os.IsNotExist(err) {
-		os.MkdirAll("/home/user/.ssh", 0700)
+		os.MkdirAll(filepath.Dir(hostKeyPath), 0700)
 		exec.Command("ssh-keygen", "-t", "ed25519", "-f", hostKeyPath, "-N", "", "-q").Run()
 	}
 
@@ -979,12 +1000,14 @@ func sendExitStatus(channel cryptossh.Channel, exitCode int) {
 func runSSHExec(channel cryptossh.Channel, cmdStr string) int {
 	hasUser := userExists()
 	var c *exec.Cmd
+	cmdHome := homeDir
 	if hasUser {
 		c = exec.Command("su", "-", "user", "-c", cmdStr)
+		cmdHome = "/home/user"
 		c.Env = append(os.Environ(), "HOME=/home/user", "USER=user")
 	} else {
 		c = exec.Command("bash", "-c", cmdStr)
-		c.Env = append(os.Environ(), "HOME=/home/user")
+		c.Env = append(os.Environ(), "HOME="+cmdHome, "USER=root")
 	}
 	c.Dir = workspaceDir
 
@@ -1010,18 +1033,21 @@ func runSSHExec(channel cryptossh.Channel, cmdStr string) int {
 func runSSHShellPTY(channel cryptossh.Channel, requests <-chan *cryptossh.Request, pr *sshPtyRequest) int {
 	hasUser := userExists()
 	var shell *exec.Cmd
+	shellHome := homeDir
 	if hasUser {
 		shell = exec.Command("su", "-", "user")
+		shellHome = "/home/user"
 		shell.Env = append(os.Environ(),
 			"TERM="+pr.Term,
-			"HOME=/home/user",
+			"HOME="+shellHome,
 			"USER=user",
 		)
 	} else {
 		shell = exec.Command("/bin/bash")
 		shell.Env = append(os.Environ(),
 			"TERM="+pr.Term,
-			"HOME=/home/user",
+			"HOME="+shellHome,
+			"USER=root",
 		)
 	}
 	shell.Dir = workspaceDir
@@ -1098,6 +1124,115 @@ func userExists() bool {
 	return err == nil
 }
 
+func ensureRuntimePaths() {
+	_ = os.MkdirAll(filepath.Dir(authTokenPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(vscodeTokenPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(bootIDPath), 0755)
+	_ = os.MkdirAll(workspaceDir, 0755)
+}
+
+func resolvePreferredDir(paths ...string) string {
+	for _, path := range uniquePaths(paths...) {
+		if dirExists(path) {
+			return path
+		}
+	}
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return "/root"
+}
+
+func resolveWorkspaceDir(home string) string {
+	for _, path := range uniquePaths(workspaceDirCandidates...) {
+		if dirExists(path) {
+			return path
+		}
+	}
+	if home != "" {
+		return filepath.Join(home, "workspace")
+	}
+	return "/root/workspace"
+}
+
+func resolvePreferredFilePath(paths ...string) string {
+	for _, path := range uniquePaths(paths...) {
+		if fileExists(path) {
+			return path
+		}
+	}
+	for _, path := range uniquePaths(paths...) {
+		if dirExists(filepath.Dir(path)) {
+			return path
+		}
+	}
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+
+func readFirstNonEmpty(paths ...string) string {
+	for _, path := range uniquePaths(paths...) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		value := strings.TrimSpace(string(data))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func writeToCandidateFiles(paths []string, data []byte, label string) {
+	for _, path := range uniquePaths(paths...) {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			log.Printf("[worker] Failed to create dir for %s (%s): %v", label, path, err)
+			continue
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			log.Printf("[worker] Failed to write %s (%s): %v", label, path, err)
+		}
+	}
+}
+
+func candidateReadOrder(preferred string, candidates []string) []string {
+	out := make([]string, 0, len(candidates)+1)
+	if preferred != "" {
+		out = append(out, preferred)
+	}
+	out = append(out, candidates...)
+	return uniquePaths(out...)
+}
+
+func uniquePaths(paths ...string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func isProcessRunning(pattern string) bool {
 	cmd := exec.Command("pgrep", "-f", pattern)
 	return cmd.Run() == nil
@@ -1127,4 +1262,3 @@ func getCDPWebSocketURL() string {
 	}
 	return data.WebSocketDebuggerURL
 }
-

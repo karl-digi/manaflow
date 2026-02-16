@@ -681,7 +681,10 @@ sandboxesRouter.openapi(
 
       const exposed = refreshedInstance.networking.httpServices;
       const vscodeService = exposed.find((service) => service.port === 39378);
-      const workerService = exposed.find((service) => service.port === 39377);
+      // PVE-LXC uses port 39376 for Node.js worker (Go worker uses 39377)
+      // Morph uses port 39377 for Node.js worker
+      const workerPort = provider === "pve-lxc" ? 39376 : 39377;
+      const workerService = exposed.find((service) => service.port === workerPort);
       const vncService = exposed.find((service) => service.port === 39380);
       const xtermService = exposed.find((service) => service.port === 39383);
       if (!vscodeService || !workerService) {
@@ -1731,8 +1734,11 @@ sandboxesRouter.openapi(
       const vscodeService = instance.networking.httpServices.find(
         (s) => s.port === 39378,
       );
+      // PVE-LXC uses port 39376 for Node.js worker (Go worker uses 39377)
+      // Morph uses port 39377 for Node.js worker
+      const workerPort = isPveLxc ? 39376 : 39377;
       const workerService = instance.networking.httpServices.find(
-        (s) => s.port === 39377,
+        (s) => s.port === workerPort,
       );
       const running = isPveLxc
         ? instance.status === "running" && Boolean(vscodeService)
