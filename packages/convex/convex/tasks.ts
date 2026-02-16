@@ -161,6 +161,54 @@ export const get = authQuery({
   },
 });
 
+// Lightweight query to check if user has any real tasks (for onboarding)
+// Returns early after finding first match - much cheaper than fetching all tasks
+export const hasRealTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Check active tasks first
+    const activeTask = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((qq) => qq.neq(qq.field("isArchived"), true))
+      .filter((qq) => qq.neq(qq.field("isPreview"), true))
+      .filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined))
+      // Exclude workspaces - we want "real" tasks
+      .filter((qq) => qq.neq(qq.field("isCloudWorkspace"), true))
+      .filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true))
+      .first();
+
+    if (activeTask) {
+      return { hasRealTasks: true, hasCompletedRealTasks: activeTask.isCompleted === true };
+    }
+
+    // Check archived tasks
+    const archivedTask = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_archived", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId).eq("isArchived", true),
+      )
+      .filter((qq) => qq.neq(qq.field("isPreview"), true))
+      .filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined))
+      .filter((qq) => qq.neq(qq.field("isCloudWorkspace"), true))
+      .filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true))
+      .first();
+
+    if (archivedTask) {
+      return { hasRealTasks: true, hasCompletedRealTasks: archivedTask.isCompleted === true };
+    }
+
+    return { hasRealTasks: false, hasCompletedRealTasks: false };
+  },
+});
+
 // Paginated query for archived tasks (infinite scroll)
 export const getArchivedPaginated = authQuery({
   args: {

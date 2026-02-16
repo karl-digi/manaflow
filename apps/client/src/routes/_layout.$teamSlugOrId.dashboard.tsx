@@ -94,11 +94,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
         query: api.environments.list,
         args: { teamSlugOrId },
       });
-      // Prewarm queries used in TaskList (args must match exactly)
-      convexQueryClient.convexClient.prewarmQuery({
-        query: api.tasks.get,
-        args: { teamSlugOrId, excludeLocalWorkspaces },
-      });
+      // Prewarm pinned tasks query (paginated queries don't support prewarm)
       convexQueryClient.convexClient.prewarmQuery({
         query: api.tasks.getPinned,
         args: { teamSlugOrId, excludeLocalWorkspaces },
@@ -225,27 +221,15 @@ function DashboardComponent() {
     };
   }, [renderDockerPullToast, socket]);
 
-  // Query tasks to check if user is new (has no tasks)
-  const tasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId })
-  );
-  const archivedTasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
+  // Lightweight query to check if user is new (has no real tasks) - for onboarding
+  // Uses hasRealTasks query which returns early after finding first match
+  const hasRealTasksQuery = useQuery(
+    convexQuery(api.tasks.hasRealTasks, { teamSlugOrId })
   );
 
-  const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
-  const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
-    const activeTasks = tasksQuery.data ?? [];
-    const archivedTasks = archivedTasksQuery.data ?? [];
-    const allTasks = [...activeTasks, ...archivedTasks];
-    const realTasks = allTasks.filter(
-      (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
-    );
-    return {
-      hasRealTasks: realTasks.length > 0,
-      hasCompletedRealTasks: realTasks.some((task) => task.isCompleted),
-    };
-  }, [tasksQuery.data, archivedTasksQuery.data]);
+  const tasksReady = hasRealTasksQuery.isSuccess;
+  const hasRealTasks = hasRealTasksQuery.data?.hasRealTasks ?? false;
+  const hasCompletedRealTasks = hasRealTasksQuery.data?.hasCompletedRealTasks ?? false;
 
   // Auto-start onboarding for new users on the dashboard
   useEffect(() => {

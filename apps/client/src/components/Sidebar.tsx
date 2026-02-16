@@ -57,6 +57,8 @@ interface SidebarProps {
   tasks: TaskWithUnread[] | undefined;
   teamSlugOrId: string;
   onToggleHidden: () => void;
+  loadMoreTasks?: () => void;
+  canLoadMoreTasks?: boolean;
 }
 
 interface SidebarNavItem {
@@ -110,7 +112,7 @@ const navItems: SidebarNavItemWithBadge[] = [
   },
 ];
 
-export function Sidebar({ tasks, teamSlugOrId, onToggleHidden }: SidebarProps) {
+export function Sidebar({ tasks, teamSlugOrId, onToggleHidden, loadMoreTasks, canLoadMoreTasks }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
   const MAX_WIDTH = 600;
@@ -516,6 +518,17 @@ export function Sidebar({ tasks, teamSlugOrId, onToggleHidden }: SidebarProps) {
                     ? "No relevant workspaces"
                     : "No recent tasks"}
                 </p>
+              )}
+
+              {/* Load more tasks button for pagination */}
+              {canLoadMoreTasks && loadMoreTasks && (
+                <button
+                  type="button"
+                  onClick={loadMoreTasks}
+                  className="ml-2 mt-1 w-[calc(100%-8px)] rounded-sm px-2 py-1 text-left text-[11px] text-neutral-500 hover:bg-neutral-200/45 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800/45 dark:hover:text-neutral-200"
+                >
+                  Load more tasks...
+                </button>
               )}
             </div>
           </div>

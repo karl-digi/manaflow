@@ -21,10 +21,11 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import { usePaginatedQuery } from "convex/react";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { env } from "@/client-env";
+
+const SIDEBAR_TASKS_PAGE_SIZE = 10;
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
@@ -71,12 +72,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
     }
   },
   loader: async ({ params }) => {
-    // In web mode, exclude local workspaces
-    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.getWithNotificationOrder,
-      args: { teamSlugOrId: params.teamSlugOrId, excludeLocalWorkspaces },
-    });
+    // Prewarm PR query (paginated task query doesn't support prewarm)
     convexQueryClient.convexClient.prewarmQuery({
       query: api.github_prs.listPullRequests,
       args: {
@@ -97,16 +93,19 @@ function LayoutComponent() {
   );
   // In web mode, exclude local workspaces
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
-  // that cause excessive re-renders cascading to all child components.
-  // Uses getWithNotificationOrder which sorts tasks with unread notifications first
-  const tasksQuery = useRQ({
-    ...convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces }),
-    enabled: Boolean(teamSlugOrId),
-  });
-  const tasks = tasksQuery.data;
+  // Use paginated query to reduce initial load (20 tasks per page instead of all 200+)
+  // Uses getWithNotificationOrderPaginated which sorts by lastActivityAt desc
+  const {
+    results: tasks,
+    status: tasksStatus,
+    loadMore: loadMoreTasks,
+  } = usePaginatedQuery(
+    api.tasks.getWithNotificationOrderPaginated,
+    { teamSlugOrId, excludeLocalWorkspaces },
+    { initialNumItems: SIDEBAR_TASKS_PAGE_SIZE }
+  );
 
-  // Tasks are already sorted by the query (unread notifications first, then by createdAt)
+  // Tasks are already sorted by the query (by lastActivityAt desc)
   const displayTasks = tasks;
   const settingsPath = `/${teamSlugOrId}/settings`;
   const isSettingsRoute =
@@ -203,6 +202,8 @@ function LayoutComponent() {
               tasks={displayTasks}
               teamSlugOrId={teamSlugOrId}
               onToggleHidden={() => setIsSidebarHidden(true)}
+              loadMoreTasks={() => loadMoreTasks(SIDEBAR_TASKS_PAGE_SIZE)}
+              canLoadMoreTasks={tasksStatus === "CanLoadMore"}
             />
           )}
 
