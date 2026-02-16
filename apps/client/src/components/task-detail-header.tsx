@@ -1,6 +1,7 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { useSidebarOptional } from "@/contexts/sidebar/SidebarContext";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,7 @@ import {
   type CSSProperties,
 } from "react";
 import { toast } from "sonner";
+import CmuxLogoMark from "./logo/cmux-logo-mark";
 import {
   SocketMutationError,
   type MergeBranchResponse,
@@ -264,6 +266,7 @@ export function TaskDetailHeader({
   autoSyncEnabled = true,
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
+  const sidebar = useSidebarOptional();
   const navigate = useNavigate();
   const location = useLocation();
   const clipboard = useClipboard({ timeout: 2000 });
@@ -360,6 +363,8 @@ export function TaskDetailHeader({
   const dragStyle = isElectron
     ? ({ WebkitAppRegion: "drag" } as CSSProperties)
     : undefined;
+  const showElectronSidebarToggleNoDragHole =
+    isElectron && Boolean(sidebar?.isHidden) && Boolean(teamSlugOrId);
 
   const hasExpandActions = Boolean(onExpandAll || onExpandAllChecks);
   const hasCollapseActions = Boolean(onCollapseAll || onCollapseAllChecks);
@@ -377,9 +382,29 @@ export function TaskDetailHeader({
 
   return (
     <div
-      className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70"
+      className="relative bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70"
       style={dragStyle}
     >
+      {showElectronSidebarToggleNoDragHole ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-3 flex items-center"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          <div className="w-[80px]" />
+          <div className="flex items-center gap-1.5 invisible">
+            <CmuxLogoMark height={20} />
+            <span className="text-xs font-semibold tracking-wide whitespace-nowrap">
+              cmux-next
+            </span>
+          </div>
+          <div className="ml-2 flex items-center gap-1">
+            <div className="w-[25px] h-[25px]" />
+            <div className="w-[25px] h-[25px]" />
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-1">
         {/* Title row */}
         <div className="col-start-1 row-start-1 flex items-center gap-2 relative min-w-0">

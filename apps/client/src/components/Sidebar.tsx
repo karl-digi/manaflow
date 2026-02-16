@@ -1,6 +1,11 @@
 import { env } from "@/client-env";
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useWarmLocalWorkspaces } from "@/hooks/useWarmLocalWorkspaces";
 import {
@@ -13,10 +18,11 @@ import { api } from "@cmux/convex/api";
 import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Bell, Home, Plus, Server, Settings } from "lucide-react";
+import { Bell, ChevronLeft, Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -24,16 +30,33 @@ import {
 } from "react";
 import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
+import { SidebarProjectGroup } from "./sidebar/SidebarProjectGroup";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
-import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import { SidebarSectionHeader } from "./sidebar/SidebarSectionHeader";
 import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
+import type { SidebarPreferenceHandlers } from "./sidebar/sidebar-types";
+import {
+  SIDEBAR_PR_PREFS_KEY,
+  SIDEBAR_WS_PREFS_KEY,
+} from "./sidebar/sidebar-types";
+import { useSidebarPreferences } from "./sidebar/useSidebarPreferences";
+import {
+  filterRelevant,
+  getGroupDisplayName,
+  groupItemsByProject,
+  sortItems,
+} from "./sidebar/sidebar-utils";
 
 // Tasks with hasUnread indicator from the query
 type TaskWithUnread = Doc<"tasks"> & { hasUnread: boolean };
+const RELEVANT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const CHRONOLOGICAL_LIST_KEY = "__cmux_chronological_list__";
+const CHRONOLOGICAL_INITIAL_DISPLAY_COUNT = 5;
 
 interface SidebarProps {
   tasks: TaskWithUnread[] | undefined;
   teamSlugOrId: string;
+  onToggleHidden: () => void;
 }
 
 interface SidebarNavItem {
@@ -87,7 +110,7 @@ const navItems: SidebarNavItemWithBadge[] = [
   },
 ];
 
-export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
+export function Sidebar({ tasks, teamSlugOrId, onToggleHidden }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
   const MAX_WIDTH = 600;
@@ -102,16 +125,17 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH);
   });
   const [isResizing, setIsResizing] = useState(false);
-  const [isHidden, setIsHidden] = useState(() => {
-    const stored = localStorage.getItem("sidebarHidden");
-    return stored === "true";
-  });
 
   const { expandTaskIds } = useExpandTasks();
+  const prPreferenceState = useSidebarPreferences(SIDEBAR_PR_PREFS_KEY);
+  const workspacePreferenceState = useSidebarPreferences(SIDEBAR_WS_PREFS_KEY);
 
   // Fetch pinned items (exclude local workspaces in web mode)
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
+  const pinnedData = useQuery(api.tasks.getPinned, {
+    teamSlugOrId,
+    excludeLocalWorkspaces,
+  });
 
   useWarmLocalWorkspaces({
     teamSlugOrId,
@@ -129,51 +153,77 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     localStorage.setItem("sidebarWidth", String(width));
   }, [width]);
 
-  useEffect(() => {
-    localStorage.setItem("sidebarHidden", String(isHidden));
-  }, [isHidden]);
+  const prPreferences = prPreferenceState.preferences;
+  const workspacePreferences = workspacePreferenceState.preferences;
 
-  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
-  useEffect(() => {
-    if (isElectron && window.cmux?.on) {
-      const off = window.cmux.on("shortcut:sidebar-toggle", () => {
-        setIsHidden((prev) => !prev);
-      });
-      return () => {
-        if (typeof off === "function") off();
-      };
-    }
+  const prPreferenceHandlers: SidebarPreferenceHandlers = {
+    setOrganizeMode: prPreferenceState.setOrganizeMode,
+    setSortBy: prPreferenceState.setSortBy,
+    setShowFilter: prPreferenceState.setShowFilter,
+    toggleGroupCollapsed: prPreferenceState.toggleGroupCollapsed,
+    toggleGroupExpanded: prPreferenceState.toggleGroupExpanded,
+  };
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey &&
-        e.shiftKey &&
-        !e.altKey &&
-        !e.metaKey &&
-        (e.code === "KeyS" || e.key.toLowerCase() === "s")
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsHidden((prev) => !prev);
-      }
-    };
+  const workspacePreferenceHandlers: SidebarPreferenceHandlers = {
+    setOrganizeMode: workspacePreferenceState.setOrganizeMode,
+    setSortBy: workspacePreferenceState.setSortBy,
+    setShowFilter: workspacePreferenceState.setShowFilter,
+    toggleGroupCollapsed: workspacePreferenceState.toggleGroupCollapsed,
+    toggleGroupExpanded: workspacePreferenceState.toggleGroupExpanded,
+  };
 
-    // Use capture phase to intercept before browser default handlers
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  const visiblePinnedTasks = useMemo(() => {
+    const relevanceCutoff = Date.now() - RELEVANT_WINDOW_MS;
+    const pinned = (pinnedData ?? []).filter((task) => !task.isArchived);
+    const filtered = filterRelevant(pinned, workspacePreferences.showFilter, (task) => {
+      if (task.hasUnread) return true;
+      const activityAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt ?? 0;
+      return activityAt >= relevanceCutoff;
+    });
 
-  // Listen for storage events from command bar (sidebar visibility sync)
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === "sidebarHidden" && e.newValue !== null) {
-        setIsHidden(e.newValue === "true");
-      }
-    };
+    return sortItems(filtered, (task) =>
+      workspacePreferences.sortBy === "updated"
+        ? (task.lastActivityAt ?? task.updatedAt ?? task.createdAt ?? 0)
+        : (task.createdAt ?? task.updatedAt ?? task.lastActivityAt ?? 0)
+    );
+  }, [pinnedData, workspacePreferences.showFilter, workspacePreferences.sortBy]);
 
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
+  const visibleWorkspaceTasks = useMemo(() => {
+    const relevanceCutoff = Date.now() - RELEVANT_WINDOW_MS;
+    const list = (tasks ?? []).filter((task) => !task.pinned && !task.isArchived);
+    const filtered = filterRelevant(list, workspacePreferences.showFilter, (task) => {
+      if (task.hasUnread) return true;
+      const activityAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt ?? 0;
+      return activityAt >= relevanceCutoff;
+    });
+
+    return sortItems(filtered, (task) =>
+      workspacePreferences.sortBy === "updated"
+        ? (task.lastActivityAt ?? task.updatedAt ?? task.createdAt ?? 0)
+        : (task.createdAt ?? task.updatedAt ?? task.lastActivityAt ?? 0)
+    );
+  }, [tasks, workspacePreferences.showFilter, workspacePreferences.sortBy]);
+
+  const workspaceGroups = useMemo(
+    () =>
+      Array.from(
+        groupItemsByProject(visibleWorkspaceTasks, (task) => task.projectFullName).entries()
+      ),
+    [visibleWorkspaceTasks]
+  );
+
+  const isWorkspaceChronologicalExpanded =
+    workspacePreferences.expandedGroups[CHRONOLOGICAL_LIST_KEY] ?? false;
+  const hasWorkspaceChronologicalOverflow =
+    visibleWorkspaceTasks.length > CHRONOLOGICAL_INITIAL_DISPLAY_COUNT;
+  const visibleChronologicalWorkspaceTasks =
+    hasWorkspaceChronologicalOverflow && !isWorkspaceChronologicalExpanded
+      ? visibleWorkspaceTasks.slice(0, CHRONOLOGICAL_INITIAL_DISPLAY_COUNT)
+      : visibleWorkspaceTasks;
+  const workspaceChronologicalRemainingCount = Math.max(
+    0,
+    visibleWorkspaceTasks.length - visibleChronologicalWorkspaceTasks.length
+  );
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     // Batch width updates to once per animation frame to reduce layout thrash
@@ -236,10 +286,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     <div
       ref={containerRef}
       data-onboarding="sidebar"
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 pt-1.5 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
       style={
         {
-          display: isHidden ? "none" : "flex",
           width: undefined,
           minWidth: undefined,
           maxWidth: undefined,
@@ -249,7 +298,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       }
     >
       <div
-        className={`h-[38px] flex items-center pr-0.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
+        className={`h-[38px] border-b border-neutral-200/70 dark:border-neutral-800/50 flex items-center pr-0.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         {isElectron && <div className="w-[80px]"></div>}
@@ -266,20 +315,58 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             cmux-next
           </span>
         </Link>
-        <div className="grow"></div>
-        <Link
-          to="/$teamSlugOrId/dashboard"
-          params={{ teamSlugOrId }}
-          activeOptions={{ exact: true }}
-          className="w-[25px] h-[25px] border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded-lg flex items-center justify-center transition-colors cursor-default"
-          title="New task"
+        {/* Icons immediately after title - fixed X position */}
+        <div
+          className="flex items-center gap-1 ml-2"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
-          <Plus
-            className="w-4 h-4 text-neutral-700 dark:text-neutral-300"
-            aria-hidden="true"
-          />
-        </Link>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onToggleHidden}
+                className="w-[25px] h-[25px] border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded-lg flex items-center justify-center transition-colors cursor-default"
+                aria-label="Toggle sidebar"
+              >
+                <ChevronLeft
+                  className="w-4 h-4 text-neutral-700 dark:text-neutral-300"
+                  aria-hidden="true"
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              showArrow={false}
+              className="bg-neutral-200 text-neutral-700 border border-neutral-300 shadow-sm px-2 py-1 dark:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-600"
+            >
+              Toggle sidebar Ctrl+Shift+S
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Link
+                to="/$teamSlugOrId/dashboard"
+                params={{ teamSlugOrId }}
+                activeOptions={{ exact: true }}
+                className="w-[25px] h-[25px] border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded-lg flex items-center justify-center transition-colors cursor-default"
+                aria-label="New task"
+              >
+                <Plus
+                  className="w-4 h-4 text-neutral-700 dark:text-neutral-300"
+                  aria-hidden="true"
+                />
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              showArrow={false}
+              className="bg-neutral-200 text-neutral-700 border border-neutral-300 shadow-sm px-2 py-1 dark:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-600"
+            >
+              New task
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       <nav className="grow flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto pb-8">
@@ -306,33 +393,40 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
           {isElectron && (
             <div className="mt-4 flex flex-col">
-              <SidebarSectionLink
+              <SidebarSectionHeader
+                title="Pull requests"
                 to="/$teamSlugOrId/prs"
                 params={{ teamSlugOrId }}
-                exact
-              >
-                Pull requests
-              </SidebarSectionLink>
+                preferences={prPreferences}
+                onPreferencesChange={prPreferenceHandlers}
+              />
               <div className="ml-2 pt-px">
-                <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
+                <SidebarPullRequestList
+                  teamSlugOrId={teamSlugOrId}
+                  preferences={prPreferences}
+                  onPreferencesChange={prPreferenceHandlers}
+                />
               </div>
             </div>
           )}
 
           <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarWorkspacesSection teamSlugOrId={teamSlugOrId} />
+            <SidebarWorkspacesSection
+              teamSlugOrId={teamSlugOrId}
+              preferences={workspacePreferences}
+              onPreferencesChange={workspacePreferenceHandlers}
+            />
           </div>
 
           <div className="ml-2 pt-px">
             <div className="space-y-px">
               {tasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
+              ) : visiblePinnedTasks.length > 0 || visibleWorkspaceTasks.length > 0 ? (
                 <>
-                  {/* Pinned items at the top */}
-                  {pinnedData && pinnedData.filter(t => !t.isArchived).length > 0 && (
+                  {visiblePinnedTasks.length > 0 ? (
                     <>
-                      {pinnedData.filter(t => !t.isArchived).map((task) => (
+                      {visiblePinnedTasks.map((task) => (
                         <TaskTree
                           key={task._id}
                           task={task}
@@ -343,37 +437,88 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                           hasUnreadNotification={task.hasUnread}
                         />
                       ))}
-                      {/* Horizontal divider after pinned items */}
-                      <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+
+                      {visibleWorkspaceTasks.length > 0 ? (
+                        <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {workspacePreferences.organizeMode === "chronological" ? (
+                    <>
+                      {visibleChronologicalWorkspaceTasks.map((task) => (
+                        <TaskTree
+                          key={task._id}
+                          task={task}
+                          defaultExpanded={
+                            expandTaskIds?.includes(task._id) ?? false
+                          }
+                          teamSlugOrId={teamSlugOrId}
+                          hasUnreadNotification={task.hasUnread}
+                        />
+                      ))}
+
+                      {hasWorkspaceChronologicalOverflow ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            workspacePreferenceHandlers.toggleGroupExpanded(
+                              CHRONOLOGICAL_LIST_KEY
+                            )
+                          }
+                          className="ml-2 w-[calc(100%-8px)] rounded-sm px-2 py-0.5 text-left text-[11px] text-neutral-500 hover:bg-neutral-200/45 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800/45 dark:hover:text-neutral-200"
+                        >
+                          {isWorkspaceChronologicalExpanded
+                            ? "Show less"
+                            : `Show more (${workspaceChronologicalRemainingCount})`}
+                        </button>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      {workspaceGroups.map(([groupKey, groupItems]) => (
+                        <SidebarProjectGroup
+                          key={groupKey}
+                          groupKey={groupKey}
+                          displayName={getGroupDisplayName(groupKey)}
+                          items={groupItems}
+                          isCollapsed={
+                            workspacePreferences.collapsedGroups[groupKey] ?? false
+                          }
+                          onToggleCollapse={() =>
+                            workspacePreferenceHandlers.toggleGroupCollapsed(groupKey)
+                          }
+                          isExpanded={
+                            workspacePreferences.expandedGroups[groupKey] ?? false
+                          }
+                          onToggleExpand={() =>
+                            workspacePreferenceHandlers.toggleGroupExpanded(groupKey)
+                          }
+                          getItemKey={(task) => task._id}
+                          renderItem={(task) => (
+                            <TaskTree
+                              task={task}
+                              defaultExpanded={
+                                expandTaskIds?.includes(task._id) ?? false
+                              }
+                              teamSlugOrId={teamSlugOrId}
+                              hasUnreadNotification={task.hasUnread}
+                            />
+                          )}
+                        />
+                      ))}
                     </>
                   )}
-                  {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Filter out pinned tasks (shown separately above) and archived tasks
-                      // (defensive filter in case query returns stale data)
-                      return !task.pinned && !task.isArchived;
-                    })
-                    .map((task) => (
-                      <TaskTree
-                        key={task._id}
-                        task={task}
-                        defaultExpanded={
-                          expandTaskIds?.includes(task._id) ?? false
-                        }
-                        teamSlugOrId={teamSlugOrId}
-                        hasUnreadNotification={task.hasUnread}
-                      />
-                    ))}
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-                  No recent tasks
+                  {workspacePreferences.showFilter === "relevant"
+                    ? "No relevant workspaces"
+                    : "No recent tasks"}
                 </p>
               )}
             </div>
           </div>
-
         </div>
       </nav>
 

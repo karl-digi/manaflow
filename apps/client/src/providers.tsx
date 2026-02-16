@@ -28,7 +28,7 @@ export function Providers({ children }: ProvidersProps) {
         <Suspense fallback={<div>Loading stack...</div>}>
           <StackProvider app={stackClientApp}>
             <QueryClientProvider client={queryClient}>
-              <TooltipProvider delayDuration={700} skipDelayDuration={300}>
+              <TooltipProvider delayDuration={300} skipDelayDuration={150}>
                 <HeroUIProvider>
                   <RootErrorBoundary>
                     <OnboardingProvider>

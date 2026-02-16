@@ -1,3 +1,4 @@
+import { useSidebar } from "@/contexts/sidebar/SidebarContext";
 import {
   disableDragPointerEvents,
   restoreDragPointerEvents,
@@ -62,57 +63,11 @@ export function SettingsSidebar({
     return Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH);
   });
   const [isResizing, setIsResizing] = useState(false);
-  const [isHidden, setIsHidden] = useState(() => {
-    const stored = localStorage.getItem("sidebarHidden");
-    return stored === "true";
-  });
+  const { isHidden } = useSidebar();
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
   }, [width]);
-
-  useEffect(() => {
-    localStorage.setItem("sidebarHidden", String(isHidden));
-  }, [isHidden]);
-
-  useEffect(() => {
-    if (isElectron && window.cmux?.on) {
-      const off = window.cmux.on("shortcut:sidebar-toggle", () => {
-        setIsHidden((prev) => !prev);
-      });
-      return () => {
-        if (typeof off === "function") off();
-      };
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.ctrlKey &&
-        event.shiftKey &&
-        !event.altKey &&
-        !event.metaKey &&
-        (event.code === "KeyS" || event.key.toLowerCase() === "s")
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsHidden((prev) => !prev);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
-
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === "sidebarHidden" && event.newValue !== null) {
-        setIsHidden(event.newValue === "true");
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
 
   const onMouseMove = useCallback((event: MouseEvent) => {
     if (rafIdRef.current != null) return;
@@ -172,7 +127,7 @@ export function SettingsSidebar({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-dvh shrink-0 grow snap-always snap-start flex-col bg-neutral-50 pr-1 dark:bg-neutral-900/50 md:w-auto md:snap-align-none"
+      className="relative flex h-dvh shrink-0 grow snap-always snap-start flex-col bg-neutral-50 pr-1 pt-1.5 dark:bg-neutral-900/50 md:w-auto md:snap-align-none"
       style={
         {
           display: isHidden ? "none" : "flex",
@@ -185,27 +140,26 @@ export function SettingsSidebar({
       }
     >
       <div
-        className={`h-[38px] flex items-center shrink-0 pr-2 ${isElectron ? "" : "pl-3"}`}
+        className={`h-[38px] shrink-0 pr-2 ${isElectron ? "" : "pl-3"}`}
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         {isElectron && <div className="w-[80px]" />}
-        <Link
-          to="/$teamSlugOrId/dashboard"
-          params={{ teamSlugOrId }}
-          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-        >
-          <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-          <span>Back to app</span>
-        </Link>
       </div>
 
       <nav className="flex grow flex-col overflow-hidden pb-8">
-        <div className="px-4 pb-2 pt-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-            Settings
-          </h2>
-        </div>
+        <Link
+          to="/$teamSlugOrId/dashboard"
+          params={{ teamSlugOrId }}
+          className="pointer-default cursor-default group mb-1 ml-2 flex w-[calc(100%-8px)] items-center gap-2 rounded-sm pl-2 pr-2 py-1 text-left text-[13px] text-neutral-700 select-none hover:bg-neutral-200/45 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800/45 dark:hover:text-neutral-100"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          <ArrowLeft
+            className="size-[15px] text-neutral-500 group-hover:text-neutral-800 dark:group-hover:text-neutral-100"
+            aria-hidden
+          />
+          <span>Back to app</span>
+        </Link>
+
         <ul className="flex flex-col gap-px">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -217,7 +171,7 @@ export function SettingsSidebar({
                   data-active={isActive ? "true" : undefined}
                   onClick={() => onSectionChange(item.section)}
                   className={clsx(
-                    "pointer-default cursor-default group ml-2 flex w-[calc(100%-16px)] items-center gap-2 rounded-sm pl-2 pr-2 py-1 text-left text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45",
+                    "pointer-default cursor-default group ml-2 flex w-[calc(100%-8px)] items-center gap-2 rounded-sm pl-2 pr-2 py-1 text-left text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45",
                     isActive &&
                       "bg-neutral-200/75 text-black dark:bg-neutral-800/65 dark:text-white"
                   )}
