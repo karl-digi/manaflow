@@ -1387,14 +1387,16 @@ environmentsRouter.openapi(
           } catch (error) {
             const message =
               error instanceof Error ? error.message : String(error);
-            // Treat already-deleted templates as non-fatal
+            // Treat already-deleted or locked templates as non-fatal
+            // (locked containers need manual cleanup on PVE host)
             if (
               message.includes("404") ||
               message.includes("Not found") ||
-              message.includes("does not exist")
+              message.includes("does not exist") ||
+              message.includes("locked")
             ) {
               console.warn(
-                `[environments.delete] PVE template ${vmid} already deleted`
+                `[environments.delete] PVE template ${vmid} skipped (already deleted or locked)`
               );
               continue;
             }

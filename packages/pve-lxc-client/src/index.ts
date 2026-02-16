@@ -486,17 +486,24 @@ export class PveLxcClient {
     path: string,
     body?: Record<string, unknown>
   ): Promise<T> {
-    const url = `${this.apiUrl}${path}`;
+    let url = `${this.apiUrl}${path}`;
     const headers: Record<string, string> = {
       Authorization: `PVEAPIToken=${this.apiToken}`,
     };
 
     let requestBody: string | undefined;
     if (body) {
-      headers["Content-Type"] = "application/x-www-form-urlencoded";
-      requestBody = new URLSearchParams(
+      const encoded = new URLSearchParams(
         Object.entries(body).map(([k, v]) => [k, String(v)])
       ).toString();
+
+      if (method === "GET" || method === "DELETE") {
+        // PVE rejects request bodies for GET/DELETE — use query params
+        url += (path.includes("?") ? "&" : "?") + encoded;
+      } else {
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
+        requestBody = encoded;
+      }
     }
 
     // Use undici's fetch directly to ensure dispatcher option works
@@ -1297,6 +1304,23 @@ export class PveLxcClient {
   // See: https://pve.proxmox.com/wiki/Linux_Container
 
   /**
+   * Remove a lock from a container config (equivalent to `pct unlock`).
+   * Note: PVE API doesn't support skiplock on PUT config, so this only works
+   * for containers that aren't currently locked. For locked containers,
+   * manual intervention via `pct unlock <vmid>` on the PVE host is required.
+   */
+  private async unlockContainer(vmid: number): Promise<void> {
+    const node = await this.getNode();
+    // Setting "delete" on the lock field removes it
+    await this.apiRequest<unknown>(
+      "PUT",
+      `/api2/json/nodes/${node}/lxc/${vmid}/config`,
+      { delete: "lock" }
+    );
+    console.log(`[PveLxcClient] Removed lock from container ${vmid}`);
+  }
+
+  /**
    * Delete a container
    */
   async deleteContainer(vmid: number): Promise<void> {
@@ -1304,15 +1328,19 @@ export class PveLxcClient {
     try {
       await this.stopContainer(vmid);
     } catch (err) {
-      // Expected: container may already be stopped
-      console.warn(`[PveLxcClient.deleteContainer] Stop failed for ${vmid} (may be already stopped):`, err);
+      // Expected: container may already be stopped or not exist
+      console.warn(
+        `[PveLxcClient.deleteContainer] Stop failed for ${vmid} (may be already stopped):`,
+        err
+      );
     }
 
     const node = await this.getNode();
     try {
       const upid = await this.apiRequest<string>(
         "DELETE",
-        `/api2/json/nodes/${node}/lxc/${vmid}`
+        `/api2/json/nodes/${node}/lxc/${vmid}`,
+        { force: 1, purge: 1 }
       );
       await this.waitForTaskNormalized(upid, `delete container ${vmid}`);
     } catch (err) {
@@ -1322,6 +1350,15 @@ export class PveLxcClient {
         console.warn(
           `[PveLxcClient.deleteContainer] Container ${vmid} already deleted:`,
           msg
+        );
+      } else if (msg.includes("locked")) {
+        // Container has a stale lock. PVE API doesn't support skiplock on
+        // config PUT, so we can't unlock via API. Treat as partial success —
+        // the container will need manual cleanup via `pct unlock <vmid>` on
+        // the PVE host, but we shouldn't block environment record deletion.
+        console.warn(
+          `[PveLxcClient.deleteContainer] Container ${vmid} is locked and cannot be deleted via API. ` +
+            `Manual cleanup required: ssh to PVE host and run 'pct unlock ${vmid} && pct destroy ${vmid}'`
         );
       } else {
         throw err;
