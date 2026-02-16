@@ -37,6 +37,16 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
+// Headers that prevent iframe embedding - must be stripped for PVE LXC and other sandbox URLs
+const FRAME_BLOCKING_HEADERS = [
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
+] as const;
+
 const TASK_RUN_PREVIEW_PREFIX = "task-run-preview:";
 
 function envFlagEnabled(
@@ -1314,6 +1324,7 @@ function forwardHttpRequestViaHttp1(
         isHtmlResponse(proxyRes.headers) &&
         !isCompressedResponse(proxyRes.headers);
       const responseHeaders = { ...proxyRes.headers };
+      stripFrameBlockingHeaders(responseHeaders);
       if (shouldInjectWsOverride) {
         deleteHeaderCaseInsensitive(responseHeaders, "content-length");
       }
@@ -1432,6 +1443,7 @@ async function forwardHttpRequestViaHttp2(
           responseHeaders[name] = String(value);
         }
       }
+      stripFrameBlockingHeaders(responseHeaders);
       const shouldInjectWsOverride =
         Boolean(context.wsOverrideScript) &&
         isHtmlResponse(upstreamHeaders) &&
@@ -1563,6 +1575,19 @@ function deleteHeaderCaseInsensitive(
     if (key.toLowerCase() === lower) {
       delete headers[key];
     }
+  }
+}
+
+/**
+ * Remove headers that block iframe embedding (X-Frame-Options, CSP, CORP, etc.)
+ * This ensures PVE LXC sandbox URLs and other upstream servers can be embedded
+ * in the Electron preview webviews regardless of their header configuration.
+ */
+function stripFrameBlockingHeaders(
+  headers: Record<string, unknown>
+): void {
+  for (const header of FRAME_BLOCKING_HEADERS) {
+    deleteHeaderCaseInsensitive(headers, header);
   }
 }
 
@@ -2128,6 +2153,7 @@ async function forwardHttp2StreamToHttp2(
       isHtmlResponse(responseHeaders) &&
       !isCompressedResponse(responseHeaders);
     const outgoingHeaders = { ...responseHeaders };
+    stripFrameBlockingHeaders(outgoingHeaders);
     if (shouldInjectWsOverride) {
       deleteHeaderCaseInsensitive(outgoingHeaders, "content-length");
     }
@@ -2212,6 +2238,7 @@ async function forwardHttp2StreamToHttp1(
             if (HOP_BY_HOP_HEADERS.has(key)) continue;
             responseHeaders[key] = value;
         }
+        stripFrameBlockingHeaders(responseHeaders as Record<string, unknown>);
         if (shouldInjectWsOverride) {
             deleteHeaderCaseInsensitive(
                 responseHeaders as Record<string, unknown>,

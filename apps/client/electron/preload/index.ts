@@ -1,6 +1,12 @@
 import * as Sentry from "@sentry/electron/renderer";
+import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
 
-Sentry.init();
+// Only initialize Sentry in the renderer if DSN is configured.
+// This matches the main process behavior in bootstrap.ts and prevents
+// "sentry-ipc://" fetch errors when the main process hasn't initialized Sentry.
+if (SENTRY_ELECTRON_DSN) {
+  Sentry.init();
+}
 
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
