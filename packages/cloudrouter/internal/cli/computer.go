@@ -59,7 +59,7 @@ func runSSHCommand(workerURL, token, command string) (string, string, int, error
 
 // runSSHCommandWithCurl runs a command via SSH using curl as ProxyCommand.
 // The token is extracted from the wsURL query parameter and used as the SSH username.
-// Uses sshpass for empty password authentication (worker accepts any password when username=token).
+// Uses sshpass or SSH_ASKPASS for empty password authentication (worker accepts any password when username=token).
 func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int, error) {
 	// Extract token from WebSocket URL for SSH username authentication
 	// The worker SSH server authenticates by checking conn.User() == token
@@ -74,10 +74,6 @@ func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int
 
 	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
 
-	// Check if sshpass is available for empty password authentication
-	sshpassPath, _ := exec.LookPath("sshpass")
-	useSshpass := sshpassPath != ""
-
 	sshArgs := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -88,18 +84,12 @@ func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int
 		command,
 	}
 
-	var cmd *exec.Cmd
-	if useSshpass {
-		// Use sshpass -e which reads password from SSHPASS env var (empty string)
-		sshpassArgs := append([]string{"-e", "ssh"}, sshArgs...)
-		cmd = exec.Command(sshpassPath, sshpassArgs...)
-		cmd.Env = append(os.Environ(), "SSHPASS=")
-	} else {
-		// Fall back to BatchMode to prevent password prompts (may fail without sshpass)
-		sshArgs = append(sshArgs[:len(sshArgs)-2],
-			"-o", "BatchMode=yes",
-			sshArgs[len(sshArgs)-2], sshArgs[len(sshArgs)-1])
-		cmd = exec.Command("ssh", sshArgs...)
+	cmd, cleanup, buildErr := buildSSHCmd(sshArgs)
+	if buildErr != nil {
+		return "", "", -1, buildErr
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -121,6 +111,42 @@ func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int
 	stderrStr = filterSSHWarnings(stderrStr)
 
 	return stdout.String(), stderrStr, exitCode, nil
+}
+
+// buildSSHCmd wraps SSH args with non-interactive password authentication.
+// Uses sshpass when available; otherwise sets up SSH_ASKPASS with a temp
+// script so SSH doesn't open /dev/tty for password prompts on Linux.
+// Returns the command, an optional cleanup function, and any error.
+func buildSSHCmd(sshArgs []string) (*exec.Cmd, func(), error) {
+	if _, lookErr := exec.LookPath("sshpass"); lookErr == nil {
+		// Preferred: use sshpass for non-interactive empty-password auth
+		cmd := exec.Command("sshpass", append([]string{"-p", "", "ssh"}, sshArgs...)...)
+		return cmd, nil, nil
+	}
+
+	// Fallback: use SSH_ASKPASS to provide the empty password.
+	// SSH opens /dev/tty directly for password prompts (bypassing stdin),
+	// so we must force it to use SSH_ASKPASS instead.
+	askpassFile, err := os.CreateTemp("", "cmux-askpass-*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create askpass script: %w", err)
+	}
+	if _, wErr := askpassFile.WriteString("#!/bin/sh\necho ''\n"); wErr != nil {
+		askpassFile.Close()
+		os.Remove(askpassFile.Name())
+		return nil, nil, fmt.Errorf("failed to write askpass script: %w", wErr)
+	}
+	askpassFile.Close()
+	os.Chmod(askpassFile.Name(), 0700)
+	cleanup := func() { os.Remove(askpassFile.Name()) }
+
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("SSH_ASKPASS=%s", askpassFile.Name()),
+		"SSH_ASKPASS_REQUIRE=force",
+		"DISPLAY=dummy",
+	)
+	return cmd, cleanup, nil
 }
 
 // runSSHCommandWithBridge runs a command via SSH using Go WebSocket bridge.

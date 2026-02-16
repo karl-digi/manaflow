@@ -662,11 +662,12 @@ export const getTasksWithTaskRunsLimited = authQuery({
   args: {
     teamSlugOrId: v.string(),
     limit: v.optional(v.number()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const limit = args.limit ?? 50;
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
 
     // Use by_team_user_active compound index: [teamId, userId, isArchived, isPreview, lastActivityAt]
     // This efficiently fetches only active tasks without full table scan.
@@ -679,6 +680,12 @@ export const getTasksWithTaskRunsLimited = authQuery({
           .eq("userId", userId)
           .eq("isArchived", false)
           .eq("isPreview", false),
+      )
+      .filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined))
+      .filter((qq) =>
+        args.excludeLocalWorkspaces
+          ? qq.neq(qq.field("isLocalWorkspace"), true)
+          : true,
       )
       .order("desc")
       .take(limit);
