@@ -106,6 +106,18 @@ export type WorkerAllRunsCompleteResponse = z.infer<
   typeof WorkerAllRunsCompleteResponseSchema
 >;
 
+export const WorkerPushAuthResponseSchema = z.object({
+  ok: z.literal(true),
+  source: z.enum(["github_app", "none"]),
+  token: z.string().nullable(),
+  repoFullName: z.string().nullable(),
+  installationId: z.number().nullable(),
+  reason: z.string().optional(),
+});
+export type WorkerPushAuthResponse = z.infer<
+  typeof WorkerPushAuthResponseSchema
+>;
+
 export const CandidateDataSchema = z.object({
   runId: z.string(),
   agentName: z.string(),
@@ -192,7 +204,7 @@ export const CrownSummarizationPromptSchema = z.object({
 export const WorkerCheckSchema = z.object({
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
-  checkType: z.enum(["info", "all-complete", "crown"]).optional(),
+  checkType: z.enum(["info", "all-complete", "crown", "push-auth"]).optional(),
 });
 
 export const WorkerFinalizeSchema = z.object({

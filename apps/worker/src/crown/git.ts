@@ -11,16 +11,37 @@ type ExecError = Error & {
   status?: number;
 };
 
+type PushTokenSupplier = () => Promise<{
+  token: string;
+  repoFullName: string;
+} | null>;
+
 let cachedRepoPath: string | null = null;
 let cachedRepoHint: string | null = null;
 let cachedRepoPaths: string[] = [];
 
 const PROTECTED_BRANCH_FALLBACKS = new Set(["main", "master"]);
+const AUTH_ERROR_PATTERNS = [
+  /bad credentials/i,
+  /authentication failed/i,
+  /invalid username or password/i,
+  /could not read username/i,
+  /fatal: authentication/i,
+  /HTTP 401/i,
+  /HTTP 403/i,
+  /remote: Permission.*denied/i,
+];
+const GITHUB_TOKEN_IN_URL_PATTERN =
+  /(https:\/\/x-access-token:)([^@]+)(@github\.com)/gi;
 type BranchProtectionCheckResult = {
   isProtected: boolean;
   reason?: "remote_head" | "fallback";
   remoteHead?: string | null;
 };
+
+export function isAuthError(output: string): boolean {
+  return AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(output));
+}
 
 const getRepoHint = (): string | null => {
   const repoFull = process.env.CMUX_REPO_FULL?.trim();
@@ -605,6 +626,55 @@ function truncateOutput(output: string | undefined, length = 200): string {
   return output ? output.trim().slice(0, length) : "";
 }
 
+function redactSensitiveOutput(output: string): string {
+  return output.replace(GITHUB_TOKEN_IN_URL_PATTERN, "$1***$3");
+}
+
+export async function pushWithEphemeralToken(
+  branchName: string,
+  repoPath: string,
+  token: string,
+  repoFullName: string,
+): Promise<{ success: boolean; error?: string }> {
+  const remoteUrl = `https://x-access-token:${token}@github.com/${repoFullName}.git`;
+
+  try {
+    // Avoid -u flag: it would persist the tokenized URL in .git/config as branch.<name>.remote
+    await execFileAsync("git", ["push", remoteUrl, `HEAD:refs/heads/${branchName}`], {
+      cwd: repoPath,
+      maxBuffer: 10 * 1024 * 1024,
+      env: {
+        ...process.env,
+        HOME: resolveHomeDirectory(),
+      },
+    });
+    return { success: true };
+  } catch (error) {
+    const execError: ExecError =
+      error instanceof Error
+        ? error
+        : new Error(
+            typeof error === "string"
+              ? error
+              : "Unknown git push with ephemeral token error",
+          );
+    const combinedError = redactSensitiveOutput(
+      [
+        String(execError.stdout ?? "").trim(),
+        String(execError.stderr ?? "").trim(),
+        execError.message ?? "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+
+    return {
+      success: false,
+      error: truncateOutput(combinedError, 200),
+    };
+  }
+}
+
 async function stageAndCommitChanges(
   branchName: string,
   commitMessage: string,
@@ -698,10 +768,12 @@ export async function autoCommitAndPush({
   branchName,
   commitMessage,
   remoteUrl,
+  tokenSupplier,
 }: {
   branchName: string;
   commitMessage: string;
   remoteUrl?: string;
+  tokenSupplier?: PushTokenSupplier;
 }): Promise<{ success: boolean; pushedRepos: string[]; errors: string[] }> {
   const result = { success: false, pushedRepos: [] as string[], errors: [] as string[] };
 
@@ -804,37 +876,84 @@ export async function autoCommitAndPush({
       command: `git push -u origin ${branchName}`,
     });
 
-    try {
-      const pushResult = await runGitCommandSafe(
-        ["push", "-u", "origin", branchName],
-        false,
-        repoPath,
-      );
+    const pushResult = await runGitCommandSafe(
+      ["push", "-u", "origin", branchName],
+      true,
+      repoPath,
+    );
 
-      if (pushResult) {
-        log("INFO", "[AUTOCOMMIT] Push completed", {
+    if (!pushResult) {
+      result.errors.push(`Push failed for ${repoPath}: no git output`);
+      continue;
+    }
+
+    log("INFO", "[AUTOCOMMIT] Push completed", {
+      branchName,
+      repoPath,
+      exitCode: pushResult.exitCode,
+      stdout: truncateOutput(pushResult.stdout),
+      stderr: truncateOutput(pushResult.stderr),
+    });
+
+    if (pushResult.exitCode === 0) {
+      result.pushedRepos.push(repoPath);
+      continue;
+    }
+
+    const pushOutput = `${pushResult.stdout}\n${pushResult.stderr}`;
+    const pushErrorSnippet = truncateOutput(
+      redactSensitiveOutput(pushOutput),
+      200,
+    );
+
+    const canRetryWithFreshToken =
+      Boolean(tokenSupplier) && (targets.length === 1 || Boolean(applyRemoteUrl));
+
+    if (canRetryWithFreshToken && isAuthError(pushOutput) && tokenSupplier) {
+      log("WARN", "[AUTOCOMMIT] Auth error detected, fetching fresh token for retry", {
+        repoPath,
+        branchName,
+      });
+
+      const freshAuth = await tokenSupplier();
+      if (freshAuth?.token && freshAuth.repoFullName) {
+        const retryResult = await pushWithEphemeralToken(
           branchName,
           repoPath,
-          exitCode: pushResult.exitCode,
-          stdout: truncateOutput(pushResult.stdout),
-          stderr: truncateOutput(pushResult.stderr),
+          freshAuth.token,
+          freshAuth.repoFullName,
+        );
+
+        if (retryResult.success) {
+          result.pushedRepos.push(repoPath);
+          log("INFO", "[AUTOCOMMIT] Push succeeded with fresh token", {
+            repoPath,
+            branchName,
+          });
+          continue;
+        }
+
+        log("ERROR", "[AUTOCOMMIT] Push retry with fresh token also failed", {
+          repoPath,
+          branchName,
+          error: retryResult.error,
         });
 
-        if (pushResult.exitCode === 0) {
-          result.pushedRepos.push(repoPath);
-        } else {
-          result.errors.push(`Push failed with exit code ${pushResult.exitCode}: ${truncateOutput(pushResult.stderr, 100)}`);
-        }
+        result.errors.push(
+          `Push failed after auth refresh for ${repoPath}: ${retryResult.error ?? "Unknown error"}`,
+        );
+        continue;
       }
-    } catch (pushError) {
-      const errorMsg = pushError instanceof Error ? pushError.message : String(pushError);
-      log("ERROR", "[AUTOCOMMIT] Push failed with exception", {
-        branchName,
+
+      log("WARN", "[AUTOCOMMIT] Fresh token unavailable for push retry", {
         repoPath,
-        error: errorMsg,
+        branchName,
       });
-      result.errors.push(`Push exception for ${repoPath}: ${errorMsg}`);
     }
+
+    result.errors.push(
+      `Push failed with exit code ${pushResult.exitCode}: ${pushErrorSnippet || "Unknown git error"}`,
+    );
   }
 
   result.success = result.pushedRepos.length > 0;

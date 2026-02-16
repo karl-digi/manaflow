@@ -7,10 +7,12 @@ import {
   type CrownEvaluationRequest,
   type CrownWorkerCheckResponse,
   type WorkerAllRunsCompleteResponse,
+  type WorkerPushAuthResponse,
   type WorkerRunStatus,
   type WorkerTaskRunResponse,
 } from "@cmux/shared/convex-safe";
 import { env } from "../_shared/convex-env";
+import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
@@ -550,6 +552,25 @@ export const crownWorkerCheck = httpAction(async (ctx, req) => {
     return handleAllCompleteRequest(ctx, workerAuth, taskId);
   }
 
+  if (requestType === "push-auth") {
+    const resolvedTaskRunId =
+      taskRunId ?? (workerAuth.payload.taskRunId as Id<"taskRuns"> | undefined);
+
+    if (!resolvedTaskRunId) {
+      const response = {
+        ok: true,
+        source: "none",
+        token: null,
+        repoFullName: null,
+        installationId: null,
+        reason: "No taskRunId provided",
+      } satisfies WorkerPushAuthResponse;
+      return jsonResponse(response);
+    }
+
+    return handlePushAuthRequest(ctx, workerAuth, resolvedTaskRunId);
+  }
+
   return handleCrownCheckRequest(ctx, workerAuth, validation.data);
 });
 
@@ -615,6 +636,95 @@ async function handleInfoRequest(
       : null,
     screenshotWorkflowEnabled,
   } satisfies WorkerTaskRunResponse;
+  return jsonResponse(response);
+}
+
+async function handlePushAuthRequest(
+  ctx: ActionCtx,
+  workerAuth: WorkerAuthContext,
+  taskRunId: Id<"taskRuns">
+): Promise<Response> {
+  const taskRun = await loadTaskRunForWorker(ctx, workerAuth, taskRunId);
+  if (taskRun instanceof Response) {
+    return taskRun;
+  }
+
+  const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+    id: taskRun.taskId,
+  });
+
+  if (!task) {
+    const response = {
+      ok: true,
+      source: "none",
+      token: null,
+      repoFullName: null,
+      installationId: null,
+      reason: "Task not found",
+    } satisfies WorkerPushAuthResponse;
+    return jsonResponse(response);
+  }
+
+  if (
+    task.teamId !== workerAuth.payload.teamId ||
+    task.userId !== workerAuth.payload.userId
+  ) {
+    return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  const repoFullName = task.projectFullName?.trim() ?? "";
+  if (!repoFullName) {
+    const response = {
+      ok: true,
+      source: "none",
+      token: null,
+      repoFullName: null,
+      installationId: null,
+      reason: "No project full name",
+    } satisfies WorkerPushAuthResponse;
+    return jsonResponse(response);
+  }
+
+  const installationId = await ctx.runQuery(
+    internal.github.getRepoInstallationIdInternal,
+    {
+      teamId: taskRun.teamId,
+      repoFullName,
+    }
+  );
+
+  if (!installationId) {
+    const response = {
+      ok: true,
+      source: "none",
+      token: null,
+      repoFullName,
+      installationId: null,
+      reason: "No GitHub App installation",
+    } satisfies WorkerPushAuthResponse;
+    return jsonResponse(response);
+  }
+
+  const token = await fetchInstallationAccessToken(installationId);
+  if (!token) {
+    const response = {
+      ok: true,
+      source: "none",
+      token: null,
+      repoFullName,
+      installationId,
+      reason: "Token mint failed",
+    } satisfies WorkerPushAuthResponse;
+    return jsonResponse(response);
+  }
+
+  const response = {
+    ok: true,
+    source: "github_app",
+    token,
+    repoFullName,
+    installationId,
+  } satisfies WorkerPushAuthResponse;
   return jsonResponse(response);
 }
 

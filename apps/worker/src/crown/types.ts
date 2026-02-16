@@ -5,6 +5,7 @@ export type {
   WorkerTaskRunDescriptor,
   WorkerTaskRunResponse,
   WorkerAllRunsCompleteResponse,
+  WorkerPushAuthResponse,
   CandidateData,
   CrownEvaluationResponse,
   CrownSummarizationResponse,

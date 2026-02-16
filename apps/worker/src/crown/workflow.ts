@@ -25,6 +25,7 @@ import {
   type CrownSummarizationResponse,
   type CrownWorkerCheckResponse,
   type WorkerAllRunsCompleteResponse,
+  type WorkerPushAuthResponse,
   type WorkerRunContext,
   type WorkerTaskRunResponse,
 } from "./types";
@@ -263,10 +264,61 @@ export async function handleWorkerTaskCompletion(
       });
 
       try {
+        let cachedPushAuth:
+          | { token: string; repoFullName: string }
+          | null
+          | undefined;
+
+        const tokenSupplier = async (): Promise<{
+          token: string;
+          repoFullName: string;
+        } | null> => {
+          if (cachedPushAuth !== undefined) {
+            return cachedPushAuth;
+          }
+
+          const pushAuth = await convexRequest<WorkerPushAuthResponse>(
+            "/api/crown/check",
+            runContext.token,
+            {
+              taskRunId,
+              checkType: "push-auth",
+            },
+            baseUrlOverride
+          );
+
+          if (
+            pushAuth?.ok &&
+            pushAuth.source === "github_app" &&
+            pushAuth.token &&
+            pushAuth.repoFullName
+          ) {
+            cachedPushAuth = {
+              token: pushAuth.token,
+              repoFullName: pushAuth.repoFullName,
+            };
+            log("INFO", "[AUTOCOMMIT] Fresh push token obtained", {
+              taskRunId,
+              repoFullName: pushAuth.repoFullName,
+              source: pushAuth.source,
+            });
+            return cachedPushAuth;
+          }
+
+          log("WARN", "[AUTOCOMMIT] Could not obtain fresh push token", {
+            taskRunId,
+            source: pushAuth?.source ?? "none",
+            reason: pushAuth?.reason,
+          });
+          cachedPushAuth = null;
+          return null;
+        };
+
         const autoCommitResult = await autoCommitAndPush({
           branchName: branchForCommit,
           commitMessage,
           remoteUrl,
+          tokenSupplier,
         });
 
         if (autoCommitResult.success) {
