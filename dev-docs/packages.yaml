@@ -95,6 +95,12 @@ packages:
     tokens: 12000
     output: opencode/llms.txt
 
+  - name: vibe-kanban
+    description: "Vibe Kanban - orchestrate multiple AI coding agents"
+    source: https://context7.com/bloopai/vibe-kanban/llms.txt
+    tokens: 12000
+    output: vibe-kanban/llms.txt
+
   - name: manaflow
     description: "Manaflow - autonomous agent platform and workflows"
     source: https://context7.com/manaflow-ai/manaflow/llms.txt

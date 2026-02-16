@@ -1,76 +1,175 @@
-### Install Unreleased Vitest from pkg.pr.new
+### Example Vitest Setup File Configuration (TypeScript)
 
-Source: https://main.vitest.dev/guide
+Source: https://main.vitest.dev/config/setupfiles
 
-Installs a specific unreleased version of Vitest from the pkg.pr.new registry using npm. Requires specifying the commit hash.
+This example demonstrates how to configure setup files in Vitest using TypeScript. It shows how to import configuration, conditionally initialize a global setup, and reset state before each test.
 
-```bash
-npm i https://pkg.pr.new/vitest@{commit}
+```typescript
+import { config } from '@some-testing-lib'
+
+if (!globalThis.setupInitialized) {
+  config.plugins = [myCoolPlugin]
+  computeHeavyThing()
+  globalThis.setupInitialized = true
+}
+
+// hooks reset before each test file
+afterEach(() => {
+  cleanup()
+})
+
+globalThis.resetBeforeEachTest = true
 ```
 
 --------------------------------
 
-### Initialize Vitest Browser Mode
+### Global Setup and Teardown in Vitest
 
-Source: https://main.vitest.dev/guide/browser
+Source: https://main.vitest.dev/guide/lifecycle
 
-Initializes Vitest Browser Mode, installing required dependencies and creating browser configuration files. This command simplifies the setup process for running tests in the browser natively.
+Example of global setup and teardown functions in Vitest. The setup function runs once before all tests and can provide data to tests. The teardown function runs once after all tests complete.
 
-```bash
-npx vitest init browser
-```
+```typescript
+export function setup(project) {
+  // Runs once before all tests
+  console.log('Global setup')
 
-```bash
-yarn exec vitest init browser
-```
+  // Share data with tests
+  project.provide('apiUrl', 'http://localhost:3000')
+}
 
-```bash
-pnpx vitest init browser
-```
-
-```bash
-bunx vitest init browser
-```
-
---------------------------------
-
-### Build and Link Local Vitest Modifications (pnpm)
-
-Source: https://main.vitest.dev/guide
-
-Builds and links a local development version of Vitest using pnpm. This involves cloning the repository, installing dependencies, building the package, and linking it globally. Assumes pnpm is installed.
-
-```bash
-git clone https://github.com/vitest-dev/vitest.git
-cd vitest
-pnpm install
-cd packages/vitest
-pnpm run build
-pnpm link --global
+export function teardown() {
+  // Runs once after all tests
+  console.log('Global teardown')
+}
 ```
 
 --------------------------------
 
-### Install Vitest using npm, yarn, pnpm, or bun
+### Configure Vitest with Vite
 
 Source: https://main.vitest.dev/guide
 
-This snippet shows the commands to install Vitest as a development dependency across various package managers. Vitest requires Vite version 6.0.0 or higher and Node.js version 20.0.0 or higher.
+This example demonstrates how to configure Vitest when you are already using Vite. It includes a triple-slash directive to reference Vitest types and adds the 'test' property to the existing Vite configuration file. This allows Vitest to leverage Vite's setup.
 
-```bash
-npm install -D vitest
+```typescript
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  test: {
+    // ...
+  },
+})
 ```
 
-```bash
-yarn add -D vitest
+--------------------------------
+
+### Configure Different Browser Setups with Custom Options
+
+Source: https://main.vitest.dev/guide/browser/multiple-setups
+
+This example shows how to configure different setups for the same browser (Chromium). It allows specifying unique setup files (`setupFiles`) and providing custom values (`provide`) for each instance, enabling isolated test environments.
+
+```typescript
+import { defineConfig } from 'vitest/config'
+import { playwright } from '@vitest/browser-playwright'
+
+export default defineConfig({
+  test: {
+    browser: {
+      enabled: true,
+      provider: playwright(),
+      headless: true,
+      instances: [
+        {
+          browser: 'chromium',
+          name: 'chromium-1',
+          setupFiles: ['./ratio-setup.ts'],
+          provide: {
+            ratio: 1,
+          },
+        },
+        {
+          browser: 'chromium',
+          name: 'chromium-2',
+          provide: {
+            ratio: 2,
+          },
+        },
+      ],
+    },
+  },
+})
 ```
 
-```bash
-pnpm add -D vitest
+```typescript
+import { expect, inject, test } from 'vitest'
+import { globalSetupModifier } from './example.js'
+
+test('ratio works', () => {
+  expect(inject('ratio') * globalSetupModifier).toBe(14)
+})
 ```
 
+--------------------------------
+
+### Install Vitest UI
+
+Source: https://main.vitest.dev/guide/ui
+
+Installs the Vitest UI package as a development dependency using npm.
+
 ```bash
-bun add -D vitest
+npm i -D @vitest/ui
+```
+
+--------------------------------
+
+### Setup File Execution and Hooks in Vitest
+
+Source: https://main.vitest.dev/guide/lifecycle
+
+Demonstrates a Vitest setup file that runs before each test file. It logs a message and registers an afterEach hook for cleanup, ensuring consistent test environments.
+
+```typescript
+import { afterEach } from 'vitest'
+
+// Runs before each test file
+console.log('Setup file executing')
+
+// Register hooks that apply to all tests
+afterEach(() => {
+  cleanup()
+})
+```
+
+--------------------------------
+
+### Merge Vite and Vitest Configurations
+
+Source: https://main.vitest.dev/guide
+
+This example illustrates how to merge separate Vite and Vitest configuration files using `mergeConfig`. It imports both configurations and combines them, allowing for distinct settings while maintaining a unified setup. This is useful when you need separate configurations but want to leverage shared Vite options.
+
+```typescript
+import { defineConfig, mergeConfig } from 'vitest/config'
+import viteConfig from './vite.config.mjs'
+
+export default mergeConfig(viteConfig, defineConfig({
+  test: {
+    // ...
+  },
+}))
+```
+
+```typescript
+import { defineConfig } from 'vite'
+import Vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [Vue()],
+})
 ```
 
 --------------------------------
@@ -79,7 +178,7 @@ bun add -D vitest
 
 Source: https://main.vitest.dev/guide/ui
 
-Launches Vitest tests with the interactive UI enabled using the `--ui` flag. This command assumes Vitest is installed.
+Launches Vitest tests with the integrated UI by using the `--ui` flag in the command line.
 
 ```bash
 vitest --ui
@@ -87,11 +186,11 @@ vitest --ui
 
 --------------------------------
 
-### Vitest Project Configuration
+### Configure Vitest Projects
 
 Source: https://main.vitest.dev/guide
 
-Configures multiple project setups within a single Vitest project. It uses the 'projects' array in `vitest.config.ts` to define different configurations for distinct test suites, environments, or setups.
+This snippet shows how to configure multiple test projects within a single Vitest setup. The `projects` array in `vitest.config.ts` allows defining different configurations, environments, and setup files for various project parts or test types.
 
 ```typescript
 import { defineConfig } from 'vitest/config'
@@ -129,23 +228,53 @@ export default defineConfig({
 
 --------------------------------
 
-### Install Vitest UI
+### Build and Link Local Vitest Modifications with pnpm
 
-Source: https://main.vitest.dev/guide/ui
+Source: https://main.vitest.dev/guide
 
-Installs the Vitest UI development dependency using npm. This is the first step to enable the interactive UI.
+Build and locally link your own modifications to Vitest. This process involves cloning the repository, installing dependencies, building the Vitest package, and then globally linking it. Finally, link the globally linked Vitest package into your project. Requires pnpm.
 
 ```bash
-npm i -D @vitest/ui
+git clone https://github.com/vitest-dev/vitest.git
+cd vitest
+pnpm install
+cd packages/vitest
+pnpm run build
+pnpm link --global
+pnpm link --global vitest
 ```
 
 --------------------------------
 
-### Install Coverage Provider Packages (Bash)
+### Install Vitest using Package Managers
+
+Source: https://main.vitest.dev/guide
+
+Installs Vitest as a development dependency using common package managers like npm, yarn, pnpm, and bun. Vitest requires Vite version 6.0.0 or higher and Node.js version 20.0.0 or higher.
+
+```bash
+npm install -D vitest
+```
+
+```bash
+yarn add -D vitest
+```
+
+```bash
+pnpm add -D vitest
+```
+
+```bash
+bun add -D vitest
+```
+
+--------------------------------
+
+### Install Coverage Support Packages
 
 Source: https://main.vitest.dev/guide/coverage
 
-These commands demonstrate how to install the necessary packages for the V8 or Istanbul coverage providers using npm. Choose the command corresponding to your desired provider.
+These commands demonstrate how to manually install the required packages for V8 or Istanbul code coverage support in Vitest. These are development dependencies.
 
 ```bash
 npm i -D @vitest/coverage-v8
@@ -157,1363 +286,82 @@ npm i -D @vitest/coverage-istanbul
 
 --------------------------------
 
-### Configure Different Browser Setups with Providers and Setup Files
-
-Source: https://main.vitest.dev/guide/browser/multiple-setups
-
-This configuration demonstrates setting up multiple instances of the same browser (Chromium) with distinct configurations. It includes using custom names, specifying `setupFiles` for isolated test environments, and providing custom values via the `provide` field for dependency injection.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      headless: true,
-      instances: [
-        {
-          browser: 'chromium',
-          name: 'chromium-1',
-          setupFiles: ['./ratio-setup.ts'],
-          provide: {
-            ratio: 1,
-          },
-        },
-        {
-          browser: 'chromium',
-          name: 'chromium-2',
-          provide: {
-            ratio: 2,
-          },
-        },
-      ],
-    },
-  },
-})
-```
-
---------------------------------
-
-### Vitest Global Setup with Test Rerun Callback
-
-Source: https://main.vitest.dev/config
-
-This example demonstrates how to define a custom callback function within Vitest's global setup that executes when Vitest reruns tests. The runner waits for asynchronous callbacks to complete before starting tests.
-
-```typescript
-import type { TestProject } from 'vitest/node'
-
-export default function setup(project: TestProject) {
-  project.onTestsRerun(async () => {
-    await restartDb()
-  })
-}
-```
-
---------------------------------
-
-### Vitest Project Configuration Examples
-
-Source: https://main.vitest.dev/guide/migration
-
-Demonstrates how to configure Vitest projects with different isolation, parallelism, and Node.js CLI options. These examples showcase the flexibility of the new pool architecture, allowing per-project settings for isolation, file parallelism, and environment variables.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        // Non-isolated unit tests
-        name: 'Unit tests',
-        isolate: false,
-        exclude: ['**.integration.test.ts'],
-      },
-      {
-        // Isolated integration tests
-        name: 'Integration tests',
-        include: ['**.integration.test.ts'],
-      },
-    ],
-  },
-})
-```
-
-```typescript
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        name: 'Parallel',
-        exclude: ['**.sequantial.test.ts'],
-      },
-      {
-        name: 'Sequential',
-        include: ['**.sequantial.test.ts'],
-        fileParallelism: false,
-      },
-    ],
-  },
-})
-```
-
-```typescript
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        name: 'Production env',
-        execArgv: ['--env-file=.env.prod']
-      },
-      {
-        name: 'Staging env',
-        execArgv: ['--env-file=.env.staging']
-      },
-    ],
-  },
-})
-```
-
---------------------------------
-
-### Example: Test file for the sum function in Vitest
-
-Source: https://main.vitest.dev/guide
-
-This JavaScript code demonstrates a basic Vitest test case. It imports the 'sum' function and uses Vitest's 'test' and 'expect' to assert that the sum of 1 and 2 equals 3. Test files should typically include '.test.' or '.spec.' in their names.
-
-```javascript
-import { expect, test } from 'vitest'
-import { sum } from './sum.js'
-
-test('adds 1 + 2 to equal 3', () => {
-  expect(sum(1, 2)).toBe(3)
-})
-```
-
---------------------------------
-
-### Istanbul Coverage Instrumentation Example (JavaScript)
-
-Source: https://main.vitest.dev/guide/coverage
-
-This is a simplified JavaScript example illustrating how Istanbul instruments source files to track branch and function coverage. It shows the addition of coverage counters and global assignments.
-
-```javascript
-// Simplified example of branch and function coverage counters
-const coverage = { // [!code ++]
-  branches: { 1: [0, 0] }, // [!code ++]
-  functions: { 1: 0 }, // [!code ++]
-} // [!code ++]
-
-export function getUsername(id) {
-  // Function coverage increased when this is invoked  // [!code ++]
-  coverage.functions['1']++ // [!code ++]
-
-  if (id == null) {
-    // Branch coverage increased when this is invoked  // [!code ++]
-    coverage.branches['1'][0]++ // [!code ++]
-
-    throw new Error('User ID is required')
-  }
-  // Implicit else coverage increased when if-statement condition not met  // [!code ++]
-  coverage.branches['1'][1]++ // [!code ++]
-
-  return database.getUser(id)
-}
-
-globalThis.__VITEST_COVERAGE__ ||= {}
-globalThis.__VITEST_COVERAGE__[filename] = coverage
-```
-
---------------------------------
-
-### Install Vitest Browser Mode with Playwright
-
-Source: https://main.vitest.dev/guide/browser
-
-Installs Vitest Browser Mode along with Playwright, a framework for web testing and automation. This setup is recommended for CI environments and offers faster test execution via Chrome DevTools Protocol.
-
-```bash
-npm install -D vitest @vitest/browser playwright
-```
-
-```bash
-yarn add -D vitest @vitest/browser playwright
-```
-
-```bash
-pnpm add -D vitest @vitest/browser playwright
-```
-
-```bash
-bun add -D vitest @vitest/browser playwright
-```
-
---------------------------------
-
-### Example: Sum function for testing in Vitest
-
-Source: https://main.vitest.dev/guide
-
-This JavaScript code defines a simple 'sum' function that adds two numbers. This function will be used in the accompanying test file to demonstrate Vitest's functionality.
-
-```javascript
-export function sum(a, b) {
-  return a + b
-}
-```
-
---------------------------------
-
-### Configure package.json scripts for Vitest
-
-Source: https://main.vitest.dev/guide
-
-This JSON snippet shows how to add a 'test' script to your package.json file. This script allows you to run Vitest using your preferred package manager's command (e.g., 'npm run test').
-
-```json
-{
-  "scripts": {
-    "test": "vitest"
-  }
-}
-```
-
---------------------------------
-
-### Providing Custom Values in Global Setup Files for Vitest
-
-Source: https://main.vitest.dev/advanced/api/test-project
-
-Shows an example of how to provide custom values using the `provide` function within a global setup file for Vitest, which is useful when the public API is not accessible.
-
-```javascript
-export default function setup({ provide }) {
-  provide('wsPort', 3000)
-}
-```
-
---------------------------------
-
-### Extending Test Context with Fixtures in Vitest
+### Vitest: Complex Fixture Setup with Multiple `onCleanup` Calls (TypeScript)
 
 Source: https://main.vitest.dev/guide/test-context
 
-Provides an example of extending the Vitest test API with custom fixtures ('todos' and 'archive') using `test.extend`. It includes setup, usage, and cleanup logic for the fixtures.
+Illustrates a more complex Vitest fixture setup involving database connection and user creation, with cleanup logic registered for both. The `onCleanup` callback is used to ensure database disconnection and user deletion after the test scope ends. This example assumes the existence of `createDatabase`, `connect`, `disconnect`, `createTestUser`, and `deleteUser` functions.
 
 ```typescript
-import { test as baseTest } from 'vitest'
+const test = baseTest
+  .extend('database', { scope: 'file' }, async ({}, { onCleanup }) => {
+    const db = await createDatabase()
+    await db.connect()
 
-const todos = []
-const archive = []
+    onCleanup(async () => {
+      await db.disconnect()
+    })
 
-export const test = baseTest.extend({
-  todos: async ({}, use) => {
-    // setup the fixture before each test function
-    todos.push(1, 2, 3)
+    return db
+  })
+  .extend('user', async ({ database }, { onCleanup }) => {
+    const user = await database.createTestUser()
 
-    // use the fixture value
-    await use(todos)
+    onCleanup(async () => {
+      await database.deleteUser(user.id)
+    })
 
-    // cleanup the fixture after each test function
-    todos.length = 0
-  },
-  archive
-})
-```
-
-```typescript
-import { expect } from 'vitest'
-import { test } from './my-test.js'
-
-test('add items to todos', ({ todos }) => {
-  expect(todos.length).toBe(3)
-
-  todos.push(4)
-  expect(todos.length).toBe(4)
-})
-
-test('move items from todos to archive', ({ todos, archive }) => {
-  expect(todos.length).toBe(3)
-  expect(archive.length).toBe(0)
-
-  archive.push(todos.pop())
-  expect(todos.length).toBe(2)
-  expect(archive.length).toBe(1)
-})
+    return user
+  })
 ```
 
 --------------------------------
 
-### Test with Injected Values from Browser Setup
-
-Source: https://main.vitest.dev/guide/browser/multiple-setups
-
-This test file verifies the functionality of injected values from Vitest browser configurations. It uses the `inject` function to access a provided 'ratio' value and multiplies it with a global setup modifier to assert the expected outcome.
-
-```typescript
-import { expect, inject, test } from 'vitest'
-import { globalSetupModifier } from './example.js'
-
-test('ratio works', () => {
-  expect(inject('ratio') * globalSetupModifier).toBe(14)
-})
-```
-
---------------------------------
-
-### Manually Install Vitest Browser Mode Packages
-
-Source: https://main.vitest.dev/guide/browser
-
-Manually install the core Vitest and Vitest Browser Mode packages. This method allows for direct control over package versions and dependencies. No additional E2E provider is strictly required for local development.
-
-```bash
-npm install -D vitest @vitest/browser
-```
-
-```bash
-yarn add -D vitest @vitest/browser
-```
-
-```bash
-pnpm add -D vitest @vitest/browser
-```
-
-```bash
-bun add -D vitest @vitest/browser
-```
-
---------------------------------
-
-### Vitest CLI Option Examples (Shell)
+### Running Vitest via Package Managers (Shell)
 
 Source: https://main.vitest.dev/guide/cli
 
-Illustrates various ways to use Vitest CLI options, including boolean flags, negated flags, and array-like options. It shows how to pass multiple reporters and how to negate boolean options like '--api'.
-
-```shell
-vitest --reporter=dot --reporter=default
-vitest --no-api
-vitest --api=false
-```
-
---------------------------------
-
-### Vitest Browser Config for Qwik
-
-Source: https://main.vitest.dev/guide/browser
-
-Example Vitest configuration for running tests in a browser with Qwik. It enables browser mode using the Playwright provider and specifies Chromium as the browser instance. This setup includes Qwik's Vite plugins and an optional SSR plugin.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import { qwikVite } from '@builder.io/qwik/optimizer'
-import { playwright } from '@vitest/browser-playwright'
-
-// optional, run the tests in SSR mode
-import { testSSR } from 'vitest-browser-qwik/ssr-plugin'
-
-export default defineConfig({
-  plugins: [testSSR(), qwikVite()],
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      instances: [{ browser: 'chromium' }]
-    },
-  },
-})
-```
-
---------------------------------
-
-### Global Setup and Teardown with Vitest
-
-Source: https://main.vitest.dev/config
-
-Configure global setup and teardown functions for Vitest. These functions run before and after test suites, respectively. Data can be passed from setup to tests using the `provide` method. Supports different versions of Vitest for compatibility.
-
-```typescript
-import type { TestProject } from 'vitest/node'
-
-export default function setup(project: TestProject) {
-  project.provide('wsPort', 3000)
-}
-
-declare module 'vitest' {
-  export interface ProvidedContext {
-    wsPort: number
-  }
-}
-```
-
-```typescript
-import type { GlobalSetupContext } from 'vitest/node'
-
-export default function setup({ provide }: GlobalSetupContext) {
-  provide('wsPort', 3000)
-}
-
-declare module 'vitest' {
-  export interface ProvidedContext {
-    wsPort: number
-  }
-}
-```
-
---------------------------------
-
-### Install Vitest Browser Mode with WebdriverIO
-
-Source: https://main.vitest.dev/guide/browser
-
-Installs Vitest Browser Mode along with WebdriverIO, enabling tests to run using the WebDriver protocol. This is an alternative for CI and local testing, providing compatibility with WebDriver infrastructure.
+Examples of how to invoke Vitest commands using different package managers like npm, pnpm, yarn, and bun, demonstrating tab completion usage.
 
 ```bash
-npm install -D vitest @vitest/browser webdriverio
+npm vitest <Tab>
 ```
 
 ```bash
-yarn add -D vitest @vitest/browser webdriverio
+npm exec vitest <Tab>
 ```
 
 ```bash
-pnpm add -D vitest @vitest/browser webdriverio
+pnpm vitest <Tab>
 ```
 
 ```bash
-bun add -D vitest @vitest/browser webdriverio
+yarn vitest <Tab>
+```
+
+```bash
+bun vitest <Tab>
 ```
 
 --------------------------------
 
-### Vitest Browser Config for Solid
-
-Source: https://main.vitest.dev/guide/browser
-
-Example Vitest configuration for running tests in a browser with Solid. It enables browser mode using the Playwright provider and specifies Chromium as the browser instance. This setup requires the 'vite-plugin-solid' plugin.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import solidPlugin from 'vite-plugin-solid'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  plugins: [solidPlugin()],
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      instances: [
-        { browser: 'chromium' },
-      ],
-    }
-  }
-})
-```
-
---------------------------------
-
-### Define a Custom Vitest Environment (TypeScript)
-
-Source: https://main.vitest.dev/guide/environment
-
-This example shows how to create a custom Vitest environment by exporting an object that conforms to the `Environment` interface. It includes optional `setupVM` for VM-specific setup and `setup` for general environment setup, both returning a `teardown` function. The `viteEnvironment` property is crucial for Vite's processing.
-
-```typescript
-import type { Environment } from 'vitest/environments'
-
-export default <Environment>{
-  name: 'custom',
-  viteEnvironment: 'ssr',
-  // optional - only if you support "experimental-vm" pool
-  async setupVM() {
-    const vm = await import('node:vm')
-    const context = vm.createContext()
-    return {
-      getVmContext() {
-        return context
-      },
-      teardown() {
-        // called after all tests with this env have been run
-      }
-    }
-  },
-  setup() {
-    // custom setup
-    return {
-      teardown() {
-        // called after all tests with this env have been run
-      }
-    }
-  }
-}
-```
-
---------------------------------
-
-### Link Globally Linked Vitest in Project (pnpm)
+### Install Unreleased Vitest Commit via npm
 
 Source: https://main.vitest.dev/guide
 
-Links the globally linked local Vitest package into your project's dependencies. This step is performed after building and linking Vitest locally and assumes the use of pnpm for both global linking and project dependency management.
+Install a specific unreleased commit of Vitest from the pkg.pr.new registry. This is useful for testing the latest changes or specific commit versions before they are officially released. Requires npm or a compatible package manager.
 
 ```bash
-pnpm link --global vitest
+npm i https://pkg.pr.new/vitest@{commit}
 ```
 
 --------------------------------
 
-### Vitest Browser Testing with Qwik
-
-Source: https://main.vitest.dev/guide/browser
-
-This example shows browser testing for Qwik components using Vitest. It utilizes 'vitest-browser-qwik' for rendering and interacts with the component to verify UI changes after an action. It highlights the availability of SSR and hook rendering options.
-
-```tsx
-import { render } from 'vitest-browser-qwik'
-import Greeting from './greeting'
-
-test('greeting appears on click', async () => {
-  // renderSSR and renderHook are also available
-  const screen = render(<Greeting />)
-
-  const button = screen.getByRole('button')
-  await button.click()
-  const greeting = screen.getByText(/hello world/iu)
-
-  await expect.element(greeting).toBeInTheDocument()
-})
-```
-
---------------------------------
-
-### Implement a Custom Coverage Reporter for Vitest (JavaScript)
-
-Source: https://main.vitest.dev/guide/coverage
-
-Provides a basic implementation of a custom coverage reporter compatible with Vitest and Istanbul. This example demonstrates how to define a reporter that writes custom content to a file during the coverage report generation process.
-
-```javascript
-const { ReportBase } = require('istanbul-lib-report')
-
-module.exports = class CustomReporter extends ReportBase {
-  constructor(opts) {
-    super()
-
-    // Options passed from configuration are available here
-    this.file = opts.file
-  }
-
-  onStart(root, context) {
-    this.contentWriter = context.writer.writeFile(this.file)
-    this.contentWriter.println('Start of custom coverage report')
-  }
-
-  onEnd() {
-    this.contentWriter.println('End of custom coverage report')
-    this.contentWriter.close()
-  }
-}
-```
-
---------------------------------
-
-### Vitest Browser Mode: React Component Testing
-
-Source: https://main.vitest.dev/guide/browser
-
-Demonstrates testing React components using `vitest-browser-react`. The example renders a React component, simulates a click event, and asserts the resulting text content and button state.
-
-```typescript
-import { render } from 'vitest-browser-react'
-import Fetch from './fetch'
-
-test('loads and displays greeting', async () => {
-  // Render a React element into the DOM
-  const screen = render(<Fetch url="/greeting" />)
-
-  await screen.getByText('Load Greeting').click()
-  // wait before throwing an error if it cannot find an element
-  const heading = screen.getByRole('heading')
-
-  // assert that the alert message is correct
-  await expect.element(heading).toHaveTextContent('hello there')
-  await expect.element(screen.getByRole('button')).toBeDisabled()
-})
-```
-
---------------------------------
-
-### Merging Vite and Vitest Configurations
-
-Source: https://main.vitest.dev/guide
-
-Demonstrates how to merge a separate Vite configuration file with a Vitest configuration file using `mergeConfig`. This approach is useful when maintaining distinct configuration files for Vite and Vitest.
-
-```typescript
-import { defineConfig, mergeConfig } from 'vitest/config'
-import viteConfig from './vite.config.mjs'
-
-export default mergeConfig(viteConfig, defineConfig({
-  test: {
-    // ...
-  },
-}))
-```
-
-```typescript
-import { defineConfig } from 'vite'
-import Vue from '@vitejs/plugin-vue'
-
-export default defineConfig({
-  plugins: [Vue()]
-})
-```
-
---------------------------------
-
-### Configure Reporters with Options in vite.config.ts
-
-Source: https://main.vitest.dev/guide/reporters
-
-This example illustrates how to configure multiple reporters, including one ('junit') with specific options like `suiteName`, within the `vitest.config.ts` file.
-
-```typescript
-export default defineConfig({
-  test: {
-    reporters: [
-      'default',
-      ['junit', { suiteName: 'UI tests' }]
-    ],
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Config for Marko
-
-Source: https://main.vitest.dev/guide/browser
-
-Example Vitest configuration for running tests in a browser with Marko. It enables browser mode using the Playwright provider and specifies Chromium as the browser instance. This setup requires the '@marko/vite' plugin.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import marko from '@marko/vite'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  plugins: [marko()],
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      instances: [
-        { browser: 'chromium' },
-      ],
-    }
-  }
-})
-```
-
---------------------------------
-
-### Vitest Standalone Configuration
-
-Source: https://main.vitest.dev/guide
-
-Configures Vitest using the 'test' property in a standalone `vitest.config.ts` file. This is used when Vitest is not integrated with Vite or when a separate configuration is preferred.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    // ...
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Config for Svelte
-
-Source: https://main.vitest.dev/guide/browser
-
-Example Vitest configuration for running tests in a browser with Svelte. It enables browser mode using the Playwright provider and specifies Chromium as the browser instance. This setup requires the '@sveltejs/vite-plugin-svelte' plugin.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  plugins: [svelte()],
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      instances: [
-        { browser: 'chromium' },
-      ],
-    }
-  }
-})
-```
-
---------------------------------
-
-### Initializing Vitest Browser Environment (Bash)
-
-Source: https://main.vitest.dev/guide/cli
-
-Initializes Vitest project configuration specifically for the browser environment. This command sets up the necessary configurations to run Vitest tests within a browser context.
-
-```bash
-vitest init browser
-```
-
---------------------------------
-
-### createVitest API
-
-Source: https://main.vitest.dev/advanced/api
-
-Creates a Vitest instance without starting the tests or validating installed packages. Useful for pre-configuring the testing environment.
-
-```APIDOC
-## createVitest
-
-### Description
-Creates a Vitest instance. Unlike `startVitest`, this function does not automatically start the tests or perform package validation, returning a `Vitest` instance that can be managed manually.
-
-### Method
-`createVitest(mode: VitestRunMode, options: CliOptions, viteOverrides: ViteUserConfig = {}, vitestOptions: VitestOptions = {}): Promise<Vitest>`
-
-### Parameters
-
-#### Path Parameters
-None
-
-#### Query Parameters
-None
-
-#### Request Body
-None
-
-### Request Example
-```javascript
-import { createVitest } from 'vitest/node'
-
-const vitest = await createVitest('test', {
-  watch: false,
-})
-```
-
-### Response
-#### Success Response (200)
-- **vitest** (Vitest) - An instance of the Vitest runner.
-
-#### Response Example
-```javascript
-// Example of creating and managing a Vitest instance
-import { createVitest } from 'vitest/node'
-
-const vitest = await createVitest('test', {
-  watch: false,
-})
-// ... perform actions with vitest instance ...
-await vitest.close()
-```
-```
-
---------------------------------
-
-### TypeScript Examples: Ignoring Code Blocks with v8
-
-Source: https://main.vitest.dev/guide/coverage
-
-Provides TypeScript examples illustrating how to ignore specific code blocks using v8 ignore hints with the '@preserve' keyword. Covers scenarios like 'if else' statements, single 'next node' lines or functions, 'try catch' blocks, and 'switch case' statements.
-
-```ts
-/* v8 ignore if -- @preserve */
-if (parameter) { // [!code error]
-  console.log('Ignored') // [!code error]
-} // [!code error]
-else {
-  console.log('Included')
-}
-
-/* v8 ignore else -- @preserve */
-if (parameter) {
-  console.log('Included')
-}
-else { // [!code error]
-  console.log('Ignored') // [!code error]
-} // [!code error]
-```
-
-```ts
-/* v8 ignore next -- @preserve */
-console.log('Ignored') // [!code error]
-console.log('Included')
-
-/* v8 ignore next -- @preserve */
-function ignored() { // [!code error]
-  console.log('all') // [!code error]
-  // [!code error]
-  console.log('lines') // [!code error]
-  // [!code error]
-  console.log('are') // [!code error]
-  // [!code error]
-  console.log('ignored') // [!code error]
-} // [!code error]
-
-/* v8 ignore next -- @preserve */
-class Ignored { // [!code error]
-  ignored() {} // [!code error]
-  alsoIgnored() {} // [!code error]
-} // [!code error]
-
-/* v8 ignore next -- @preserve */
-condition // [!code error]
-  ? console.log('ignored') // [!code error]
-  : console.log('also ignored') // [!code error]
-```
-
-```ts
-/* v8 ignore next -- @preserve */
-try { // [!code error]
-  console.log('Ignored') // [!code error]
-} // [!code error]
-catch (error) { // [!code error]
-  console.log('Ignored') // [!code error]
-} // [!code error]
-
-try {
-  console.log('Included')
-}
-catch (error) {
-  /* v8 ignore next -- @preserve */
-  console.log('Ignored') // [!code error]
-  /* v8 ignore next -- @preserve */
-  console.log('Ignored') // [!code error]
-}
-
-// Requires rolldown-vite due to esbuild's lack of support.
-// See https://vite.dev/guide/rolldown.html#how-to-try-rolldown
-try {
-  console.log('Included')
-}
-catch (error) /* v8 ignore next */ { // [!code error]
-  console.log('Ignored') // [!code error]
-} // [!code error]
-```
-
-```ts
-switch (type) {
-  case 1:
-    return 'Included'
-
-  /* v8 ignore next -- @preserve */
-  case 2: // [!code error]
-    return 'Ignored' // [!code error]
-
-  case 3:
-    return 'Included'
-
-  /* v8 ignore next -- @preserve */
-  default: // [!code error]
-    return 'Ignored' // [!code error]
-}
-```
-
-```ts
-/* v8 ignore file -- @preserve */
-export function ignored() { // [!code error]
-  return 'Whole file is ignored'// [!code error]
-}// [!code error]
-```
-
---------------------------------
-
-### Start Vitest and Run Tests Programmatically
-
-Source: https://main.vitest.dev/advanced/guide/tests
-
-Initiates Vitest, validates package installations, and immediately runs tests. It returns a Vitest instance that allows access to test module states, indicating whether each module passed or failed.
-
-```typescript
-import { startVitest } from 'vitest/node'
-
-const vitest = await startVitest(
-  'test',
-  [], // CLI filters
-  {},
-  {},
-  {},
-)
-const testModules = vitest.state.getTestModules()
-for (const testModule of testModules) {
-  console.log(testModule.moduleId, testModule.ok() ? 'passed' : 'failed')
-}
-```
-
---------------------------------
-
-### Vitest Configuration with Vite Reference Types
-
-Source: https://main.vitest.dev/guide
-
-Integrates Vitest configuration into an existing Vite configuration file (`vite.config.ts`). It includes a triple-slash directive to reference Vitest types and uses the 'test' property for Vitest-specific settings.
-
-```typescript
-/// <reference types="vitest/config" />
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  test: {
-    // ...
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Mode: Vue Component Testing
-
-Source: https://main.vitest.dev/guide/browser
-
-Example of testing Vue components using `vitest-browser-vue`. It renders a Vue component, interacts with its elements, and makes assertions on the rendered output, similar to the plain JavaScript example.
-
-```typescript
-import { render } from 'vitest-browser-vue'
-import Component from './Component.vue'
-
-test('properly handles v-model', async () => {
-  const screen = render(Component)
-
-  // Asserts initial state.
-  await expect.element(screen.getByText('Hi, my name is Alice')).toBeInTheDocument()
-
-  // Get the input DOM node by querying the associated label.
-  const usernameInput = screen.getByLabelText(/username/i)
-
-  // Type the name into the input. This already validates that the input
-  // is filled correctly, no need to check the value manually.
-  await usernameInput.fill('Bob')
-
-  await expect.element(screen.getByText('Hi, my name is Bob')).toBeInTheDocument()
-})
-```
-
---------------------------------
-
-### Select Reporter via CLI
-
-Source: https://main.vitest.dev/guide/reporters
-
-This command demonstrates how to specify a reporter (e.g., 'verbose') directly from the command line using npx.
-
-```bash
-npx vitest --reporter=verbose
-```
-
---------------------------------
-
-### Interact with Elements using getByRole - TypeScript Example
-
-Source: https://main.vitest.dev/guide/browser/locators
-
-This example demonstrates how to use the `getByRole` locator in Vitest to find and interact with specific elements in a web page. It shows locating a heading, filling text into input fields identified by their role and accessible name, and clicking a button.
-
-```html
-<h3>Sign up</h3>
-<label>
-  Login
-  <input type="text" />
-</label>
-<label>
-  Password
-  <input type="password" />
-</label>
-<br/>
-<button>Submit</button>
-```
-
-```typescript
-await expect.element(
-  page.getByRole('heading', { name: 'Sign up' })
-).toBeVisible()
-
-await page.getByRole('textbox', { name: 'Login' }).fill('admin')
-await page.getByRole('textbox', { name: 'Password' }).fill('admin')
-
-await page.getByRole('button', { name: /submit/i }).click()
-```
-
---------------------------------
-
-### Vitest Browser Config for React
-
-Source: https://main.vitest.dev/guide/browser
-
-Example Vitest configuration for running tests in a browser with React. It enables browser mode using the Playwright provider and specifies Chromium as the browser instance. This setup requires the '@vitejs/plugin-react' plugin.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import react from '@vitejs/plugin-react'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      instances: [
-        { browser: 'chromium' },
-      ],
-    }
-  }
-})
-```
-
---------------------------------
-
-### Configure Multiple Browsers for Testing
-
-Source: https://main.vitest.dev/guide/browser/multiple-setups
-
-This configuration enables Vitest's browser testing mode and specifies multiple browser instances (Chromium, Firefox, WebKit) to run tests. It leverages the Playwright provider for browser automation.
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import { playwright } from '@vitest/browser-playwright'
-
-export default defineConfig({
-  test: {
-    browser: {
-      enabled: true,
-      provider: playwright(),
-      headless: true,
-      instances: [
-        { browser: 'chromium' },
-        { browser: 'firefox' },
-        { browser: 'webkit' },
-      ],
-    },
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Mode: Svelte Component Testing
-
-Source: https://main.vitest.dev/guide/browser
-
-Example for testing Svelte components with `vitest-browser-svelte`. It renders a Svelte component, simulates a button click, and asserts that the expected text content appears.
-
-```typescript
-import { render } from 'vitest-browser-svelte'
-import { expect, test } from 'vitest'
-
-import Greeter from './greeter.svelte'
-
-test('greeting appears on click', async () => {
-  const screen = render(Greeter, { name: 'World' })
-
-  const button = screen.getByRole('button')
-  await button.click()
-  const greeting = screen.getByText(/hello world/iu)
-
-  await expect.element(greeting).toBeInTheDocument()
-})
-```
-
---------------------------------
-
-### Vitest Benchmarking Output - CLI Example
-
-Source: https://main.vitest.dev/config
-
-Demonstrates how to use the `--outputJson` option to save benchmark results to a file for later comparison. This is useful for tracking performance changes over time or across different branches.
-
-```sh
-# save main branch's result
-git checkout main
-vitest bench --outputJson main.json
-
-# change a branch and compare against main
-git checkout feature
-vitest bench --compare main.json
-```
-
---------------------------------
-
-### Vitest Configuration with vitest/config Reference
-
-Source: https://main.vitest.dev/config
-
-This example demonstrates configuring Vitest using `vite.config.js` with an updated reference type for Vitest. This approach is recommended for newer versions of Vitest, ensuring compatibility with future updates.
-
-```javascript
-/// <reference types="vitest/config" />
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  test: {
-    // ... Specify options here.
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Mode: Lit Element Testing
-
-Source: https://main.vitest.dev/guide/browser
-
-An example of testing Lit elements with `vitest-browser-lit`. It renders a Lit component and sets up a test to interact with it, although the specific interaction and assertion are cut off in the provided text.
-
-```typescript
-import { render } from 'vitest-browser-lit'
-import { html } from 'lit'
-import './greeter-button'
-
-test('greeting appears on click', async () => {
-  const screen = render(html`<greeter-button name="World"></greeter-button>`)
-
-
-```
-
---------------------------------
-
-### Configure Snapshot Serializer (Vitest Config)
-
-Source: https://main.vitest.dev/guide/migration
-
-Provides an example of configuring Vitest to use a custom snapshot serializer, such as `jest-serializer-vue`, for Vue snapshots. This is done within the `vitest.config.js` file.
-
-```javascript
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    snapshotSerializers: ['jest-serializer-vue']
-  }
-})
-```
-
---------------------------------
-
-### Start Test Run with Filters - TypeScript
-
-Source: https://main.vitest.dev/advanced/api/vitest
-
-The `start` function initializes reporters and the coverage provider before running tests. It accepts optional string filters for test files, mirroring CLI filtering. This method should not be called if `vitest.init()` is also invoked and is automatically called by `startVitest` under certain conditions.
-
-```typescript
-function start(filters?: string[]): Promise<TestRunResult>
-```
-
---------------------------------
-
-### Preview HTML Report with Vite
-
-Source: https://main.vitest.dev/guide/ui
-
-Generates a static HTML report of Vitest test results and then uses Vite's preview command to serve this report locally. This allows you to preview the generated HTML report before deployment.
-
-```sh
-npx vite preview --outDir ./html
-```
-
---------------------------------
-
-### Vitest Configuration for Project Filtering with Custom Names
-
-Source: https://main.vitest.dev/guide/browser/multiple-setups
-
-This snippet illustrates Vitest configuration for filtering tests using project names. It shows how to assign custom names to browser instances, which can then be targeted using the `--project` CLI flag. It also demonstrates how Vitest merges custom root project names with browser instance names.
-
-```typescript
-export default defineConfig({
-  test: {
-    browser: {
-      instances: [
-        // name: chromium
-        { browser: 'chromium' },
-        // name: custom
-        { browser: 'firefox', name: 'custom' },
-      ]
-    }
-  }
-})
-```
-
-```typescript
-export default defineConfig({
-  test: {
-    name: 'custom',
-    browser: {
-      instances: [
-        // name: custom (chromium)
-        { browser: 'chromium' },
-        // name: manual
-        { browser: 'firefox', name: 'manual' },
-      ]
-    }
-  }
-})
-```
-
---------------------------------
-
-### HTTP Request Mocking Setup with MSW in Vitest
-
-Source: https://main.vitest.dev/guide/mocking/requests
-
-This JavaScript snippet demonstrates how to set up Mock Service Worker (MSW) to mock HTTP GET requests in Vitest. It defines mock posts data and a handler for a specific REST endpoint. The server is started before all tests, closed after all tests, and handlers are reset after each test for isolation. It uses `msw/node` for Node.js environments.
-
-```javascript
-import { afterAll, afterEach, beforeAll } from 'vitest'
-import { setupServer } from 'msw/node'
-import { http, HttpResponse } from 'msw'
-
-const posts = [
-  {
-    userId: 1,
-    id: 1,
-    title: 'first post title',
-    body: 'first post body',
-  },
-  // ...
-]
-
-export const restHandlers = [
-  http.get('https://rest-endpoint.example/path/to/posts', () => {
-    return HttpResponse.json(posts)
-  }),
-]
-
-const server = setupServer(...restHandlers)
-
-// Start server before all tests
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
-
-// Close server after all tests
-afterAll(() => server.close())
-
-// Reset handlers after each test for test isolation
-afterEach(() => server.resetHandlers())
-```
-
---------------------------------
-
-### Configure Vitest Test Environment
-
-Source: https://main.vitest.dev/guide/features
-
-Explains how to configure the test environment for Vitest, allowing you to choose between 'happy-dom', 'jsdom', or 'node'. This setup is crucial for mocking DOM and browser APIs during testing. Installation of the desired environment (e.g., `happy-dom` or `jsdom`) is required.
-
-```bash
-$ npm i -D happy-dom
-```
-
-```bash
-$ npm i -D jsdom
-```
-
---------------------------------
-
-### Basic WebdriverIO Configuration for Vitest
-
-Source: https://main.vitest.dev/guide/browser/webdriverio
-
-This snippet shows the fundamental setup for using WebdriverIO as the browser provider in Vitest. It requires installing `@vitest/browser-webdriverio` and specifying the `webdriverio` export in the `vitest.config.js` file. The configuration enables browser testing with a default Chrome instance.
-
-```typescript
-import { webdriverio } from '@vitest/browser-webdriverio'
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    browser: {
-      provider: webdriverio(),
-      instances: [{ browser: 'chrome' }]
-    },
-  },
-})
-```
-
---------------------------------
-
-### Vitest Browser Mode: Handle Form Inputs
-
-Source: https://main.vitest.dev/guide/browser
-
-Example demonstrating how to test form input interactions in Vitest Browser Mode. It uses `page.getByLabelText` to find an input and `fill` to simulate typing. Asserts the input's effect on the DOM.
-
-```javascript
-import { expect, test } from 'vitest'
-import { page } from 'vitest/browser'
-import { render } from './my-render-function.js'
-
-test('properly handles form inputs', async () => {
-  render() // mount DOM elements
-
-  // Asserts initial state.
-  await expect.element(page.getByText('Hi, my name is Alice')).toBeInTheDocument()
-
-  // Get the input DOM node by querying the associated label.
-  const usernameInput = page.getByLabelText(/username/i)
-
-  // Type the name into the input. This already validates that the input
-  // is filled correctly, no need to check the value manually.
-  await usernameInput.fill('Bob')
-
-  await expect.element(page.getByText('Hi, my name is Bob')).toBeInTheDocument()
-})
-```
-
---------------------------------
-
-### Expanding Default Vitest Options
-
-Source: https://main.vitest.dev/config
-
-This configuration example shows how to retrieve Vitest's default options and expand upon them. It imports `configDefaults` and `defineConfig` from `vitest/config`, allowing for incremental configuration, such as modifying the `exclude` patterns.
-
-```javascript
-import { configDefaults, defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    exclude: [...configDefaults.exclude, 'packages/template/*'],
-  },
-})
-```
-
---------------------------------
-
-### Mocking Timers with Vitest
+### Mocking Timers with Fake Timers in Vitest
 
 Source: https://main.vitest.dev/guide/mocking/timers
 
-This JavaScript example demonstrates how to use Vitest's fake timers to mock `setTimeout` and `setInterval`. It shows how to set up fake timers before tests, run all timers, advance timers by a specific amount, and advance to the next timer. This allows for faster execution of tests that rely on timed functions.
+This example demonstrates how to use Vitest's fake timers to mock `setTimeout` and `setInterval`. It includes setup with `beforeEach` to use fake timers and `afterEach` to restore mocks. The tests show how to run all timers, advance timers by a specific duration, and advance to the next timer to verify delayed function executions.
 
 ```javascript
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1558,71 +406,343 @@ describe('delayed execution', () => {
 
 --------------------------------
 
-### Combine Multiple Reporters via CLI
+### Istanbul Coverage Instrumentation Example
 
-Source: https://main.vitest.dev/guide/reporters
+Source: https://main.vitest.dev/guide/coverage
 
-This command demonstrates how to enable multiple reporters ('json' and 'default') simultaneously from the command line.
-
-```bash
-npx vitest --reporter=json --reporter=default
-```
-
---------------------------------
-
-### Create Vitest Instance Programmatically (JavaScript)
-
-Source: https://main.vitest.dev/advanced/api
-
-Creates a Vitest instance using the `createVitest` function without starting the tests immediately. This is useful when you need to configure Vitest but want to control when the tests begin execution. It does not validate installed packages.
+This JavaScript code snippet illustrates how Istanbul instruments source files to track code coverage. It shows simplified examples of counters for branches and functions, and how global variables are used to store coverage data.
 
 ```javascript
-import { createVitest } from 'vitest/node'
+// Simplified example of branch and function coverage counters
+const coverage = { // [!code ++]
+  branches: { 1: [0, 0] }, // [!code ++]
+  functions: { 1: 0 }, // [!code ++]
+} // [!code ++]
 
-const vitest = await createVitest('test', {
-  watch: false,
-})
+export function getUsername(id) {
+  // Function coverage increased when this is invoked  // [!code ++]
+  coverage.functions['1']++ // [!code ++]
+
+  if (id == null) {
+    // Branch coverage increased when this is invoked  // [!code ++]
+    coverage.branches['1'][0]++ // [!code ++]
+
+    throw new Error('User ID is required')
+  }
+  // Implicit else coverage increased when if-statement condition not met  // [!code ++]
+  coverage.branches['1'][1]++ // [!code ++]
+
+  return database.getUser(id)
+}
+
+globalThis.__VITEST_COVERAGE__ ||= {} // [!code ++]
+globalThis.__VITEST_COVERAGE__[filename] = coverage // [!code ++]
 ```
 
 --------------------------------
 
-### Configure HTML Reporter in Vitest
+### Create a Custom Vitest Environment
 
-Source: https://main.vitest.dev/guide/reporters
+Source: https://main.vitest.dev/guide/environment
 
-Generates an interactive HTML report for visualizing test results via a GUI. This reporter requires the `@vitest/ui` package and can be enabled using the CLI or in the configuration file. Vitest starts a development server to display the report.
-
-```bash
-npx vitest --reporter=html
-```
+This example shows how to create a custom Vitest environment. It defines an exported object conforming to the 'Environment' interface, specifying a name, a Vite environment type, and optional setup and teardown functions for the Node.js VM context.
 
 ```typescript
-export default defineConfig({
-  test: {
-    reporters: ['html']
+import type { Environment } from 'vitest/runtime'
+
+export default <Environment>{
+  name: 'custom',
+  viteEnvironment: 'ssr',
+  // optional - only if you support "vmForks" or "vmThreads" pools
+  async setupVM() {
+    const vm = await import('node:vm')
+    const context = vm.createContext()
+    return {
+      getVmContext() {
+        return context
+      },
+      teardown() {
+        // called after all tests with this env have been run
+      }
+    }
   },
+  setup() {
+    // custom setup
+    return {
+      teardown() {
+        // called after all tests with this env have been run
+      }
+    }
+  }
+}
+```
+
+--------------------------------
+
+### Vitest Global Setup: Named Exports
+
+Source: https://main.vitest.dev/config/globalsetup
+
+Demonstrates how to export named `setup` and `teardown` functions in a Vitest global setup file. The `setup` function runs before tests, and `teardown` runs after. Both receive the test project as an argument.
+
+```js
+export function setup(project) {
+  console.log('setup')
+}
+
+export function teardown() {
+  console.log('teardown')
+}
+```
+
+--------------------------------
+
+### CLI Example for Sequence Options
+
+Source: https://main.vitest.dev/config/sequence
+
+Demonstrates how to provide sequence options directly through the Vitest CLI using dot notation for configuration.
+
+```sh
+npx vitest --sequence.shuffle --sequence.seed=1000
+```
+
+--------------------------------
+
+### Vitest Global Setup: Providing Data to Tests
+
+Source: https://main.vitest.dev/config/globalsetup
+
+Illustrates how to pass serializable data from a global setup file to tests using `project.provide`. Tests can then access this data using `inject` from Vitest. This requires defining the provided types in the Vitest module declaration.
+
+```ts
+import { inject } from 'vitest'
+
+inject('wsPort') === 3000
+```
+
+```ts
+import type { TestProject } from 'vitest/node'
+
+export default function setup(project: TestProject) {
+  project.provide('wsPort', 3000)
+}
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    wsPort: number
+  }
+}
+```
+
+--------------------------------
+
+### startVitest API
+
+Source: https://main.vitest.dev/guide/advanced
+
+Starts Vitest tests programmatically. It accepts a run mode, optional CLI filters, CLI options, Vite configuration overrides, and Vitest specific options. It returns a Vitest instance.
+
+```APIDOC
+## POST /vitest/node/start
+
+### Description
+Starts Vitest tests programmatically. It accepts a run mode, optional CLI filters, CLI options, Vite configuration overrides, and Vitest specific options. It returns a Vitest instance.
+
+### Method
+POST
+
+### Endpoint
+/vitest/node/start
+
+### Parameters
+#### Query Parameters
+- **mode** (VitestRunMode) - Required - The mode in which to run Vitest tests (e.g., 'test', 'benchmark').
+- **cliFilters** (string[]) - Optional - An array of strings to filter test files by path.
+- **options** (CliOptions) - Optional - An object containing CLI options to override test configuration.
+- **viteOverrides** (ViteUserConfig) - Optional - An object containing Vite configuration to override.
+- **vitestOptions** (VitestOptions) - Optional - An object containing Vitest specific options to override.
+
+### Request Body
+```json
+{
+  "mode": "test",
+  "cliFilters": ["./src/components"]
+}
+```
+
+### Response
+#### Success Response (200)
+- **vitestInstance** (Vitest) - The Vitest instance, providing access to test results and methods.
+
+#### Response Example
+```json
+{
+  "vitestInstance": { /* Vitest instance object */ }
+}
+```
+```
+
+--------------------------------
+
+### Write a Simple JavaScript Function and its Test
+
+Source: https://main.vitest.dev/guide
+
+Demonstrates writing a basic JavaScript function `sum` and a corresponding Vitest test file `sum.test.js` to verify its functionality. The test uses `expect` and `test` from Vitest to assert that `sum(1, 2)` returns `3`.
+
+```javascript
+export function sum(a, b) {
+  return a + b
+}
+```
+
+```javascript
+import { expect, test } from 'vitest'
+import { sum } from './sum.js'
+
+test('adds 1 + 2 to equal 3', () => {
+  expect(sum(1, 2)).toBe(3)
 })
 ```
 
 --------------------------------
 
-### Run Vitest with Node.js Profiling Arguments (Bash)
+### Parallel Execution and Randomization
 
-Source: https://main.vitest.dev/guide/profiling-test-performance
+Source: https://main.vitest.dev/guide/cli
 
-Execute Vitest with Node.js arguments to profile the main thread, including Vite usage and global setup files. This is useful for diagnosing issues with Vite plugins and setup scripts.
+Options related to parallel execution of tests and setup files, and setting a seed for randomization.
 
+```APIDOC
+## sequence.concurrent
+
+### Description
+Makes tests run in parallel.
+
+### Method
+CLI Flag / Config Option
+
+### Endpoint
+N/A
+
+### Parameters
+#### CLI Parameters
+- `--sequence.concurrent` (boolean) - Enable this flag to run tests in parallel.
+
+#### Config Parameters
+- `sequence.concurrent` (boolean) - Set to `true` to run tests in parallel. Defaults to `false`.
+
+### Request Example
 ```bash
-$ node --cpu-prof --cpu-prof-dir=main-profile ./node_modules/vitest/vitest.mjs --run
+vite test --sequence.concurrent
+```
+
+### Response
+#### Success Response (0)
+Tests are executed in parallel.
+
+#### Response Example
+N/A
+```
+
+```APIDOC
+## sequence.seed
+
+### Description
+Sets the randomization seed. This option has no effect if `--sequence.shuffle` is falsy. Refer to the [Random Seed](https://en.wikipedia.org/wiki/Random_seed) page for more information.
+
+### Method
+CLI Flag / Config Option
+
+### Endpoint
+N/A
+
+### Parameters
+#### CLI Parameters
+- `--sequence.seed <seed>` (string) - The seed value for randomization.
+
+#### Config Parameters
+- `sequence.seed` (string) - The seed value for randomization.
+
+### Request Example
+```bash
+vite test --sequence.seed 12345
+```
+
+### Response
+#### Success Response (0)
+Randomization is seeded with the provided value.
+
+#### Response Example
+N/A
+```
+
+```APIDOC
+## sequence.setupFiles
+
+### Description
+Changes the order in which setup files are executed. Accepted values are: "list" and "parallel". If set to "list", setup files run in the order they are defined. If set to "parallel", setup files run in parallel.
+
+### Method
+CLI Flag / Config Option
+
+### Endpoint
+N/A
+
+### Parameters
+#### CLI Parameters
+- `--sequence.setupFiles <order>` (string) - The order for executing setup files ('list' or 'parallel').
+
+#### Config Parameters
+- `sequence.setupFiles` (string) - The order for executing setup files ('list' or 'parallel'). Defaults to `'parallel'`.
+
+### Request Example
+```bash
+vite test --sequence.setupFiles list
+```
+
+### Response
+#### Success Response (0)
+Setup files are executed in the specified order.
+
+#### Response Example
+N/A
 ```
 
 --------------------------------
 
-### Implement Reporter with onInit and onTestRunStart (TypeScript)
+### Vitest Object Syntax Fixture Setup (TypeScript)
 
-Source: https://main.vitest.dev/advanced/api/reporters
+Source: https://main.vitest.dev/guide/test-context
 
-This TypeScript example shows how to implement the `Reporter` interface, focusing on the `onInit` and `onTestRunStart` methods. It demonstrates storing the Vitest instance in `onInit` and using it in `onTestRunStart` to log the number of test files and the project root directory. It requires types from 'vitest/node'.
+Demonstrates setting up a Playwright-compatible object syntax fixture in Vitest. This fixture, named 'page', sets up a new browser page before each test and closes it afterward. It also defines a 'baseUrl' fixture.
+
+```typescript
+import { test as baseTest } from 'vitest'
+
+export const test = baseTest.extend({
+  page: async ({}, use) => {
+    // setup the fixture before each test function
+    const page = await browser.newPage()
+
+    // use the fixture value
+    await use(page)
+
+    // cleanup the fixture after each test function
+    await page.close()
+  },
+  baseUrl: 'http://localhost:3000'
+})
+```
+
+--------------------------------
+
+### Implement Reporter with onInit and onTestRunStart in TypeScript
+
+Source: https://main.vitest.dev/api/advanced/reporters
+
+Provides an example of implementing the Reporter interface in TypeScript. It shows how to use the onInit method to store a reference to the Vitest instance and the onTestRunStart method to log the number of test files and the root directory. This example requires types from 'vitest/node'.
 
 ```typescript
 import type { Reporter, TestSpecification, Vitest } from 'vitest/node'
@@ -1648,62 +768,560 @@ export default new MyReporter()
 
 --------------------------------
 
-### startVitest API
+### Customize Reporter Options
 
-Source: https://main.vitest.dev/advanced/api
+Source: https://main.vitest.dev/guide/reporters
 
-Starts Vitest tests programmatically. This function can accept a run mode, filters, CLI options, Vite configuration overrides, and Vitest specific options.
+Shows how to pass specific options to a reporter, using the 'junit' reporter as an example to set a suite name. This allows for more detailed and tailored test reporting.
+
+```typescript
+export default defineConfig({
+  test: {
+    reporters: [
+      'default',
+      ['junit', { suiteName: 'UI tests' }]
+    ],
+  },
+})
+```
+
+--------------------------------
+
+### Configure Node CLI Options per Project in Vitest
+
+Source: https://main.vitest.dev/guide/migration
+
+This example demonstrates how to specify Node.js CLI arguments on a per-project basis in Vitest. It uses the `execArgv` option to pass different environment file flags for production and staging environments.
+
+```typescript
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  test: {
+    projects: [
+      {
+        name: 'Production env',
+        execArgv: ['--env-file=.env.prod']
+      },
+      {
+        name: 'Staging env',
+        execArgv: ['--env-file=.env.staging']
+      },
+    ],
+  },
+})
+```
+
+--------------------------------
+
+### Initializing Vitest for Browser Testing (Bash)
+
+Source: https://main.vitest.dev/guide/cli
+
+Command to initialize Vitest project configuration specifically for browser testing.
+
+```bash
+vitest init browser
+```
+
+--------------------------------
+
+### Render and Interact with Qwik Component in Vitest Browser
+
+Source: https://main.vitest.dev/guide/browser
+
+Shows how to test a Qwik component using `vitest-browser-qwik`. The example renders the component, simulates a click, and asserts the presence of a greeting message.
+
+```tsx
+import { render } from 'vitest-browser-qwik'
+import Greeting from './greeting'
+
+test('greeting appears on click', async () => {
+  // renderSSR and renderHook are also available
+  const screen = render(<Greeting />)
+
+  const button = screen.getByRole('button')
+  await button.click()
+  const greeting = screen.getByText(/hello world/iu)
+
+  await expect.element(greeting).toBeInTheDocument()
+})
+```
+
+--------------------------------
+
+### Vitest: Fixture Setup and Cleanup with `onCleanup` (TypeScript)
+
+Source: https://main.vitest.dev/guide/test-context
+
+Demonstrates how to use the `onCleanup` callback within a Vitest fixture to register teardown logic. This ensures resources like temporary files are cleaned up after a test completes. It requires the 'vitest' package and 'fs' module for file operations.
+
+```typescript
+import { test as baseTest } from 'vitest'
+import fs from 'fs/promises'
+
+export const test = baseTest
+  .extend('tempFile', async ({}, { onCleanup }) => {
+    const filePath = `/tmp/test-${Date.now()}.txt`
+    await fs.writeFile(filePath, 'test data')
+
+    // Register cleanup - runs after test completes
+    onCleanup(async () => {
+      await fs.unlink(filePath)
+    })
+
+    return filePath
+  })
+```
+
+--------------------------------
+
+### Vitest Global Setup: Handling Test Reruns
+
+Source: https://main.vitest.dev/config/globalsetup
+
+Demonstrates how to define a callback function for test reruns using `project.onTestsRerun`. This function will be executed and awaited before tests are rerun, allowing for setup tasks like restarting a database.
+
+```ts
+import type { TestProject } from 'vitest/node'
+
+export default function setup(project: TestProject) {
+  project.onTestsRerun(async () => {
+    await restartDb()
+  })
+}
+```
+
+--------------------------------
+
+### Configure Custom Pool for Projects - Vitest Config
+
+Source: https://main.vitest.dev/guide/advanced/pool
+
+This example shows how to configure different pools for different test projects within a single Vitest setup. It utilizes the `projects` feature to specify a default 'threads' pool for one project and a custom pool for another, allowing for granular control over test execution environments.
+
+```typescript
+import customPool from './my-custom-pool.ts'
+
+export default defineConfig({
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          pool: 'threads',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          pool: customPool({
+            customProperty: true,
+          })
+        }
+      }
+    ],
+  },
+})
+```
+
+--------------------------------
+
+### Vitest Global Setup: Default Export
+
+Source: https://main.vitest.dev/config/globalsetup
+
+Shows how to use a default export for the setup function in Vitest. The default function receives the test project and should return a teardown function. This setup runs before tests, and the returned teardown runs after.
+
+```js
+export default function setup(project) {
+  console.log('setup')
+
+  return function teardown() {
+    console.log('teardown')
+  }
+}
+```
+
+--------------------------------
+
+### Vitest Nested Suite Execution Flow Example
+
+Source: https://main.vitest.dev/guide/lifecycle
+
+Illustrates the hierarchical execution of hooks in Vitest when using nested describe blocks. Shows how parent hooks wrap around child hooks and tests.
+
+```typescript
+describe('outer', () => {
+  aroundAll(async (runSuite) => {
+    console.log('outer aroundAll before')
+    await runSuite()
+    console.log('outer aroundAll after')
+  })
+
+  beforeAll(() => console.log('outer beforeAll'))
+
+  aroundEach(async (runTest) => {
+    console.log('outer aroundEach before')
+    await runTest()
+    console.log('outer aroundEach after')
+  })
+
+  beforeEach(() => console.log('outer beforeEach'))
+
+  test('outer test', () => console.log('outer test'))
+
+  describe('inner', () => {
+    aroundAll(async (runSuite) => {
+      console.log('inner aroundAll before')
+      await runSuite()
+      console.log('inner aroundAll after')
+    })
+
+    beforeAll(() => console.log('inner beforeAll'))
+
+    aroundEach(async (runTest) => {
+      console.log('inner aroundEach before')
+      await runTest()
+      console.log('inner aroundEach after')
+    })
+
+    beforeEach(() => console.log('inner beforeEach'))
+
+    test('inner test', () => console.log('inner test'))
+
+    afterEach(() => console.log('inner afterEach'))
+    afterAll(() => console.log('inner afterAll'))
+  })
+
+  afterEach(() => console.log('outer afterEach'))
+  afterAll(() => console.log('outer afterAll'))
+})
+
+```
+
+--------------------------------
+
+### Global Setup Configuration
+
+Source: https://main.vitest.dev/config/globalsetup
+
+Configure global setup files for Vitest. These files run before test workers are created and can export `setup` and `teardown` functions or a default function returning a teardown function. Data can be passed to tests using `project.provide()`.
 
 ```APIDOC
-## startVitest
+## Global Setup Configuration
 
 ### Description
-Starts Vitest tests using the Node API. It returns a Vitest instance that can be used to interact with the running tests. If watch mode is not enabled, Vitest automatically calls the `close` method. In watch mode with TTY support, console shortcuts are registered. You can filter tests by file path and override configuration options.
+Configure global setup and teardown logic for Vitest. These files execute before test workers are initialized and after all tests have finished, respectively. They can be used to set up the testing environment and clean it up afterwards. Data can be passed from the global scope to individual tests using the `project.provide()` method.
 
 ### Method
-`startVitest(mode: VitestRunMode, cliFilters: string[] = [], options: CliOptions = {}, viteOverrides?: ViteUserConfig, vitestOptions?: VitestOptions): Promise<Vitest>`
+N/A (Configuration Option)
+
+### Endpoint
+N/A (Configuration Option)
 
 ### Parameters
-
 #### Path Parameters
-None
+N/A
 
 #### Query Parameters
-None
+N/A
 
 #### Request Body
-None
+N/A
 
 ### Request Example
-```javascript
-import { startVitest } from 'vitest/node'
+N/A
 
-const vitest = await startVitest('test')
-await vitest.close()
+### Response
+#### Success Response (N/A)
+N/A
+
+#### Response Example
+N/A
+
+## Global Setup File Structure
+
+### Description
+Defines the structure for global setup files in Vitest, supporting named `setup` and `teardown` exports or a default function that returns a teardown function.
+
+### Method
+N/A (File Structure)
+
+### Endpoint
+N/A (File Structure)
+
+### Parameters
+N/A
+
+### Request Example
+```js [exports]
+export function setup(project) {
+  console.log('setup')
+}
+
+export function teardown() {
+  console.log('teardown')
+}
+```
+
+```js [default]
+export default function setup(project) {
+  console.log('setup')
+
+  return function teardown() {
+    console.log('teardown')
+  }
+}
 ```
 
 ### Response
+N/A
+
+## Providing Data to Tests
+
+### Description
+Demonstrates how to pass serializable data from a global setup file to Vitest tests using the `project.provide()` method and how to access it in tests via `inject`.
+
+### Method
+N/A (API Usage)
+
+### Endpoint
+N/A (API Usage)
+
+### Parameters
+N/A
+
+### Request Example
+```ts [globalSetup.ts]
+import type { TestProject } from 'vitest/node'
+
+export default function setup(project: TestProject) {
+  project.provide('wsPort', 3000)
+}
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    wsPort: number
+  }
+}
+```
+
+```ts [example.test.ts]
+import { inject } from 'vitest'
+
+inject('wsPort') === 3000
+```
+
+### Response
+N/A
+
+## Handling Test Reruns
+
+### Description
+Allows defining a custom callback function using `project.onTestsRerun()` that executes before Vitest reruns tests. This is useful for tasks like restarting a database.
+
+### Method
+N/A (API Usage)
+
+### Endpoint
+N/A (API Usage)
+
+### Parameters
+N/A
+
+### Request Example
+```ts [globalSetup.ts]
+import type { TestProject } from 'vitest/node'
+
+export default function setup(project: TestProject) {
+  project.onTestsRerun(async () => {
+    await restartDb()
+  })
+}
+```
+
+### Response
+N/A
+```
+
+--------------------------------
+
+### Vitest Test Execution Flow Example
+
+Source: https://main.vitest.dev/guide/lifecycle
+
+Demonstrates the execution order of Vitest hooks and tests within a single describe block. Includes file-level code, aroundAll, beforeAll, aroundEach, beforeEach, test, afterEach, and afterAll hooks.
+
+```typescript
+// This runs immediately (collection phase)
+console.log('File loaded')
+
+describe('User API', () => {
+  // This runs immediately (collection phase)
+  console.log('Suite defined')
+
+  aroundAll(async (runSuite) => {
+    // Wraps around all tests in this suite
+    console.log('aroundAll before')
+    await runSuite()
+    console.log('aroundAll after')
+  })
+
+  beforeAll(() => {
+    // Runs once before all tests in this suite
+    console.log('beforeAll')
+  })
+
+  aroundEach(async (runTest) => {
+    // Wraps around each test
+    console.log('aroundEach before')
+    await runTest()
+    console.log('aroundEach after')
+  })
+
+  beforeEach(() => {
+    // Runs before each test
+    console.log('beforeEach')
+  })
+
+  test('creates user', () => {
+    // Test executes
+    console.log('test 1')
+  })
+
+  test('updates user', () => {
+    // Test executes
+    console.log('test 2')
+  })
+
+  afterEach(() => {
+    // Runs after each test
+    console.log('afterEach')
+  })
+
+  afterAll(() => {
+    // Runs once after all tests in this suite
+    console.log('afterAll')
+  })
+})
+
+```
+
+--------------------------------
+
+### Start Test Run
+
+Source: https://main.vitest.dev/api/advanced/vitest
+
+Initializes reporters, the coverage provider, and runs tests. Accepts string filters to match test files, similar to the CLI.
+
+```APIDOC
+## start
+
+### Description
+Initialize reporters, the coverage provider, and run tests. This method accepts string filters to match the test files - these are the same filters that [CLI supports](/guide/filtering#cli).
+
+::: warning
+This method should not be called if [`vitest.init()`](#init) is also invoked. Use [`runTestSpecifications`](#runtestspecifications) or [`rerunTestSpecifications`](#reruntestspecifications) instead if you need to run tests after Vitest was initialised.
+:::
+
+This method is called automatically by [`startVitest`](/guide/advanced/tests) if `config.mergeReports` and `config.standalone` are not set.
+
+### Method
+POST
+
+### Endpoint
+/websites/main_vitest_dev/start
+
+### Parameters
+#### Query Parameters
+- **filters** (string[]) - Optional - Filters to match test files.
+
+### Response
 #### Success Response (200)
-- **vitest** (Vitest) - An instance of the Vitest runner.
+- **TestRunResult** (object) - Result of the test run.
 
 #### Response Example
-```javascript
-// Example of accessing test results
-import { startVitest } from 'vitest/node'
-
-const vitest = await startVitest('test')
-console.log(vitest.state.getTestModules()) // [TestModule]
-await vitest.close()
+```json
+{
+  "errors": [],
+  "files": [
+    {
+      "name": "path/to/test.spec.ts",
+      "result": {
+        "state": "passed"
+      }
+    }
+  ]
+}
 ```
 ```
 
 --------------------------------
 
-### Configure Vitest Coverage Provider (TypeScript)
+### Inspect Rendered Output with Vitest Element Queries
+
+Source: https://main.vitest.dev/guide/browser/component-testing
+
+Provides examples of using Vitest's element query methods (`getByRole`, `getByTestId`) and `console.log` to inspect and debug why elements might not be found during component testing.
+
+```tsx
+// Debug why elements can't be found
+const button = page.getByRole('button', { name: /submit/i })
+console.log('Button count:', button.length) // Should be 1
+
+// Try alternative queries if the first one fails
+if (button.length === 0) {
+  console.log('All buttons:', page.getByRole('button').length)
+  console.log('By test ID:', page.getByTestId('submit-btn').length)
+}
+```
+
+--------------------------------
+
+### Browser Execution
+
+Source: https://main.vitest.dev/guide/cli
+
+Configure Vitest to run tests directly in a browser environment, providing a more realistic testing setup for web applications.
+
+```APIDOC
+## Browser Execution
+
+### Description
+Run your Vitest tests directly in a browser environment. This provides a more accurate representation of how your application behaves in a real browser.
+
+### Method
+CLI Flag / Config Option
+
+### Parameters
+#### CLI Parameters
+- **--browser.enabled** (boolean) - Enable browser execution. Defaults to `false`.
+
+#### Config Parameters
+- **browser.enabled** (boolean) - Enables or disables browser execution. Defaults to `false`.
+
+### Request Example
+```bash
+vitest --browser.enabled
+```
+
+### Response
+#### Success Response
+Tests are executed within a browser environment.
+
+#### Response Example
+(No specific response body, test execution context changes)
+```
+
+--------------------------------
+
+### Configure Coverage Provider in Vitest
 
 Source: https://main.vitest.dev/guide/coverage
 
-This snippet shows how to configure the coverage provider in `vitest.config.ts`. You can choose between 'v8' (default) or 'istanbul'.
+This snippet shows how to configure the code coverage provider in Vitest's configuration file. You can choose between 'v8' (default) or 'istanbul'. Vitest will prompt to install the necessary support package automatically or you can install them manually.
 
 ```typescript
 import { defineConfig } from 'vitest/config'
@@ -1719,53 +1337,396 @@ export default defineConfig({
 
 --------------------------------
 
-### Installing Playwright Browsers for CI
+### Render Marko Component and Assert Text with @marko/testing-library
 
-Source: https://main.vitest.dev/guide/browser/visual-regression-testing
+Source: https://main.vitest.dev/guide/browser
 
-A YAML snippet for GitHub Actions workflows that installs Playwright browsers and their dependencies. This command ensures that the necessary browser environments are available in the CI runner before executing Playwright-based visual regression tests.
+This example demonstrates testing a Marko component using `@marko/testing-library`. It renders the `Greeting` component with a name prop and asserts that the rendered output contains the expected text.
 
-```yaml
-# ...the rest of the workflow
-- name: Install Playwright Browsers
-  run: npx --no playwright install --with-deps --only-shell
+```ts
+// based on @testing-library/marko API
+// https://testing-library.com/docs/marko-testing-library/api
+
+import { render, screen } from '@marko/testing-library'
+import Greeting from './greeting.marko'
+
+test('renders a message', async () => {
+  const { baseElement } = await render(Greeting, { name: 'Marko' })
+  const screen = page.elementLocator(baseElement)
+  await expect.element(screen.getByText(/Marko/)).toBeInTheDocument()
+  expect(container.firstChild).toMatchInlineSnapshot(`
+    <h1>Hello, Marko!</h1>
+  `)
+})
 ```
 
 --------------------------------
 
-### Implement Reporter with onTestRunStart (TypeScript)
+### Comprehensive Test Tag Configuration Example
 
-Source: https://main.vitest.dev/advanced/api/reporters
+Source: https://main.vitest.dev/config/tags
 
-A TypeScript example implementing the `Reporter` interface, specifically the `onTestRunStart` method. This snippet logs the number of test files that are scheduled to run. It requires the `Reporter` and `TestSpecification` types from 'vitest/node'.
+This comprehensive example demonstrates defining multiple test tags with various properties including name, description, timeout, retry logic, and skip conditions. It showcases how tags can be configured for different testing scenarios.
 
 ```typescript
-import type { Reporter, TestSpecification } from 'vitest/node'
+import { defineConfig } from 'vitest/config'
 
-class MyReporter implements Reporter {
-  onTestRunStart(specifications: TestSpecification[]) {
-    console.log(specifications.length, 'test files will run')
-  }
-}
-
-export default new MyReporter()
+export default defineConfig({
+  test: {
+    tags: [
+      {
+        name: 'unit',
+        description: 'Unit tests.',
+      },
+      {
+        name: 'e2e',
+        description: 'End-to-end tests.',
+        timeout: 60_000,
+      },
+      {
+        name: 'flaky',
+        description: 'Flaky tests that need retries.',
+        retry: process.env.CI ? 3 : 0,
+        priority: 1,
+      },
+      {
+        name: 'slow',
+        description: 'Slow tests.',
+        timeout: 120_000,
+      },
+      {
+        name: 'skip-ci',
+        description: 'Tests to skip in CI.',
+        skip: !!process.env.CI,
+      },
+    ],
+  },
+})
 ```
 
 --------------------------------
 
-### Configure Multiple Reporters with Specific Output Files
+### Start Vitest Programmatically (JavaScript)
+
+Source: https://main.vitest.dev/guide/advanced
+
+Starts Vitest tests programmatically using the `startVitest` function. It accepts run mode, optional CLI filters, options, Vite overrides, and Vitest options. It returns a Vitest instance. If watch mode is disabled, `close` is called automatically. Watch mode enables console shortcuts if the terminal supports TTY.
+
+```javascript
+import { startVitest } from 'vitest/node'
+
+const vitest = await startVitest('test')
+
+await vitest.close()
+```
+
+--------------------------------
+
+### Start Vitest Programmatically (TypeScript)
+
+Source: https://main.vitest.dev/guide/advanced
+
+Starts Vitest tests programmatically using the `startVitest` function. It accepts run mode, optional CLI filters, options, Vite overrides, and Vitest options. It returns a Vitest instance. If watch mode is disabled, `close` is called automatically. Watch mode enables console shortcuts if the terminal supports TTY.
+
+```typescript
+import type { TestModule } from 'vitest/node'
+
+const vitest = await startVitest('test')
+
+console.log(vitest.state.getTestModules()) // [TestModule]
+```
+
+--------------------------------
+
+### Custom Reporter Configuration
 
 Source: https://main.vitest.dev/guide/reporters
 
-This advanced configuration uses multiple reporters ('junit', 'json', 'verbose') and maps each to a specific output file using an object.
+Uses third-party or local custom reporters. Install from NPM and specify the package name via CLI or config. Local reporters can be specified using their file path.
+
+```bash
+npx vitest --reporter=some-published-vitest-reporter
+```
 
 ```typescript
 export default defineConfig({
   test: {
-    reporters: ['junit', 'json', 'verbose'],
-    outputFile: {
-      junit: './junit-report.xml',
-      json: './json-report.json',
+    reporters: ['some-published-vitest-reporter']
+  },
+})
+```
+
+```bash
+npx vitest --reporter=./path/to/reporter.ts
+```
+
+--------------------------------
+
+### Open Vitest UI Automatically
+
+Source: https://main.vitest.dev/guide/cli
+
+Automatically opens the Vitest UI in the browser after tests start. Defaults to not opening in CI environments. Use '--open' on the CLI.
+
+```bash
+vitest --open
+```
+
+--------------------------------
+
+### Testing Product List Filtering and Display with Vitest (React)
+
+Source: https://main.vitest.dev/guide/browser/component-testing
+
+Illustrates an integration testing strategy for a ProductList component. This example shows how to test the component's ability to filter products based on category and display the results accurately, simulating user interactions like selecting from a dropdown.
+
+```tsx
+test('ProductList filters and displays products correctly', async () => {
+  const mockProducts = [
+    { id: 1, name: 'Laptop', category: 'Electronics', price: 999 },
+    { id: 2, name: 'Book', category: 'Education', price: 29 }
+  ]
+
+  const { getByLabelText, getByText } = render(
+    <ProductList products={mockProducts} />
+  )
+
+  // Initially shows all products
+  await expect.element(getByText('Laptop')).toBeInTheDocument()
+  await expect.element(getByText('Book')).toBeInTheDocument()
+
+  // Filter by category
+  await userEvent.selectOptions(
+    getByLabelText(/category/i),
+    'Electronics'
+  )
+
+  // Only electronics should remain
+  await expect.element(getByText('Laptop')).toBeInTheDocument()
+  await expect.element(queryByText('Book')).not.toBeInTheDocument()
+})
+```
+
+--------------------------------
+
+### Implement a Custom Coverage Reporter (JavaScript)
+
+Source: https://main.vitest.dev/guide/coverage
+
+Example of a custom coverage reporter written in JavaScript (CommonJS). This reporter extends `istanbul-lib-report`'s `ReportBase` and implements `onStart` and `onEnd` methods to write custom content to a file.
+
+```javascript
+const { ReportBase } = require('istanbul-lib-report')
+
+module.exports = class CustomReporter extends ReportBase {
+  constructor(opts) {
+    super()
+
+    // Options passed from configuration are available here
+    this.file = opts.file
+  }
+
+  onStart(root, context) {
+    this.contentWriter = context.writer.writeFile(this.file)
+    this.contentWriter.println('Start of custom coverage report')
+  }
+
+  onEnd() {
+    this.contentWriter.println('End of custom coverage report')
+    this.contentWriter.close()
+  }
+}
+```
+
+--------------------------------
+
+### Project and Test Execution Options
+
+Source: https://main.vitest.dev/guide/cli
+
+Options for managing projects in a workspace and controlling test execution behavior.
+
+```APIDOC
+## Project and Test Execution Options
+
+### project
+
+* **CLI:** `--project <name>`
+
+The name of the project to run if you are using Vitest workspace feature. This can be repeated for multiple projects: `--project=1 --project=2`. You can also filter projects using wildcards like `--project=packages*`, and exclude projects with `--project=!pattern`.
+
+### slowTestThreshold
+
+* **CLI:** `--slowTestThreshold <threshold>`
+* **Config:** [slowTestThreshold](/config/slowtestthreshold)
+
+Threshold in milliseconds for a test or suite to be considered slow (default: `300`)
+
+### teardownTimeout
+
+* **CLI:** `--teardownTimeout <timeout>`
+* **Config:** [teardownTimeout](/config/teardowntimeout)
+
+Default timeout of a teardown function in milliseconds (default: `10000`)
+
+### maxConcurrency
+
+* **CLI:** `--maxConcurrency <number>`
+* **Config:** [maxConcurrency](/config/maxconcurrency)
+
+Maximum number of concurrent tests in a suite (default: `5`)
+
+### expect.requireAssertions
+
+* **CLI:** `--expect.requireAssertions`
+* **Config:** [expect.requireAssertions](/config/expect#expect-requireassertions)
+
+Require that all tests have at least one assertion
+```
+
+--------------------------------
+
+### Configure Vue Snapshot Serializer in Vitest
+
+Source: https://main.vitest.dev/guide/migration
+
+To handle Vue snapshots correctly in Vitest, similar to Jest with the vue-cli preset, you need to install `jest-serializer-vue` and configure it in `snapshotSerializers`. This snippet shows the `vitest.config.js` setup.
+
+```javascript
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  test: {
+    snapshotSerializers: ['jest-serializer-vue']
+  }
+})
+```
+
+--------------------------------
+
+### createVitest API
+
+Source: https://main.vitest.dev/guide/advanced
+
+Creates a Vitest instance without starting the tests. This is useful for scenarios where you need a Vitest instance but want to control the test execution flow manually. It returns the same Vitest instance as `startVitest`.
+
+```APIDOC
+## POST /vitest/node/create
+
+### Description
+Creates a Vitest instance without starting the tests. This is useful for scenarios where you need a Vitest instance but want to control the test execution flow manually. It returns the same Vitest instance as `startVitest`.
+
+### Method
+POST
+
+### Endpoint
+/vitest/node/create
+
+### Parameters
+#### Query Parameters
+- **mode** (VitestRunMode) - Required - The mode in which to create the Vitest instance (e.g., 'test', 'benchmark').
+- **options** (CliOptions) - Required - An object containing CLI options to configure the Vitest instance.
+- **viteOverrides** (ViteUserConfig) - Optional - An object containing Vite configuration to override.
+- **vitestOptions** (VitestOptions) - Optional - An object containing Vitest specific options to override.
+
+### Request Body
+```json
+{
+  "mode": "test",
+  "options": {
+    "watch": false
+  }
+}
+```
+
+### Response
+#### Success Response (200)
+- **vitestInstance** (Vitest) - The created Vitest instance.
+
+#### Response Example
+```json
+{
+  "vitestInstance": { /* Vitest instance object */ }
+}
+```
+```
+
+--------------------------------
+
+### Browser Headless Mode
+
+Source: https://main.vitest.dev/guide/cli
+
+Configure the browser to run in headless mode, which is useful for CI environments.
+
+```APIDOC
+## Browser Headless Mode
+
+### Description
+Run the browser in headless mode, meaning without a graphical user interface. This is automatically enabled by default when Vitest detects it's running in a CI environment.
+
+### Method
+CLI Flag / Config Option
+
+### Parameters
+#### CLI Parameters
+- **--browser.headless** (boolean) - Enable headless mode for the browser.
+
+#### Config Parameters
+- **browser.headless** (boolean) - Controls headless mode. Defaults to `process.env.CI`.
+
+### Request Example
+```bash
+vitest --browser.headless
+```
+
+### Response
+#### Success Response
+Browser tests will run without displaying a GUI.
+
+#### Response Example
+(No specific response body, affects browser execution)
+```
+
+--------------------------------
+
+### Setup User Event Instance in Vitest
+
+Source: https://main.vitest.dev/api/browser/interactivity
+
+Illustrates the creation of a new user event instance using `userEvent.setup()` in Vitest. This is particularly useful for maintaining keyboard state across multiple interactions, unlike the default global instance.
+
+```typescript
+function setup(): UserEvent
+
+// Example usage:
+// const customUserEvent = userEvent.setup()
+// await customUserEvent.keyboard('{Shift}')
+```
+
+--------------------------------
+
+### Configure Multiple Browser Instances (TypeScript)
+
+Source: https://main.vitest.dev/config/browser/instances
+
+Demonstrates how to configure multiple browser instances for testing. Each instance can have its own setup files and inherits options like `testerHtmlPath` from the root configuration. This setup enables running tests across different browser environments.
+
+```typescript
+export default defineConfig({
+  test: {
+    setupFile: ['./root-setup-file.js'],
+    browser: {
+      enabled: true,
+      testerHtmlPath: './custom-path.html',
+      instances: [
+        {
+          // will have both setup files: "root" and "browser"
+          setupFile: ['./browser-setup-file.js'],
+          // implicitly has "testerHtmlPath" from the root config // [!code warning]
+          // testerHtmlPath: './custom-path.html', // [!code warning]
+        },
+      ],
     },
   },
 })
@@ -1773,12 +1734,90 @@ export default defineConfig({
 
 --------------------------------
 
-### Output Reporter to File via CLI
+### Configuring Vitest for Lint Staging (JavaScript)
 
-Source: https://main.vitest.dev/guide/reporters
+Source: https://main.vitest.dev/guide/cli
 
-This command shows how to specify both the reporter ('json') and an output file path for the test results using the CLI.
+An example configuration for `.lintstagedrc.js` to run `vitest related --run` on staged JavaScript and TypeScript files. The `--run` option ensures the command exits normally.
 
-```bash
-npx vitest --reporter=json --outputFile=./test-output.json
+```javascript
+export default {
+  '*.{js,ts}': 'vitest related --run',
+}
+```
+
+--------------------------------
+
+### Mock External Dependencies with Vitest
+
+Source: https://main.vitest.dev/guide/browser/component-testing
+
+This example demonstrates how to mock external dependencies in Vitest to isolate component logic and improve test reliability and speed. It suggests using Mock Service Worker (MSW) for API request mocking and Vitest's `vi.mock()` for module mocking, showing how to replace components with mock implementations.
+
+```javascript
+// For API requests, we recommend using MSW (Mock Service Worker)
+// See: https://vitest.dev/guide/mocking/requests
+// This provides more realistic request/response mocking
+
+// For module mocking, use the import() syntax
+vi.mock(import('../components/UserCard'), () => ({
+  default: vi.fn(() => <div>Mocked UserCard</div>)
+}))
+```
+
+--------------------------------
+
+### Setting up Zsh Autocompletions for Vitest (Shell)
+
+Source: https://main.vitest.dev/guide/cli
+
+Instructions to add Vitest shell autocompletions to the Zsh configuration file for permanent use.
+
+```shell
+# Add to ~/.zshrc for permanent autocompletions (same can be done for other shells)
+source <(vitest complete zsh)
+```
+
+--------------------------------
+
+### Create Vitest Instance (JavaScript)
+
+Source: https://main.vitest.dev/guide/advanced
+
+Creates a Vitest instance without starting tests or validating packages using the `createVitest` function. It requires a run mode and options, and optionally accepts Vite overrides and Vitest options. It returns the same Vitest instance as `startVitest`.
+
+```javascript
+import { createVitest } from 'vitest/node'
+
+const vitest = await createVitest('test', {
+  watch: false,
+})
+```
+
+--------------------------------
+
+### Configure Vitest Standalone Mode in package.json
+
+Source: https://main.vitest.dev/guide/migration
+
+Shows how to configure Vitest to run in standalone mode using a `package.json` script. This setup allows for easy execution of Vitest in standalone mode and the ability to specify files to run directly from the command line.
+
+```json
+{
+  "scripts": {
+    "test:dev": "vitest --standalone"
+  }
+}
+```
+
+--------------------------------
+
+### Install OpenTelemetry Browser Packages
+
+Source: https://main.vitest.dev/guide/open-telemetry
+
+Installs the necessary OpenTelemetry packages for browser instrumentation, including the web tracer provider and an OTLP trace exporter. These are required for capturing traces from tests running in the browser.
+
+```shell
+npm i @opentelemetry/sdk-trace-web @opentelemetry/exporter-trace-otlp-proto
 ```

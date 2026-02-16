@@ -1767,23 +1767,3 @@ This example demonstrates how to create a horizontal scroll snapping effect usin
   </div>
 </div>
 ```
-
---------------------------------
-
-### Customize Order Theme in Tailwind CSS Configuration
-
-Source: https://v3.tailwindcss.com/docs/order
-
-Demonstrates how to extend the default order utilities by adding custom order values in the tailwind.config.js file. This example adds a custom order-13 utility class for use in templates.
-
-```javascript
-module.exports = {
-  theme: {
-    extend: {
-      order: {
-        '13': '13'
-      }
-    }
-  }
-}
-```
