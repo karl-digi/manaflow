@@ -23,6 +23,15 @@ interface FileExport {
   mtimeMs?: number;
 }
 
+/**
+ * Represents an extension entry that may optionally include a version.
+ * Format: `publisher.name` or `publisher.name@version`
+ */
+export interface ExtensionSpec {
+  id: string;
+  version?: string;
+}
+
 interface EditorExport {
   id: EditorId;
   userDir: string;
@@ -99,6 +108,59 @@ const IDE_PATHS: Record<IdeProvider, IdePaths> = {
 
 const CMUX_INTERNAL_DIR = "/root/.cmux";
 const EXTENSION_LIST_PATH = posix.join(CMUX_INTERNAL_DIR, "user-extensions.txt");
+
+/**
+ * Parse an extension entry into its ID and optional version.
+ * Supports formats: `publisher.name` or `publisher.name@version`
+ */
+export function parseExtensionSpec(entry: string): ExtensionSpec {
+  const atIndex = entry.lastIndexOf("@");
+  // Only treat as versioned if @ is not at start and there's something after it
+  if (atIndex > 0 && atIndex < entry.length - 1) {
+    return {
+      id: entry.slice(0, atIndex),
+      version: entry.slice(atIndex + 1),
+    };
+  }
+  return { id: entry };
+}
+
+/**
+ * Format an ExtensionSpec back to string format.
+ */
+export function formatExtensionSpec(spec: ExtensionSpec): string {
+  return spec.version ? `${spec.id}@${spec.version}` : spec.id;
+}
+
+/**
+ * Deduplicate extension entries with version-aware precedence.
+ * Rules:
+ * - Key by extension ID (case-insensitive)
+ * - If both versioned and unversioned exist for same ID, keep versioned
+ * - If multiple versioned entries exist for same ID, keep first encountered
+ */
+export function deduplicateExtensions(entries: string[]): string[] {
+  const seen = new Map<string, ExtensionSpec>();
+
+  for (const entry of entries) {
+    const spec = parseExtensionSpec(entry);
+    const key = spec.id.toLowerCase();
+    const existing = seen.get(key);
+
+    if (!existing) {
+      // First occurrence - keep it
+      seen.set(key, spec);
+    } else if (spec.version && !existing.version) {
+      // New entry has version, existing doesn't - prefer versioned
+      seen.set(key, spec);
+    }
+    // Otherwise: keep existing (first versioned wins, or first unversioned if no version)
+  }
+
+  return Array.from(seen.values())
+    .map(formatExtensionSpec)
+    .sort((a, b) => parseExtensionSpec(a).id.toLowerCase().localeCompare(parseExtensionSpec(b).id.toLowerCase()));
+}
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedResult:
@@ -223,10 +285,10 @@ async function runCliListExtensions(
       const lines = stdout
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split("@")[0]);
+        .filter(Boolean);
+      // Preserve version info - use deduplication to handle duplicates properly
       if (lines.length > 0) {
-        return Array.from(new Set(lines)).sort();
+        return deduplicateExtensions(lines);
       }
     } catch {
       // Ignore CLI errors and try the next candidate
@@ -350,6 +412,9 @@ function encode(content: string): string {
 
 function buildExtensionInstallCommand(listPath: string): string {
   // Build a script that auto-detects IDE provider from /etc/cmux/ide.env
+  // Version-aware installation:
+  // - For id@version: install exact version with --force
+  // - For id without version: skip if already installed, install if missing
   const scriptBody = [
     "set -euo pipefail",
     `EXT_LIST="${listPath}"`,
@@ -404,32 +469,72 @@ function buildExtensionInstallCommand(listPath: string): string {
     'echo "Installing extensions with $CLI_PATH (provider: $IDE_PROVIDER)" >>"$LOG_FILE"',
     'chmod +x "$CLI_PATH" || true',
     'mkdir -p "$EXT_DIR" "$USER_DIR"',
+    "",
+    "# Get list of currently installed extensions (id@version format)",
+    'INSTALLED_CACHE="$("$CLI_PATH" --list-extensions --show-versions --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" 2>/dev/null || true)"',
+    "",
+    "# Function to check if extension is installed (case-insensitive ID match)",
+    "is_installed() {",
+    '  local ext_id="$1"',
+    '  echo "$INSTALLED_CACHE" | grep -qi "^${ext_id}@" || echo "$INSTALLED_CACHE" | grep -qi "^${ext_id}$"',
+    "}",
+    "",
+    "# Function to get installed version of an extension",
+    "get_installed_version() {",
+    '  local ext_id="$1"',
+    '  echo "$INSTALLED_CACHE" | grep -i "^${ext_id}@" | head -1 | sed "s/^[^@]*@//"',
+    "}",
+    "",
     'ext=""',
-    'installed_any=0',
-    'pids=()',
+    'processed_any=0',
     'had_failure=0',
+    "",
+    "# Process extensions sequentially to avoid race conditions on extension metadata",
     'while IFS= read -r ext; do',
     '  [ -z "$ext" ] && continue',
-    '  installed_any=1',
-    '  echo "-> Installing $ext" >>"$LOG_FILE"',
-    '  (',
-    '    if "$CLI_PATH" --install-extension "$ext" --force --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" >>"$LOG_FILE" 2>&1; then',
-    '      echo "✓ Installed $ext" >>"$LOG_FILE"',
+    '  processed_any=1',
+    "",
+    "  # Parse extension entry: id or id@version",
+    '  if [[ "$ext" == *@* ]]; then',
+    '    ext_id="${ext%@*}"',
+    '    ext_version="${ext##*@}"',
+    '    has_version=1',
+    "  else",
+    '    ext_id="$ext"',
+    '    ext_version=""',
+    '    has_version=0',
+    "  fi",
+    "",
+    '  if [ "$has_version" -eq 1 ]; then',
+    "    # Versioned entry: install exact version with --force (PIN behavior)",
+    '    current_ver=$(get_installed_version "$ext_id" || true)',
+    '    if [ "$current_ver" = "$ext_version" ]; then',
+    '      echo "SKIP $ext_id@$ext_version (already pinned)" >>"$LOG_FILE"',
     "    else",
-    '      echo "Failed to install $ext" >>"$LOG_FILE"',
-    "      exit 1",
+    '      echo "PIN $ext_id@$ext_version (was: ${current_ver:-not installed})" >>"$LOG_FILE"',
+    '      if ! "$CLI_PATH" --install-extension "$ext" --force --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" >>"$LOG_FILE" 2>&1; then',
+    '        echo "FAILED to pin $ext" >>"$LOG_FILE"',
+    '        had_failure=1',
+    "      fi",
     "    fi",
-    '  ) &',
-    '  pids+=("$!")',
+    "  else",
+    "    # Unversioned entry: skip if any version is installed, install if missing",
+    '    if is_installed "$ext_id"; then',
+    '      current_ver=$(get_installed_version "$ext_id" || true)',
+    '      echo "SKIP $ext_id (installed: ${current_ver:-unknown})" >>"$LOG_FILE"',
+    "    else",
+    '      echo "INSTALL $ext_id (missing)" >>"$LOG_FILE"',
+    '      if ! "$CLI_PATH" --install-extension "$ext_id" --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" >>"$LOG_FILE" 2>&1; then',
+    '        echo "FAILED to install $ext_id" >>"$LOG_FILE"',
+    '        had_failure=1',
+    "      fi",
+    "    fi",
+    "  fi",
     'done < "$EXT_LIST"',
-    'if [ "$installed_any" -eq 0 ]; then',
+    "",
+    'if [ "$processed_any" -eq 0 ]; then',
     '  echo "No valid extension identifiers found" >>"$LOG_FILE"',
     "fi",
-    'for pid in "${pids[@]}"; do',
-    '  if ! wait "$pid"; then',
-    '    had_failure=1',
-    "  fi",
-    "done",
     'if [ "$had_failure" -ne 0 ]; then',
     '  echo "One or more extensions failed to install" >>"$LOG_FILE"',
     "fi",
@@ -540,7 +645,8 @@ function buildUploadFromUserSettings(
       .filter(Boolean);
 
     if (extensionList.length > 0) {
-      const uniqueExtensions = Array.from(new Set(extensionList)).sort();
+      // Use version-aware deduplication: versioned entries take precedence
+      const uniqueExtensions = deduplicateExtensions(extensionList);
       const extensionContent = `${uniqueExtensions.join("\n")}\n`;
       authFiles.push({
         destinationPath: EXTENSION_LIST_PATH,
@@ -692,7 +798,8 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
   }
 
   if (editor.extensions && editor.extensions.length > 0) {
-    const uniqueExtensions = Array.from(new Set(editor.extensions)).sort();
+    // Use version-aware deduplication: versioned entries take precedence
+    const uniqueExtensions = deduplicateExtensions(editor.extensions);
     const extensionContent = `${uniqueExtensions.join("\n")}\n`;
     authFiles.push({
       destinationPath: EXTENSION_LIST_PATH,
