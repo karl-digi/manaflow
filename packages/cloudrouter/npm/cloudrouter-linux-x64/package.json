@@ -1,6 +1,6 @@
 {
   "name": "@karlorz/cloudrouter-linux-x64",
-  "version": "0.9.22.1",
+  "version": "0.9.30",
   "description": "cloudrouter binary for Linux x64",
   "os": ["linux"],
   "cpu": ["x64"],

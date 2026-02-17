@@ -40,6 +40,7 @@ func shellQuote(s string) string {
 }
 
 // runSSHCommand runs a command inside the sandbox via SSH over WebSocket tunnel.
+// It prefers curl-based ProxyCommand and falls back to a local Go bridge.
 // Returns stdout, stderr, and exit code.
 func runSSHCommand(workerURL, token, command string) (string, string, int, error) {
 	// Build WebSocket URL
@@ -243,6 +244,42 @@ func runSSHCommandWithBridge(wsURL, token, command string) (string, string, int,
 
 	stderrStr := filterSSHWarnings(stderr.String())
 	return stdout.String(), stderrStr, exitCode, nil
+}
+
+// buildSSHCmd wraps SSH args with non-interactive password authentication.
+// Uses sshpass when available; otherwise sets up SSH_ASKPASS with a temp
+// script so SSH doesn't open /dev/tty for password prompts on Linux.
+// Returns the command, an optional cleanup function, and any error.
+func buildSSHCmd(sshArgs []string) (*exec.Cmd, func(), error) {
+	if _, lookErr := exec.LookPath("sshpass"); lookErr == nil {
+		// Preferred: use sshpass for non-interactive empty-password auth
+		cmd := exec.Command("sshpass", append([]string{"-p", "", "ssh"}, sshArgs...)...)
+		return cmd, nil, nil
+	}
+
+	// Fallback: use SSH_ASKPASS to provide the empty password.
+	// SSH opens /dev/tty directly for password prompts (bypassing stdin),
+	// so we must force it to use SSH_ASKPASS instead.
+	askpassFile, err := os.CreateTemp("", "cmux-askpass-*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create askpass script: %w", err)
+	}
+	if _, wErr := askpassFile.WriteString("#!/bin/sh\necho ''\n"); wErr != nil {
+		askpassFile.Close()
+		os.Remove(askpassFile.Name())
+		return nil, nil, fmt.Errorf("failed to write askpass script: %w", wErr)
+	}
+	askpassFile.Close()
+	os.Chmod(askpassFile.Name(), 0700)
+	cleanup := func() { os.Remove(askpassFile.Name()) }
+
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("SSH_ASKPASS=%s", askpassFile.Name()),
+		"SSH_ASKPASS_REQUIRE=force",
+		"DISPLAY=dummy",
+	)
+	return cmd, cleanup, nil
 }
 
 // filterSSHWarnings removes common SSH warning lines from stderr.

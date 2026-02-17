@@ -1,6 +1,6 @@
 {
   "name": "@karlorz/cloudrouter-darwin-x64",
-  "version": "0.9.22.1",
+  "version": "0.9.30",
   "description": "cloudrouter binary for macOS x64",
   "os": ["darwin"],
   "cpu": ["x64"],
