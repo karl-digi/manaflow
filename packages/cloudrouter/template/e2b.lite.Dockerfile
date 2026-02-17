@@ -71,10 +71,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && rm -rf /var/lib/apt/lists/*
 
 # Install cmux-code (VSCode fork with OpenVSIX marketplace support)
-# Fetch latest release from manaflow-ai/vscode-1
+# Fetch latest release from karlorz/vscode-1
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then ARCH="x64"; fi && \
-    RELEASE_URL=$(curl -s https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | grep "browser_download_url.*vscode-server-linux-${ARCH}-web.tar.gz" | cut -d '"' -f 4) && \
+    RELEASE_URL=$(curl -s https://api.github.com/repos/karlorz/vscode-1/releases/latest | grep "browser_download_url.*vscode-server-linux-${ARCH}-web.tar.gz" | cut -d '"' -f 4) && \
     wget -q "$RELEASE_URL" -O /tmp/cmux-code.tar.gz && \
     mkdir -p /app/cmux-code && \
     tar -xzf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1 && \

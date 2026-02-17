@@ -1353,7 +1353,7 @@ async def task_install_cmux_code(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/karlorz/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
         arch="$(dpkg --print-architecture)"
         case "${arch}" in
           amd64) ARCH="x64" ;;
@@ -1361,7 +1361,7 @@ async def task_install_cmux_code(ctx: TaskContext) -> None:
           *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
         esac
         mkdir -p /app/cmux-code
-        url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+        url="https://github.com/karlorz/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
         curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}" || \
           curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}"
         tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1

@@ -8,7 +8,7 @@
     {
       "publisher": "openai",
       "name": "chatgpt",
-      "version": "0.5.75"
+      "version": "0.4.74"
     },
     {
       "publisher": "ms-vscode",
@@ -18,12 +18,12 @@
     {
       "publisher": "ms-python",
       "name": "python",
-      "version": "2026.1.2026021101"
+      "version": "2026.0.0"
     },
     {
       "publisher": "ms-python",
       "name": "debugpy",
-      "version": "2025.19.2026021601"
+      "version": "2025.18.0"
     }
   ],
   "packages": {
@@ -33,6 +33,6 @@
     "opencode-ai": "1.2.6",
     "codebuff": "1.0.619",
     "@devcontainers/cli": "0.83.0",
-    "@sourcegraph/amp": "0.0.1771302820-ga4c3d4"
+    "@sourcegraph/amp": "0.0.1771317524-g0b5dfc"
   }
 }

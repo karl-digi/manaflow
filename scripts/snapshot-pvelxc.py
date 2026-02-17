@@ -2514,7 +2514,7 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/karlorz/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
         if [ -z "${CODE_RELEASE}" ] || [ "${CODE_RELEASE}" = "null" ]; then
           echo "ERROR: Failed to get cmux-code release version from GitHub API" >&2
           exit 1
@@ -2527,7 +2527,7 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
           *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
         esac
         mkdir -p /app/cmux-code
-        url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+        url="https://github.com/karlorz/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
         echo "Downloading ${url}..."
         curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}" || \
           curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}"

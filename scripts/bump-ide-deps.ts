@@ -86,23 +86,44 @@ async function getPackageVersion(
   );
 }
 
+const marketplaceVersionPropertySchema = z.object({
+  key: z.string(),
+  value: z.string(),
+});
+
+const marketplaceVersionSchema = z.object({
+  version: z.string().min(1),
+  properties: z.array(marketplaceVersionPropertySchema).optional(),
+});
+
 const marketplaceResponseSchema = z.object({
   results: z.array(
     z.object({
       extensions: z.array(
         z.object({
-          versions: z.array(
-            z.object({
-              version: z.string().min(1),
-            }),
-          ),
+          versions: z.array(marketplaceVersionSchema),
         }),
       ),
     }),
   ),
 });
 
-const marketplaceFlags = 0x1 | 0x2 | 0x80 | 0x100;
+// Flags for VS Code Marketplace API:
+// 0x1 = IncludeVersions, 0x2 = IncludeFiles, 0x80 = IncludeLatestVersionOnly (negated by pageSize)
+// 0x100 = IncludeVersionProperties, 0x200 = ExcludeNonValidated, 0x800 = IncludeAssetUri
+// We need 0x100 for version properties (to check PreRelease flag)
+// Using 2359 = 0x937 which includes version properties
+const marketplaceFlags = 2359;
+
+function isPreReleaseVersion(
+  version: z.infer<typeof marketplaceVersionSchema>,
+): boolean {
+  const props = version.properties ?? [];
+  return props.some(
+    (p) =>
+      p.key === "Microsoft.VisualStudio.Code.PreRelease" && p.value === "true",
+  );
+}
 
 async function fetchLatestExtensionVersion(
   publisher: string,
@@ -117,6 +138,8 @@ async function fetchLatestExtensionVersion(
             value: `${publisher}.${name}`,
           },
         ],
+        // Request enough versions to find a stable one (pre-release versions may be at the top)
+        pageSize: 100,
       },
     ],
     flags: marketplaceFlags,
@@ -141,14 +164,34 @@ async function fetchLatestExtensionVersion(
   }
 
   const data = marketplaceResponseSchema.parse(await res.json());
-  const version =
-    data.results[0]?.extensions[0]?.versions[0]?.version ?? null;
-  if (!version) {
+  const versions = data.results[0]?.extensions[0]?.versions ?? [];
+  if (versions.length === 0) {
     throw new Error(
       `No versions returned for marketplace extension ${publisher}.${name}`,
     );
   }
-  return version;
+
+  // Find the first non-pre-release version (stable)
+  // Versions are returned in order (newest first), so first stable = latest stable
+  const stableVersion = versions.find((v) => !isPreReleaseVersion(v));
+  if (stableVersion) {
+    console.log(
+      `[${publisher}.${name}] Using stable: ${stableVersion.version}`,
+    );
+    return stableVersion.version;
+  }
+
+  // If no stable version found, fall back to latest (which may be pre-release)
+  const latestVersion = versions[0]?.version;
+  if (!latestVersion) {
+    throw new Error(
+      `No versions found for marketplace extension ${publisher}.${name}`,
+    );
+  }
+  console.warn(
+    `[${publisher}.${name}] No stable version found, using pre-release: ${latestVersion}`,
+  );
+  return latestVersion;
 }
 
 async function bumpPackages(
