@@ -11,7 +11,7 @@ import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
 
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
-  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic";
+  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/manaflow-ai-proxy/anthropic";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",

@@ -1,5 +1,5 @@
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
-  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic";
+  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/manaflow-ai-proxy/anthropic";
 
 export const CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY =
   "sk_placeholder_cmux_anthropic_api_key";

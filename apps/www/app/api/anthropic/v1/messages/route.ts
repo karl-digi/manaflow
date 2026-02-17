@@ -8,7 +8,7 @@ import {
 } from "@/lib/analytics/track-anthropic-proxy";
 
 const CLOUDFLARE_ANTHROPIC_API_URL =
-  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
+  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/manaflow-ai-proxy/anthropic/v1/messages";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
