@@ -188,6 +188,10 @@ export function ElectronWebContentsView({
   const lastTransformStateRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Store callback props in refs to prevent effect re-runs when parent re-renders
+  const onNativeViewReadyRef = useRef(onNativeViewReady);
+  const onNativeViewDestroyedRef = useRef(onNativeViewDestroyed);
+
   useEffect(() => {
     latestSrcRef.current = src;
   }, [src]);
@@ -203,6 +207,15 @@ export function ElectronWebContentsView({
   useEffect(() => {
     latestStyleRef.current = { backgroundColor, borderRadius };
   }, [backgroundColor, borderRadius]);
+
+  // Keep callback refs updated without triggering effect re-runs
+  useEffect(() => {
+    onNativeViewReadyRef.current = onNativeViewReady;
+  }, [onNativeViewReady]);
+
+  useEffect(() => {
+    onNativeViewDestroyedRef.current = onNativeViewDestroyed;
+  }, [onNativeViewDestroyed]);
 
   const cancelScheduledSync = useCallback(() => {
     if (rafRef.current !== null) {
@@ -468,11 +481,10 @@ export function ElectronWebContentsView({
       typeof persistKeyRef.current === "string" &&
       persistKeyRef.current.length > 0;
     releaseNativeView(id, persistKeyRef.current, shouldPersist);
-    onNativeViewDestroyed?.();
+    onNativeViewDestroyedRef.current?.();
   }, [
     cancelScheduledSync,
     unregisterActions,
-    onNativeViewDestroyed,
     releaseNativeView,
     stopContinuousSync,
   ]);
@@ -550,7 +562,7 @@ export function ElectronWebContentsView({
           viewIdRef.current = result.id;
           registerActions(result.webContentsId);
           hasStableAttachmentRef.current = true;
-          onNativeViewReady?.(result);
+          onNativeViewReadyRef.current?.(result);
           const targetUrl = latestSrcRef.current;
           if (!result.restored) {
             void bridge
@@ -574,11 +586,13 @@ export function ElectronWebContentsView({
             });
             lastLoadedSrcRef.current = targetUrl;
           }
-          scheduleBoundsSync();
+          // Use ref to get latest syncBounds - avoids stale closure if suspended
+          // changes while bridge.create() is in flight
+          syncBoundsRef.current();
         } catch (err) {
           console.error("Failed to create WebContentsView", err);
           setErrorMessage("Unable to create Electron WebContentsView");
-          onNativeViewDestroyed?.();
+          onNativeViewDestroyedRef.current?.();
         }
       })();
 
@@ -600,15 +614,12 @@ export function ElectronWebContentsView({
       disposed = true;
       releaseView();
     };
-  }, [
-    persistKey,
-    releaseNativeView,
-    releaseView,
-    scheduleBoundsSync,
-    registerActions,
-    onNativeViewDestroyed,
-    onNativeViewReady,
-  ]);
+    // Note: Callback props (onNativeViewReady, onNativeViewDestroyed) are stored in refs
+    // to prevent effect re-runs when parent re-renders. Internal callbacks are stable
+    // due to their own dependency arrays. syncBoundsRef.current is used instead of
+    // scheduleBoundsSync to avoid stale closure when suspended changes during create.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistKey]);
 
   useEffect(() => {
     if (!isElectron) return;
