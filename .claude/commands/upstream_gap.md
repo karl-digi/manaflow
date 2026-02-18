@@ -1,6 +1,6 @@
 ---
 description: Analyze upstream gap and PR #1 conflicts, suggest actions to reduce divergence
-argument-hint: [optional: cherry-pick|conflicts|full]
+argument-hint: "optional: cherry-pick|conflicts|full"
 allowed-tools: Bash, Read, Grep, WebFetch
 ---
 
