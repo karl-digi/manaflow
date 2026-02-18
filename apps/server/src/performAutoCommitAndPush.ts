@@ -39,7 +39,7 @@ export default async function performAutoCommitAndPush(
     // Use the newBranch from the task run, or fallback to old logic if not set
     const branchName =
       taskRun?.newBranch ||
-      `manaflow-${agent.name}-${taskRunId.slice(-8)}`
+      `cmux-${agent.name}-${taskRunId.slice(-8)}`
         .toLowerCase()
         .replace(/[^a-z0-9-]/g, "-")
         .replace(/--+/g, "-");

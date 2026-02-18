@@ -1392,11 +1392,10 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
 
   // Parse path to get id and action
   // Path formats:
-  // /api/v1/manaflow/instances/{id}/{action}
-  // /api/v1/manaflow/instances/{id}/http/{serviceName}
-  // Legacy: /api/v1/cmux/instances/{id}/{action}
+  // /api/v1/cmux/instances/{id}/{action}
+  // /api/v1/cmux/instances/{id}/http/{serviceName}
   const pathParts = path.split("/").filter(Boolean);
-  // pathParts: ["api", "v1", "manaflow"|"cmux", "instances", "{id}", "{action}", ...]
+  // pathParts: ["api", "v1", "cmux", "instances", "{id}", "{action}", ...]
 
   const id = pathParts[4]; // instances/{id}
   const action = pathParts[5]; // {action}

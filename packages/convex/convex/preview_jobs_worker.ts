@@ -1380,7 +1380,7 @@ export async function runPreviewJob(
     instance = await startMorphInstance(morphClient, {
       snapshotId,
       metadata: {
-        app: "manaflow-preview",
+        app: "cmux-preview",
         previewRunId: previewRunId,
         repo: run.repoFullName,
         prNumber: String(run.prNumber),

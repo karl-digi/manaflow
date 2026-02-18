@@ -39,8 +39,8 @@ describe("DockerVSCodeInstance", () => {
 
     // Verify getName() returns the prefixed name
     const name = instance.getName();
-    expect(name).toMatch(/^docker-manaflow-/);
-    expect(name).toBe(`docker-manaflow-${taskRunId}`);
+    expect(name).toMatch(/^docker-cmux-/);
+    expect(name).toBe(`docker-cmux-${taskRunId}`);
   });
 
   it("should always return docker- prefixed names for different taskRunIds", () => {
@@ -58,7 +58,7 @@ describe("DockerVSCodeInstance", () => {
         taskId,
         teamSlugOrId: "default",
       });
-      expect(instance.getName()).toBe(`docker-manaflow-${taskRunId}`);
+      expect(instance.getName()).toBe(`docker-cmux-${taskRunId}`);
     }
   });
 
@@ -77,13 +77,13 @@ describe("DockerVSCodeInstance", () => {
 
     // Should have docker- prefix
     expect(name.startsWith("docker-")).toBe(true);
-    // Should contain the manaflow- prefix after docker-
-    expect(name).toBe(`docker-manaflow-${taskRunId}`);
+    // Should contain the cmux- prefix after docker-
+    expect(name).toBe(`docker-cmux-${taskRunId}`);
 
-    // The actual container name (without docker- prefix) should be manaflow-jn75ppcyksmh
+    // The actual container name (without docker- prefix) should be cmux-jn75ppcyksmh
     // This is what Docker sees as the container name
     const actualDockerContainerName = name.replace("docker-", "");
-    expect(actualDockerContainerName).toBe(`manaflow-${taskRunId}`);
+    expect(actualDockerContainerName).toBe(`cmux-${taskRunId}`);
   });
 
   describe("docker event syncing", () => {
@@ -121,14 +121,14 @@ describe("DockerVSCodeInstance", () => {
 
         // Pre-clean any existing container with the same name to avoid name conflicts
         await new Promise<void>((resolve) => {
-          const cleanup = spawn("docker", ["rm", "-f", "manaflow-test"]);
+          const cleanup = spawn("docker", ["rm", "-f", "cmux-test"]);
           // ignore errors; container may not exist
           cleanup.on("exit", () => resolve());
           cleanup.on("error", () => resolve());
         });
 
-        containerMappings.set("manaflow-test", {
-          containerName: "manaflow-test",
+        containerMappings.set("cmux-test", {
+          containerName: "cmux-test",
           instanceId: "test-instance" as Id<"taskRuns">,
           teamSlugOrId: "default",
         ports: { vscode: "", worker: "", proxy: "" },
@@ -144,7 +144,7 @@ describe("DockerVSCodeInstance", () => {
             "-d",
             "--rm",
             "--name",
-            "manaflow-test",
+            "cmux-test",
             "busybox",
             "sleep",
             "2",
@@ -173,10 +173,10 @@ describe("DockerVSCodeInstance", () => {
         });
 
         await new Promise((r) => setTimeout(r, 500));
-        expect(containerMappings.get("manaflow-test")?.status).toBe("running");
+        expect(containerMappings.get("cmux-test")?.status).toBe("running");
 
         await new Promise((r) => setTimeout(r, 2500));
-        expect(containerMappings.get("manaflow-test")?.status).toBe("stopped");
+        expect(containerMappings.get("cmux-test")?.status).toBe("stopped");
       }
     );
   });

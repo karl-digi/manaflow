@@ -1965,7 +1965,7 @@ export function setupSocketHandlers(
               teamSlugOrId,
               ttlSeconds: 60 * 60,
               metadata: {
-                instance: `manaflow-workspace-${taskRunId}`,
+                instance: `cmux-workspace-${taskRunId}`,
                 agentName: "cloud-workspace",
               },
               taskRunId,
@@ -2940,7 +2940,7 @@ Please address the issue mentioned in the comment above.`;
         }
 
         const baseBranch = task.baseBranch?.trim() || "main";
-        const title = task.pullRequestTitle || task.text || "manaflow changes";
+        const title = task.pullRequestTitle || task.text || "cmux changes";
         const truncatedTitle =
           title.length > 72 ? `${title.slice(0, 69)}...` : title;
         const body =

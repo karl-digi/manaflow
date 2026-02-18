@@ -82,7 +82,7 @@ const getMediaProxyUrl = (storageId: string, mimeType: string): string | null =>
   return `${siteUrl}/api/media/${storageId}.${extension}`;
 };
 
-const ASSET_RELEASE_TAG = "manaflow-preview-assets";
+const ASSET_RELEASE_TAG = "cmux-preview-assets";
 
 /**
  * Upload a video file to GitHub using Release Assets API.
@@ -158,7 +158,7 @@ async function uploadVideoToGitHub(options: {
           body: JSON.stringify({
             tag_name: ASSET_RELEASE_TAG,
             target_commitish: defaultBranch,
-            name: "Preview Assets (manaflow)",
+            name: "Preview Assets (cmux)",
             body: "Auto-generated release for storing preview screenshots and videos. Do not delete.",
             draft: false,
             prerelease: true,

@@ -96,7 +96,7 @@ app.use(
 );
 
 app.get("/", (c) => {
-  return c.text("manaflow!");
+  return c.text("cmux!");
 });
 
 app.get("/user", async (c) => {
