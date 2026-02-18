@@ -46,7 +46,11 @@ import {
   getProxyCredentialsForWebContents,
   startPreviewProxy,
 } from "./task-run-preview-proxy";
-import { normalizeBrowserUrl } from "@cmux/shared";
+import {
+  buildTrustedProxyDomainSet,
+  isTrustedProxyHostname,
+  normalizeBrowserUrl,
+} from "@cmux/shared";
 import {
   ELECTRON_WINDOW_FOCUS_EVENT,
   type ElectronRendererEventMap,
@@ -61,6 +65,14 @@ import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
 const APP_HOST = "cmux.local";
+const FRAME_BLOCKING_RESPONSE_HEADERS = new Set([
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
+]);
 
 function resolveMaxSuspendedWebContents(): number | undefined {
   const raw =
@@ -1025,17 +1037,39 @@ app.whenReady().then(async () => {
     if (!img.isEmpty()) app.dock?.setIcon(img);
   }
 
-  // session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-  //   callback({
-  //     responseHeaders: {
-  //       ...details.responseHeaders,
-  //       // "Content-Security-Policy": ["script-src 'self' https://cmux.sh"],
-  //       "Content-Security-Policy": ["*"],
-  //     },
-  //   });
-  // });
-
   const ses = session.fromPartition(PARTITION);
+  const trustedProxyDomains = buildTrustedProxyDomainSet([
+    process.env.PVE_PUBLIC_DOMAIN,
+  ]);
+
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    try {
+      const hostname = new URL(details.url).hostname;
+      if (!isTrustedProxyHostname(hostname, trustedProxyDomains)) {
+        callback({});
+        return;
+      }
+    } catch {
+      callback({});
+      return;
+    }
+
+    const responseHeaders = details.responseHeaders;
+    if (!responseHeaders) {
+      callback({});
+      return;
+    }
+
+    const strippedHeaders: Record<string, string[]> = {};
+    for (const [headerName, headerValues] of Object.entries(responseHeaders)) {
+      if (FRAME_BLOCKING_RESPONSE_HEADERS.has(headerName.toLowerCase())) {
+        continue;
+      }
+      strippedHeaders[headerName] = headerValues;
+    }
+
+    callback({ responseHeaders: strippedHeaders });
+  });
 
   const handleCmuxProtocol = async (request: Request): Promise<Response> => {
     const electronReq = request as unknown as Electron.ProtocolRequest;
