@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import {
   action,
@@ -213,8 +214,9 @@ export const triggerGithubComment = internalAction({
           teamId: previewRun.teamId,
         });
         const teamSlug = team?.slug ?? previewRun.teamId;
-        workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
-        devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+        const baseAppUrl = (env.BASE_APP_URL || "https://www.manaflow.com").replace(/\/$/, "");
+        workspaceUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
 
         console.log("[previewScreenshots] Built workspace URLs", {
           previewRunId: args.previewRunId,

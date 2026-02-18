@@ -1,5 +1,5 @@
 /**
- * cmux devbox CLI HTTP API - Convex httpActions that proxy Morph Cloud operations.
+ * Manaflow devbox CLI HTTP API - Convex httpActions that proxy Morph Cloud operations.
  *
  * All endpoints require Stack Auth authentication and inject the MORPH_API_KEY server-side.
  * Instance data is tracked in devboxInstances table, with provider info in devboxInfo.
@@ -10,7 +10,7 @@ import { env } from "../_shared/convex-env";
 
 const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
 
-// Default snapshot ID for cmux devbox CLI instances
+// Default snapshot ID for manaflow devbox CLI instances
 const DEFAULT_CMUX_SNAPSHOT_ID = "snapshot_b74x626y";
 
 const JSON_HEADERS = {
@@ -18,8 +18,8 @@ const JSON_HEADERS = {
 };
 
 // Security: Validate instance ID format to prevent injection attacks
-// IDs should be cmux_ followed by 8+ alphanumeric characters
-const INSTANCE_ID_REGEX = /^cmux_[a-zA-Z0-9]{8,}$/;
+// IDs should be manaflow_ or cmux_ followed by 8+ alphanumeric characters
+const INSTANCE_ID_REGEX = /^(?:manaflow|cmux)_[a-zA-Z0-9]{8,}$/;
 
 function isValidInstanceId(id: string): boolean {
   return INSTANCE_ID_REGEX.test(id);

@@ -89,6 +89,9 @@ const CMUX_DOMAINS = [
   "cmux.dev",
   "cmux.local",
   "cmux.localhost",
+  "manaflow.com",
+  "manaflow.local",
+  "manaflow.localhost",
   "autobuild.app",
 ] as const;
 
@@ -842,7 +845,7 @@ function shouldInterceptTls(
   if (!context.route) {
     return false;
   }
-  if (isLoopbackHostname(hostname) || hostname.endsWith(".cmux.local")) {
+  if (isLoopbackHostname(hostname) || hostname.endsWith(".cmux.local") || hostname.endsWith(".manaflow.local")) {
     return true;
   }
   return false;
@@ -2331,10 +2334,11 @@ function deriveRoute(url: string): ProxyRoute | null {
         continue;
       }
       const subdomain = hostname.slice(0, -suffix.length);
-      if (!subdomain.startsWith("cmux-")) {
+      if (!subdomain.startsWith("manaflow-") && !subdomain.startsWith("cmux-")) {
         continue;
       }
-      const remainder = subdomain.slice("cmux-".length);
+      const prefix = subdomain.startsWith("manaflow-") ? "manaflow-" : "cmux-";
+      const remainder = subdomain.slice(prefix.length);
       const segments = remainder
         .split("-")
         .filter((segment) => segment.length > 0);

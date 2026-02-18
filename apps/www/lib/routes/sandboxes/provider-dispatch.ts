@@ -49,8 +49,26 @@ export async function getInstanceById(
   return wrapMorphInstance(morphInstance);
 }
 
+/** Error patterns that indicate instance genuinely doesn't exist */
+const NOT_FOUND_PATTERNS = [
+  "Unable to resolve VMID",
+  "not found",
+  "does not exist",
+  "No such instance",
+  "404",
+];
+
+function isNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return NOT_FOUND_PATTERNS.some((pattern) =>
+    message.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
 /**
- * Like getInstanceById but returns null on failure instead of throwing.
+ * Like getInstanceById but returns null for "not found" errors.
+ * Re-throws configuration errors (e.g., MORPH_API_KEY missing) and other failures
+ * so callers can distinguish "instance gone" from "provider misconfigured".
  */
 export async function tryGetInstanceById(
   instanceId: string,
@@ -60,8 +78,14 @@ export async function tryGetInstanceById(
   try {
     return await getInstanceById(instanceId, morphClient);
   } catch (error) {
-    console.error(`[${logTag}] Failed to load instance ${instanceId}`, error);
-    return null;
+    // Only return null for genuine "not found" errors
+    if (isNotFoundError(error)) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[${logTag}] Instance ${instanceId} not found: ${message}`);
+      return null;
+    }
+    // Re-throw configuration errors and other failures
+    throw error;
   }
 }
 

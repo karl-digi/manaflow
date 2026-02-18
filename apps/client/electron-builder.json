@@ -1,6 +1,6 @@
 {
-  "appId": "com.cmux.app",
-  "productName": "cmux",
+  "appId": "com.manaflow.app",
+  "productName": "Manaflow",
   "directories": {
     "output": "dist-electron",
     "buildResources": "build"
@@ -39,9 +39,9 @@
   "nodeGypRebuild": false,
   "protocols": [
     {
-      "name": "cmux",
+      "name": "manaflow",
       "schemes": [
-        "cmux"
+        "manaflow"
       ]
     }
   ],
