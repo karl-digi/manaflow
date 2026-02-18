@@ -1,350 +1,270 @@
 # Vite
 
-Vite is a next-generation frontend build tool that provides an extremely fast development experience for modern web projects. It consists of two major parts: a dev server that serves source files over native ES modules with lightning-fast Hot Module Replacement (HMR), and a build command that bundles code with Rolldown for highly optimized production output. Vite supports TypeScript, JSX, CSS modules, and various CSS preprocessors out of the box.
+Vite is a next-generation frontend build tool that provides a faster and leaner development experience for modern web projects. It consists of two major components: a dev server that serves source files over native ES modules with lightning-fast Hot Module Replacement (HMR), and a build command that bundles code with Rolldown for highly optimized static assets in production. Vite supports TypeScript, JSX, CSS preprocessors, and various frameworks out of the box.
 
-Vite is designed to be framework-agnostic while offering first-party plugins for Vue and React. It leverages native ES modules during development to avoid costly bundling, making cold starts nearly instantaneous regardless of application size. For production builds, Vite pre-configures Rolldown with sensible defaults while remaining highly configurable through its Plugin API and JavaScript API.
+The architecture leverages native ES modules in the browser during development, eliminating the need for bundling and enabling instant server start. Dependencies are pre-bundled using esbuild for faster cold starts, while application source code is served on-demand. The plugin system extends Rolldown's interface with Vite-specific hooks, allowing seamless integration with the ecosystem of Rollup/Rolldown plugins.
 
-## CLI Commands
+## Creating a New Vite Project
 
-### vite (Dev Server)
-
-Start the Vite development server with hot module replacement and instant server start.
+Scaffold a new project using the `create-vite` command. This creates a project with pre-configured settings for your chosen framework including React, Vue, Svelte, or vanilla JavaScript/TypeScript.
 
 ```bash
-# Start dev server in current directory
-npx vite
+# Using npm
+npm create vite@latest my-app -- --template react-ts
 
-# Start with specific port and open browser
-npx vite --port 3000 --open
+# Using pnpm
+pnpm create vite my-app --template vue
 
-# Start with custom config file
-npx vite --config my-config.js
+# Using yarn
+yarn create vite my-app --template svelte-ts
 
-# Start with specific mode
-npx vite --mode staging
+# Using bun
+bun create vite my-app --template vanilla
+
+# Available templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts,
+# react-swc, react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
+# solid, solid-ts, qwik, qwik-ts
 ```
 
-### vite build
+## Configuration with defineConfig
 
-Build the application for production with optimized output.
+Create a `vite.config.js` or `vite.config.ts` file in your project root. The `defineConfig` helper provides TypeScript intellisense and type checking for configuration options.
 
-```bash
-# Basic production build
-npx vite build
-
-# Build with custom output directory
-npx vite build --outDir build
-
-# Build with sourcemaps
-npx vite build --sourcemap
-
-# Build for SSR
-npx vite build --ssr src/entry-server.js
-
-# Build with manifest for preload directives
-npx vite build --manifest
-```
-
-### vite preview
-
-Preview the production build locally before deployment.
-
-```bash
-# Preview the built application
-npx vite preview
-
-# Preview on specific port
-npx vite preview --port 8080 --open
-```
-
-## Configuration
-
-### defineConfig
-
-Use the defineConfig helper to get TypeScript intellisense when configuring Vite.
-
-```javascript
-// vite.config.js
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  root: './src',
-  base: '/my-app/',
-  publicDir: 'public',
-  cacheDir: 'node_modules/.vite',
-
-  resolve: {
-    alias: {
-      '@': '/src',
-      'components': '/src/components'
-    },
-    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
-  },
-
-  define: {
-    __APP_VERSION__: JSON.stringify('1.0.0'),
-    __API_URL__: JSON.stringify('https://api.example.com')
-  },
-
-  server: {
-    port: 3000,
-    open: true,
-    cors: true,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:4000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
-  },
-
-  build: {
-    outDir: 'dist',
-    assetsDir: 'assets',
-    sourcemap: true,
-    minify: 'esbuild',
-    target: 'es2015'
-  }
-})
-```
-
-### Conditional Configuration
-
-Export a function for environment-specific configuration based on command and mode.
-
-```javascript
-// vite.config.js
-import { defineConfig } from 'vite'
-
-export default defineConfig(({ command, mode, isSsrBuild, isPreview }) => {
-  const isDev = command === 'serve'
-  const isProd = command === 'build'
-
-  return {
-    base: isProd ? '/production-path/' : '/',
-
-    define: {
-      __DEV__: isDev,
-      __PROD__: isProd
-    },
-
-    build: {
-      sourcemap: isDev,
-      minify: isProd ? 'esbuild' : false
-    },
-
-    server: isDev ? {
-      port: 3000,
-      hmr: { overlay: true }
-    } : undefined
-  }
-})
-```
-
-### Environment Variables
-
-Load and use environment variables from .env files in configuration.
-
-```javascript
-// vite.config.js
+```typescript
+// vite.config.ts
 import { defineConfig, loadEnv } from 'vite'
+import react from '@vitejs/plugin-react'
 
-export default defineConfig(({ mode }) => {
-  // Load env files from current directory
-  // Third param '' loads all variables (not just VITE_ prefixed)
+export default defineConfig(({ command, mode }) => {
+  // Load env variables based on mode
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
+    plugins: [react()],
+    root: './src',
+    base: '/my-app/',
+
+    // Define global constants
     define: {
-      __APP_ENV__: JSON.stringify(env.APP_ENV)
+      __APP_VERSION__: JSON.stringify('1.0.0'),
+      __API_URL__: JSON.stringify(env.API_URL),
     },
+
+    // Path resolution
+    resolve: {
+      alias: {
+        '@': '/src',
+        '@components': '/src/components',
+      },
+    },
+
+    // Development server
     server: {
-      port: env.PORT ? Number(env.PORT) : 5173
-    }
+      port: 3000,
+      open: true,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
+    },
+
+    // Build configuration
+    build: {
+      outDir: '../dist',
+      sourcemap: true,
+      minify: 'oxc',
+      rolldownOptions: {
+        output: {
+          entryFileNames: 'assets/[name].[hash].js',
+        },
+      },
+    },
   }
 })
-
-// .env file example:
-// VITE_API_URL=https://api.example.com
-// VITE_APP_TITLE=My App
-
-// Access in application code:
-// console.log(import.meta.env.VITE_API_URL)
-// console.log(import.meta.env.MODE)
-// console.log(import.meta.env.DEV)
-// console.log(import.meta.env.PROD)
 ```
 
-## JavaScript API
+## CLI Commands
 
-### createServer
+Vite provides CLI commands for development, building, and previewing your application. Each command supports various options for customization.
 
-Create a Vite dev server programmatically for custom integrations.
+```bash
+# Start development server
+vite
+vite --port 3000 --host 0.0.0.0
+vite --config custom.config.js
 
-```javascript
-import { createServer } from 'vite'
+# Build for production
+vite build
+vite build --outDir build --sourcemap
+vite build --mode staging
 
-async function startDevServer() {
+# Preview production build locally
+vite preview
+vite preview --port 4173
+
+# Common CLI options
+# --config <file>     Use specified config file
+# --base <path>       Public base path (default: /)
+# --mode <mode>       Set env mode (development/production/custom)
+# --logLevel <level>  info | warn | error | silent
+# --clearScreen       Allow/disable clear screen when logging
+# --force             Force optimizer to ignore cache and re-bundle
+```
+
+## JavaScript API - createServer
+
+Programmatically create and control a Vite development server. Useful for testing, custom server setups, or integrating Vite into existing applications.
+
+```typescript
+import { createServer, ViteDevServer } from 'vite'
+
+async function startDevServer(): Promise<ViteDevServer> {
   const server = await createServer({
     configFile: false,
     root: process.cwd(),
     server: {
       port: 3000,
       strictPort: true,
-      host: true
+      hmr: {
+        overlay: true,
+      },
     },
-    plugins: []
+    optimizeDeps: {
+      include: ['react', 'react-dom'],
+    },
   })
 
   await server.listen()
   server.printUrls()
   server.bindCLIShortcuts({ print: true })
 
-  // Access server properties
+  // Access server internals
   console.log('Resolved config:', server.config)
-  console.log('Module graph:', server.moduleGraph)
+  console.log('HTTP server:', server.httpServer)
 
-  // Programmatically transform files
-  const result = await server.transformRequest('/src/main.js')
+  // Transform a file programmatically
+  const result = await server.transformRequest('/src/main.ts')
   console.log('Transformed code:', result?.code)
-
-  // Transform HTML
-  const html = await server.transformIndexHtml('/index.html', '<html>...</html>')
 
   // Graceful shutdown
   process.on('SIGTERM', async () => {
     await server.close()
     process.exit(0)
   })
+
+  return server
 }
 
 startDevServer()
 ```
 
-### build
+## JavaScript API - build
 
-Run production build programmatically with custom configuration.
+Programmatically trigger production builds with full control over the build process and output.
 
-```javascript
-import { build } from 'vite'
+```typescript
+import { build, BuildOptions } from 'vite'
 import path from 'node:path'
 
-async function buildProject() {
+async function runBuild() {
   const result = await build({
-    root: path.resolve(import.meta.dirname, './project'),
+    root: path.resolve(__dirname, './project'),
     base: '/app/',
     build: {
       outDir: 'dist',
       emptyOutDir: true,
       sourcemap: true,
+      minify: 'oxc',
+      target: 'es2020',
+      lib: {
+        entry: path.resolve(__dirname, 'src/index.ts'),
+        name: 'MyLibrary',
+        formats: ['es', 'cjs', 'umd'],
+        fileName: (format) => `my-library.${format}.js`,
+      },
       rolldownOptions: {
-        input: {
-          main: path.resolve(import.meta.dirname, 'index.html'),
-          admin: path.resolve(import.meta.dirname, 'admin.html')
-        },
+        external: ['react', 'react-dom'],
         output: {
-          manualChunks: {
-            vendor: ['react', 'react-dom']
-          }
-        }
-      }
-    }
+          globals: {
+            react: 'React',
+            'react-dom': 'ReactDOM',
+          },
+        },
+      },
+    },
   })
 
   console.log('Build complete:', result)
 }
 
-buildProject()
+runBuild()
 ```
 
-### preview
+## JavaScript API - preview
 
-Start a preview server for the production build.
+Start a preview server for the production build to test it locally before deployment.
 
-```javascript
-import { preview } from 'vite'
+```typescript
+import { preview, build } from 'vite'
 
-async function startPreview() {
+async function buildAndPreview() {
+  // First build the project
+  await build({
+    build: { outDir: 'dist' },
+  })
+
+  // Then preview the built files
   const previewServer = await preview({
     preview: {
-      port: 8080,
+      port: 4173,
+      strictPort: true,
       open: true,
-      strictPort: true
-    }
+      host: true,
+    },
   })
 
   previewServer.printUrls()
   previewServer.bindCLIShortcuts({ print: true })
 
-  console.log('Preview server running at:', previewServer.resolvedUrls)
+  // Access the server
+  console.log('Preview URL:', previewServer.resolvedUrls)
 }
 
-startPreview()
+buildAndPreview()
 ```
 
-### resolveConfig and mergeConfig
+## Plugin API - Basic Plugin Structure
 
-Resolve and merge Vite configurations programmatically.
+Create custom Vite plugins to transform code, add virtual modules, or configure the dev server. Plugins follow Rolldown's plugin interface with additional Vite-specific hooks.
 
-```javascript
-import { resolveConfig, mergeConfig, defineConfig } from 'vite'
+```typescript
+import type { Plugin, ResolvedConfig } from 'vite'
 
-// Resolve full config from file
-async function getResolvedConfig() {
-  const config = await resolveConfig({}, 'build', 'production')
-  console.log('Resolved config:', config)
-  return config
-}
+export default function myPlugin(options: { prefix?: string } = {}): Plugin {
+  let config: ResolvedConfig
 
-// Merge two configs
-const baseConfig = {
-  plugins: [],
-  resolve: { alias: { '@': '/src' } }
-}
-
-const productionConfig = {
-  build: { minify: true },
-  resolve: { alias: { 'utils': '/src/utils' } }
-}
-
-const mergedConfig = mergeConfig(baseConfig, productionConfig)
-// Result: { plugins: [], resolve: { alias: { '@': '/src', 'utils': '/src/utils' } }, build: { minify: true } }
-
-// Merge callback config with object config
-const callbackConfig = defineConfig(({ mode }) => ({
-  define: { __MODE__: JSON.stringify(mode) }
-}))
-
-export default defineConfig((configEnv) =>
-  mergeConfig(callbackConfig(configEnv), { base: '/app/' })
-)
-```
-
-## Plugin API
-
-### Basic Plugin Structure
-
-Create a Vite plugin to transform files, inject content, or configure the build.
-
-```javascript
-// vite-plugin-example.js
-export default function myPlugin(options = {}) {
   return {
-    name: 'vite-plugin-example',
+    name: 'vite-plugin-my-plugin',
+    enforce: 'pre', // 'pre' | 'post' | undefined
+    apply: 'serve', // 'serve' | 'build' | undefined
 
-    // Modify Vite config
-    config(config, { command, mode }) {
+    // Modify config before resolution
+    config(userConfig, { command, mode }) {
       return {
-        resolve: {
-          alias: { 'my-alias': '/src/custom' }
-        }
+        define: {
+          __PLUGIN_ENABLED__: true,
+        },
       }
     },
 
-    // Access resolved config
+    // Access final resolved config
     configResolved(resolvedConfig) {
-      console.log('Build command:', resolvedConfig.command)
+      config = resolvedConfig
+      console.log('Root:', config.root)
+      console.log('Command:', config.command)
     },
 
     // Transform source code
@@ -352,14 +272,14 @@ export default function myPlugin(options = {}) {
       if (id.endsWith('.custom')) {
         return {
           code: `export default ${JSON.stringify(code)}`,
-          map: null
+          map: null,
         }
       }
     },
 
-    // Resolve custom imports
-    resolveId(source) {
-      if (source === 'virtual:my-module') {
+    // Resolve module IDs
+    resolveId(id) {
+      if (id === 'virtual:my-module') {
         return '\0virtual:my-module'
       }
     },
@@ -367,597 +287,546 @@ export default function myPlugin(options = {}) {
     // Load virtual modules
     load(id) {
       if (id === '\0virtual:my-module') {
-        return `export const msg = "Hello from virtual module"`
+        return `export const message = "${options.prefix || 'Hello'} from virtual module"`
       }
-    }
+    },
   }
 }
-
-// Usage in vite.config.js
-import myPlugin from './vite-plugin-example.js'
-
-export default defineConfig({
-  plugins: [myPlugin({ debug: true })]
-})
 ```
 
-### Server Configuration Hook
+## Plugin API - configureServer Hook
 
-Configure the dev server with custom middleware.
+Configure the development server by adding custom middleware, handling WebSocket events, or modifying server behavior.
 
-```javascript
-export default function serverPlugin() {
+```typescript
+import type { Plugin, ViteDevServer } from 'vite'
+
+export default function serverPlugin(): Plugin {
   return {
-    name: 'server-plugin',
+    name: 'vite-plugin-server',
 
-    configureServer(server) {
-      // Add middleware before Vite's internal middlewares
-      server.middlewares.use((req, res, next) => {
-        if (req.url === '/api/health') {
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ status: 'ok' }))
-          return
-        }
-        next()
+    configureServer(server: ViteDevServer) {
+      // Add middleware before Vite's internal middleware
+      server.middlewares.use('/health', (req, res) => {
+        res.end('OK')
       })
 
-      // Return function to add middleware after internal middlewares
+      // Return a function to add middleware after internal middleware
       return () => {
         server.middlewares.use((req, res, next) => {
-          // Post middleware logic
-          next()
+          // Custom 404 handling
+          if (!res.writableEnded) {
+            res.statusCode = 404
+            res.end('Not Found')
+          }
         })
       }
     },
 
+    // Configure preview server similarly
     configurePreviewServer(server) {
-      server.middlewares.use((req, res, next) => {
-        // Preview server middleware
-        next()
+      server.middlewares.use('/api/info', (req, res) => {
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ version: '1.0.0' }))
       })
-    }
+    },
   }
 }
 ```
 
-### HTML Transform Hook
+## Plugin API - transformIndexHtml Hook
 
-Transform HTML during development and build.
+Transform HTML entry files by injecting scripts, styles, or modifying the HTML structure.
 
-```javascript
-export default function htmlPlugin() {
+```typescript
+import type { Plugin, IndexHtmlTransformContext } from 'vite'
+
+export default function htmlPlugin(): Plugin {
   return {
-    name: 'html-transform',
+    name: 'vite-plugin-html',
 
     transformIndexHtml: {
-      order: 'pre', // or 'post', or undefined (default)
-      handler(html, ctx) {
+      order: 'pre', // 'pre' | 'post' | undefined
+      handler(html: string, ctx: IndexHtmlTransformContext) {
         // Return transformed HTML string
-        return html.replace(
+        const transformed = html.replace(
           '</head>',
           `<script>window.BUILD_TIME = "${new Date().toISOString()}"</script></head>`
         )
-      }
-    }
-  }
-}
 
-// Or inject tags
-export default function injectTagsPlugin() {
-  return {
-    name: 'inject-tags',
-
-    transformIndexHtml() {
-      return [
-        {
-          tag: 'script',
-          attrs: { src: '/analytics.js' },
-          injectTo: 'body'
-        },
-        {
-          tag: 'link',
-          attrs: { rel: 'stylesheet', href: '/custom.css' },
-          injectTo: 'head'
-        },
-        {
-          tag: 'meta',
-          attrs: { name: 'version', content: '1.0.0' },
-          injectTo: 'head-prepend'
+        // Or return tag descriptors
+        return {
+          html: transformed,
+          tags: [
+            {
+              tag: 'link',
+              attrs: { rel: 'preconnect', href: 'https://api.example.com' },
+              injectTo: 'head',
+            },
+            {
+              tag: 'script',
+              attrs: { type: 'module' },
+              children: 'console.log("Injected!")',
+              injectTo: 'body',
+            },
+          ],
         }
-      ]
-    }
+      },
+    },
   }
 }
 ```
 
-### HMR Handling Hook
+## Plugin API - handleHotUpdate Hook
 
-Handle custom hot module replacement logic.
+Customize Hot Module Replacement behavior by filtering affected modules or sending custom events to the client.
 
-```javascript
-export default function hmrPlugin() {
+```typescript
+import type { Plugin, HmrContext, ModuleNode } from 'vite'
+
+export default function hmrPlugin(): Plugin {
   return {
-    name: 'hmr-plugin',
+    name: 'vite-plugin-hmr',
 
-    handleHotUpdate({ file, server, modules, timestamp }) {
+    handleHotUpdate(ctx: HmrContext) {
+      const { file, timestamp, modules, read, server } = ctx
+
+      // Ignore certain file changes
+      if (file.endsWith('.test.ts')) {
+        return []
+      }
+
+      // Custom handling for specific files
       if (file.endsWith('.config.json')) {
-        // Trigger full reload for config changes
+        // Send custom event to client
+        server.ws.send({
+          type: 'custom',
+          event: 'config-update',
+          data: { file, timestamp },
+        })
+        // Prevent default HMR
+        return []
+      }
+
+      // Filter affected modules
+      const filteredModules = modules.filter((mod: ModuleNode) => {
+        return !mod.id?.includes('node_modules')
+      })
+
+      // Force full reload for certain changes
+      if (file.includes('/critical/')) {
         server.ws.send({ type: 'full-reload' })
         return []
       }
 
-      if (file.endsWith('.custom')) {
-        // Send custom event to client
-        server.ws.send({
-          type: 'custom',
-          event: 'custom-update',
-          data: { file, timestamp }
-        })
-        return []
-      }
-
-      // Return filtered modules for standard HMR
-      return modules.filter(m => !m.id?.includes('node_modules'))
-    }
+      return filteredModules
+    },
   }
 }
 ```
 
-## HMR API
+## HMR API - Client-Side Hot Module Replacement
 
-### Self-Accepting Module
+Use the HMR API in your application code to handle module updates, preserve state, and respond to HMR events.
 
-Enable hot module replacement for a module that handles its own updates.
-
-```javascript
-// counter.js
-export let count = 0
+```typescript
+// counter.ts
+let count = 0
 
 export function increment() {
   count++
   render()
 }
 
-function render() {
-  document.getElementById('count').textContent = count
+export function render() {
+  document.getElementById('count')!.textContent = String(count)
 }
 
-render()
-
-// HMR handling
+// Self-accepting module with state preservation
 if (import.meta.hot) {
   // Preserve state across updates
+  if (import.meta.hot.data.count !== undefined) {
+    count = import.meta.hot.data.count
+  }
+
+  // Accept updates to this module
   import.meta.hot.accept((newModule) => {
     if (newModule) {
-      // newModule is undefined on syntax errors
-      console.log('Module updated, new count:', newModule.count)
+      // Re-render with new code
+      newModule.render()
     }
   })
 
-  // Clean up side effects before module replacement
+  // Save state before update
   import.meta.hot.dispose((data) => {
-    // Save state for next module instance
-    data.savedCount = count
+    data.count = count
   })
 
-  // Restore state from previous module
-  if (import.meta.hot.data.savedCount !== undefined) {
-    count = import.meta.hot.data.savedCount
-    render()
-  }
-}
-```
-
-### Accepting Dependencies
-
-Accept updates from specific dependencies without full reload.
-
-```javascript
-// main.js
-import { render } from './render.js'
-import { theme } from './theme.js'
-
-render(theme)
-
-if (import.meta.hot) {
-  // Accept single dependency
-  import.meta.hot.accept('./theme.js', (newTheme) => {
-    render(newTheme?.theme)
+  // Clean up when module is removed
+  import.meta.hot.prune(() => {
+    console.log('Module removed from page')
   })
 
-  // Accept multiple dependencies
-  import.meta.hot.accept(['./render.js', './theme.js'], ([newRender, newTheme]) => {
-    const renderFn = newRender?.render || render
-    const currentTheme = newTheme?.theme || theme
-    renderFn(currentTheme)
-  })
-}
-```
-
-### HMR Events
-
-Listen to HMR lifecycle events for custom handling.
-
-```javascript
-if (import.meta.hot) {
-  // Before update is applied
-  import.meta.hot.on('vite:beforeUpdate', (payload) => {
-    console.log('About to update:', payload)
-  })
-
-  // After update is applied
-  import.meta.hot.on('vite:afterUpdate', (payload) => {
-    console.log('Update complete:', payload)
-  })
-
-  // Before full page reload
-  import.meta.hot.on('vite:beforeFullReload', () => {
-    console.log('Full reload triggered')
-  })
-
-  // On HMR error
-  import.meta.hot.on('vite:error', (payload) => {
-    console.error('HMR error:', payload)
+  // Listen to HMR events
+  import.meta.hot.on('vite:beforeUpdate', () => {
+    console.log('Update incoming...')
   })
 
   // Custom events from plugins
-  import.meta.hot.on('custom-update', (data) => {
-    console.log('Custom update:', data)
+  import.meta.hot.on('config-update', (data) => {
+    console.log('Config changed:', data)
   })
 
-  // Send message to server
-  import.meta.hot.send('my-event', { message: 'hello' })
+  // Send events to server
+  import.meta.hot.send('my:event', { message: 'Hello from client' })
 }
 ```
 
-## Server-Side Rendering
+## CSS and Preprocessors
 
-### SSR Dev Server Setup
+Vite supports CSS imports with HMR, CSS Modules, and preprocessors like Sass, Less, and Stylus out of the box.
 
-Set up Vite in middleware mode for SSR development.
-
-```javascript
-// server.js
-import express from 'express'
-import { createServer as createViteServer } from 'vite'
-import fs from 'node:fs'
-import path from 'node:path'
-
-async function createServer() {
-  const app = express()
-
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: 'custom'
-  })
-
-  app.use(vite.middlewares)
-
-  app.use('*all', async (req, res, next) => {
-    const url = req.originalUrl
-
-    try {
-      // Read and transform index.html
-      let template = fs.readFileSync(
-        path.resolve(import.meta.dirname, 'index.html'),
-        'utf-8'
-      )
-      template = await vite.transformIndexHtml(url, template)
-
-      // Load server entry with HMR support
-      const { render } = await vite.ssrLoadModule('/src/entry-server.js')
-
-      // Render app to HTML
-      const appHtml = await render(url)
-
-      // Inject rendered HTML
-      const html = template.replace('<!--ssr-outlet-->', appHtml)
-
-      res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
-    } catch (e) {
-      vite.ssrFixStacktrace(e)
-      next(e)
-    }
-  })
-
-  app.listen(5173)
-}
-
-createServer()
-
-// entry-server.js example
-import { renderToString } from 'react-dom/server'
-import App from './App'
-
-export async function render(url) {
-  return renderToString(<App url={url} />)
-}
-```
-
-### Production SSR Build
-
-Configure separate client and server builds for production SSR.
-
-```javascript
-// vite.config.js
+```typescript
+// vite.config.ts
 import { defineConfig } from 'vite'
 
-export default defineConfig({
-  build: {
-    // For client build
-    outDir: 'dist/client',
-    manifest: true,
-    ssrManifest: true
-  }
-})
-
-// package.json scripts
-// "build:client": "vite build --outDir dist/client --ssrManifest"
-// "build:server": "vite build --outDir dist/server --ssr src/entry-server.js"
-
-// Production server.js
-import express from 'express'
-import fs from 'node:fs'
-import path from 'node:path'
-import sirv from 'sirv'
-
-const isProduction = process.env.NODE_ENV === 'production'
-
-async function createServer() {
-  const app = express()
-
-  if (isProduction) {
-    // Serve static files
-    app.use(sirv('dist/client', { extensions: [] }))
-  }
-
-  app.use('*all', async (req, res) => {
-    const url = req.originalUrl
-
-    const template = fs.readFileSync(
-      isProduction
-        ? 'dist/client/index.html'
-        : 'index.html',
-      'utf-8'
-    )
-
-    const { render } = isProduction
-      ? await import('./dist/server/entry-server.js')
-      : await vite.ssrLoadModule('/src/entry-server.js')
-
-    const appHtml = await render(url)
-    const html = template.replace('<!--ssr-outlet-->', appHtml)
-
-    res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
-  })
-
-  app.listen(5173)
-}
-
-createServer()
-```
-
-## Build Configuration
-
-### Library Mode
-
-Build a library for distribution with multiple output formats.
-
-```javascript
-// vite.config.js
-import { defineConfig } from 'vite'
-import { resolve } from 'node:path'
-
-export default defineConfig({
-  build: {
-    lib: {
-      entry: resolve(import.meta.dirname, 'lib/main.js'),
-      name: 'MyLib', // UMD global name
-      fileName: (format) => `my-lib.${format}.js`,
-      formats: ['es', 'umd', 'cjs']
-    },
-    rolldownOptions: {
-      external: ['vue', 'react', 'react-dom'],
-      output: {
-        globals: {
-          vue: 'Vue',
-          react: 'React',
-          'react-dom': 'ReactDOM'
-        }
-      }
-    }
-  }
-})
-
-// package.json for library
-// {
-//   "name": "my-lib",
-//   "type": "module",
-//   "files": ["dist"],
-//   "main": "./dist/my-lib.umd.cjs",
-//   "module": "./dist/my-lib.es.js",
-//   "exports": {
-//     ".": {
-//       "import": "./dist/my-lib.es.js",
-//       "require": "./dist/my-lib.umd.cjs"
-//     },
-//     "./style.css": "./dist/my-lib.css"
-//   }
-// }
-```
-
-### Multi-Page Application
-
-Configure builds for applications with multiple HTML entry points.
-
-```javascript
-// vite.config.js
-import { defineConfig } from 'vite'
-import { resolve } from 'node:path'
-
-export default defineConfig({
-  build: {
-    rolldownOptions: {
-      input: {
-        main: resolve(import.meta.dirname, 'index.html'),
-        admin: resolve(import.meta.dirname, 'admin/index.html'),
-        login: resolve(import.meta.dirname, 'auth/login.html')
-      }
-    }
-  }
-})
-
-// Project structure:
-// ├── index.html
-// ├── admin/
-// │   └── index.html
-// ├── auth/
-// │   └── login.html
-// └── src/
-//     ├── main.js
-//     ├── admin.js
-//     └── login.js
-```
-
-## Asset Handling
-
-### Static Asset Imports
-
-Import and reference static assets with various query modifiers.
-
-```javascript
-// Import as URL (resolved public path)
-import imageUrl from './image.png'
-document.getElementById('hero').src = imageUrl
-
-// Import as raw string
-import shaderSource from './shader.glsl?raw'
-gl.shaderSource(shader, shaderSource)
-
-// Import as URL explicitly
-import assetUrl from './data.json?url'
-fetch(assetUrl).then(r => r.json())
-
-// Web Workers
-import Worker from './worker.js?worker'
-const worker = new Worker()
-
-// Inline worker as base64
-import InlineWorker from './worker.js?worker&inline'
-
-// Import JSON with named exports
-import { version, name } from './package.json'
-console.log(`${name}@${version}`)
-
-// Glob import
-const modules = import.meta.glob('./modules/*.js')
-for (const path in modules) {
-  modules[path]().then(mod => console.log(path, mod))
-}
-
-// Glob with eager loading
-const eagerModules = import.meta.glob('./modules/*.js', { eager: true })
-
-// Glob with named imports
-const setups = import.meta.glob('./modules/*.js', {
-  import: 'setup',
-  eager: true
-})
-```
-
-### CSS Handling
-
-Import and use CSS with modules, preprocessors, and special features.
-
-```javascript
-// Regular CSS import
-import './styles.css'
-
-// CSS Modules
-import styles from './component.module.css'
-element.className = styles.container
-
-// With camelCase conversion configured
-import { myClassName } from './component.module.css'
-
-// Inline CSS (no injection)
-import cssText from './styles.css?inline'
-const style = document.createElement('style')
-style.textContent = cssText
-document.head.appendChild(style)
-
-// vite.config.js CSS configuration
 export default defineConfig({
   css: {
+    // CSS Modules configuration
     modules: {
       localsConvention: 'camelCaseOnly',
-      generateScopedName: '[name]__[local]___[hash:base64:5]'
+      generateScopedName: '[name]__[local]___[hash:base64:5]',
     },
+
+    // Preprocessor options
     preprocessorOptions: {
       scss: {
-        additionalData: `@import "@/styles/variables.scss";`
+        additionalData: `@import "@/styles/variables.scss";`,
+        includePaths: ['./src/styles'],
       },
       less: {
-        math: 'parens-division'
-      }
+        math: 'parens-division',
+        modifyVars: {
+          'primary-color': '#1890ff',
+        },
+      },
     },
-    devSourcemap: true
-  }
-})
-```
 
-## TypeScript Support
+    // Enable Lightning CSS (experimental)
+    transformer: 'lightningcss',
+    lightningcss: {
+      targets: {
+        chrome: 111,
+        firefox: 114,
+        safari: 16,
+      },
+    },
 
-### TypeScript Configuration
-
-Configure TypeScript with proper types and compilation settings.
-
-```json
-// tsconfig.json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "strict": true,
-    "types": ["vite/client"]
+    // Enable dev sourcemaps
+    devSourcemap: true,
   },
-  "include": ["src"]
-}
+})
 ```
 
 ```typescript
-// vite-env.d.ts
+// Usage in application code
+import styles from './Component.module.css'
+import './global.css'
+import scssStyles from './styles.module.scss'
+
+// CSS Modules - scoped class names
+document.getElementById('app')!.className = styles.container
+
+// With camelCase convention
+const element = document.createElement('div')
+element.className = scssStyles.myClassName
+
+// Inline CSS (not injected to page)
+import inlineStyles from './inline.css?inline'
+console.log(inlineStyles) // Raw CSS string
+```
+
+## Static Assets and Imports
+
+Import and handle static assets with special query parameters for different use cases.
+
+```typescript
+// Import as URL (default for assets)
+import imgUrl from './image.png'
+document.getElementById('img')!.setAttribute('src', imgUrl)
+
+// Import as string (raw content)
+import shaderCode from './shader.glsl?raw'
+console.log(shaderCode)
+
+// Explicit URL import
+import assetUrl from './data.json?url'
+fetch(assetUrl).then(r => r.json())
+
+// Import Web Worker
+import Worker from './worker.ts?worker'
+const worker = new Worker()
+worker.postMessage({ type: 'start' })
+
+// Inline worker as base64
+import InlineWorker from './worker.ts?worker&inline'
+
+// Dynamic imports with glob
+const modules = import.meta.glob('./modules/*.ts')
+for (const path in modules) {
+  modules[path]().then((mod) => {
+    console.log(path, mod)
+  })
+}
+
+// Eager glob import (static)
+const eagerModules = import.meta.glob('./components/*.vue', { eager: true })
+
+// Import specific exports
+const setups = import.meta.glob('./plugins/*.ts', {
+  import: 'setup',
+  eager: true,
+})
+
+// Glob with custom query
+const svgUrls = import.meta.glob('./icons/*.svg', {
+  query: '?url',
+  import: 'default',
+})
+```
+
+## Environment Variables
+
+Access environment variables through `import.meta.env` with proper prefixing and type safety.
+
+```typescript
+// .env
+// VITE_API_URL=https://api.example.com
+// VITE_APP_TITLE=My App
+// SECRET_KEY=should-not-be-exposed
+
+// .env.production
+// VITE_API_URL=https://api.production.com
+
+// vite-env.d.ts - Type declarations
 /// <reference types="vite/client" />
 
-// Extend ImportMeta for custom env variables
 interface ImportMetaEnv {
   readonly VITE_API_URL: string
   readonly VITE_APP_TITLE: string
+  readonly MODE: string
+  readonly DEV: boolean
+  readonly PROD: boolean
+  readonly SSR: boolean
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
-// Custom module declarations
-declare module '*.svg' {
-  const content: string
-  export default content
-}
+// Usage in application
+console.log(import.meta.env.VITE_API_URL)
+console.log(import.meta.env.MODE) // 'development' or 'production'
+console.log(import.meta.env.DEV)  // true in dev
+console.log(import.meta.env.PROD) // true in production
 
-declare module 'virtual:my-module' {
-  export const data: string
-}
+// Load env in config file
+import { defineConfig, loadEnv } from 'vite'
+
+export default defineConfig(({ mode }) => {
+  // Load all env variables (not just VITE_ prefixed)
+  const env = loadEnv(mode, process.cwd(), '')
+
+  return {
+    define: {
+      'process.env.API_KEY': JSON.stringify(env.SECRET_KEY),
+    },
+  }
+})
 ```
 
-Vite excels at providing a unified development and build experience for modern web applications. Its primary use cases include developing single-page applications with frameworks like Vue, React, or Svelte; building JavaScript libraries for distribution; server-side rendering with frameworks; and creating multi-page applications. The plugin system enables deep integration with build tools and frameworks.
+## Server-Side Rendering (SSR)
 
-For integration patterns, Vite works seamlessly with backend frameworks through middleware mode, supports custom server configurations for SSR, and provides programmatic APIs for build tool orchestration. The consistent configuration between development and production environments ensures reliable deployments. Teams can extend Vite through plugins that tap into the Rolldown/Rollup ecosystem while leveraging Vite-specific hooks for dev server customization.
+Configure Vite for server-side rendering with the development server and production builds.
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  build: {
+    ssr: true,
+    rolldownOptions: {
+      input: './src/entry-server.ts',
+    },
+  },
+  ssr: {
+    // Externalize dependencies for SSR
+    external: ['express'],
+    // Bundle specific dependencies
+    noExternal: ['my-ui-library'],
+  },
+})
+
+// server.ts - Development server with SSR
+import express from 'express'
+import { createServer as createViteServer } from 'vite'
+
+async function createServer() {
+  const app = express()
+
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: 'custom',
+  })
+
+  app.use(vite.middlewares)
+
+  app.use('*', async (req, res) => {
+    const url = req.originalUrl
+
+    try {
+      // Read and transform index.html
+      let template = await fs.readFile('./index.html', 'utf-8')
+      template = await vite.transformIndexHtml(url, template)
+
+      // Load server entry
+      const { render } = await vite.ssrLoadModule('/src/entry-server.ts')
+
+      // Render the app
+      const appHtml = await render(url)
+
+      // Inject app HTML
+      const html = template.replace('<!--app-html-->', appHtml)
+
+      res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error)
+      console.error(e)
+      res.status(500).end((e as Error).message)
+    }
+  })
+
+  app.listen(3000)
+}
+
+createServer()
+```
+
+## Proxy Configuration
+
+Configure development server proxy for API requests and WebSocket connections.
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  server: {
+    proxy: {
+      // Simple string shorthand
+      '/foo': 'http://localhost:4567',
+
+      // With options
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+        secure: false,
+        headers: {
+          'X-Custom-Header': 'value',
+        },
+        configure: (proxy, options) => {
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            console.log('Proxying:', req.url)
+          })
+          proxy.on('error', (err, req, res) => {
+            console.error('Proxy error:', err)
+          })
+        },
+      },
+
+      // WebSocket proxy
+      '/socket.io': {
+        target: 'ws://localhost:5174',
+        ws: true,
+        rewriteWsOrigin: true,
+      },
+
+      // RegExp matching
+      '^/api/v[0-9]+/.*': {
+        target: 'http://api.example.com',
+        changeOrigin: true,
+      },
+    },
+  },
+})
+```
+
+## Library Mode
+
+Build your project as a library for distribution via npm with proper entry points and external dependencies.
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite'
+import { resolve } from 'path'
+import dts from 'vite-plugin-dts'
+
+export default defineConfig({
+  plugins: [
+    dts({ include: ['src'] }), // Generate .d.ts files
+  ],
+  build: {
+    lib: {
+      entry: resolve(__dirname, 'src/index.ts'),
+      name: 'MyLibrary',
+      formats: ['es', 'cjs', 'umd'],
+      fileName: (format) => `my-library.${format}.js`,
+    },
+    rolldownOptions: {
+      // Externalize peer dependencies
+      external: ['react', 'react-dom', 'vue'],
+      output: {
+        globals: {
+          react: 'React',
+          'react-dom': 'ReactDOM',
+          vue: 'Vue',
+        },
+        // Preserve module structure for tree-shaking
+        preserveModules: true,
+        preserveModulesRoot: 'src',
+      },
+    },
+    sourcemap: true,
+    minify: false,
+  },
+})
+
+// package.json configuration for library
+/*
+{
+  "name": "my-library",
+  "version": "1.0.0",
+  "type": "module",
+  "files": ["dist"],
+  "main": "./dist/my-library.cjs.js",
+  "module": "./dist/my-library.es.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/my-library.es.js",
+      "require": "./dist/my-library.cjs.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.0.0"
+  }
+}
+*/
+```
+
+Vite is the foundational build tool for modern frontend development, powering meta-frameworks like Nuxt, SvelteKit, Astro, and Remix. Its plugin ecosystem is compatible with Rollup/Rolldown plugins, making it highly extensible for any build requirement. The development experience focuses on speed through native ES modules and intelligent dependency pre-bundling, while production builds leverage Rolldown for optimized output with tree-shaking, code splitting, and minification.
+
+For integration with backend frameworks, Vite generates a manifest file mapping source files to their hashed output, enabling server-side template rendering with correct asset URLs. The middleware mode allows embedding Vite's development server into existing Node.js servers like Express or Koa. SSR support includes proper source map handling and the ability to load server modules programmatically through `ssrLoadModule`, making Vite suitable for both client-rendered SPAs and server-rendered applications.

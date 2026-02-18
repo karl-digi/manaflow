@@ -1,12 +1,12 @@
 # TanStack Router & Start
 
-TanStack Router is a modern, type-safe routing library for React and Solid applications that provides end-to-end type safety for routes, params, and loaders. It features schema-driven search params with validation, built-in caching with prefetching and invalidation, nested layouts with transitions and error boundaries, and a powerful file-based routing system that automatically generates route trees with full TypeScript inference. The router treats URL search params as first-class state, supporting complex nested data structures and JSON serialization out of the box.
+TanStack Router is a modern, type-safe router for React, Solid, and Vue applications. It provides end-to-end type safety for routes, params, and loaders, along with schema-driven search params validation, built-in caching with SWR (stale-while-revalidate) support, prefetching, nested layouts, transitions, and error boundaries. The router's file-based routing system automatically generates a fully typed route tree, enabling powerful developer experiences with autocomplete and compile-time validation.
 
-TanStack Start is a full-stack framework built on top of TanStack Router, designed for server rendering, streaming, and production-ready deployments. It extends Router's capabilities with server functions for RPC-style server communication, full-document SSR with streaming support, middleware for authentication and shared logic, and deployment-ready bundling. Start enables developers to write server-only code that can be seamlessly called from client components while maintaining complete type safety across the network boundary.
+TanStack Start is a full-stack framework built on TanStack Router, designed for server rendering, streaming, and production-ready deployments. It provides full-document SSR, server functions with end-to-end type safety, middleware support, and deployment-ready bundling via Vite. Start enables seamless RPC-style communication between client and server while maintaining complete type safety across the network boundary.
 
 ## createRouter
 
-The `createRouter` function creates a new router instance with configuration options including the route tree, default preloading behavior, caching settings, and context. It accepts a `RouterOptions` object and returns a Router instance that manages navigation, route matching, and data loading throughout the application.
+The `createRouter` function creates a new router instance that manages navigation, route matching, and data loading. It accepts a route tree (generated from file-based routes or manually defined) and configuration options for preloading, caching, and default behaviors.
 
 ```tsx
 import { createRouter, RouterProvider } from '@tanstack/react-router'
@@ -15,15 +15,8 @@ import { routeTree } from './routeTree.gen'
 const router = createRouter({
   routeTree,
   defaultPreload: 'intent',
-  defaultPreloadDelay: 50,
-  defaultStaleTime: 0,
-  defaultGcTime: 1000 * 60 * 30, // 30 minutes
-  context: {
-    auth: undefined!, // Will be provided in RouterProvider
-  },
-  defaultErrorComponent: ({ error }) => <div>Error: {error.message}</div>,
-  defaultPendingComponent: () => <div>Loading...</div>,
-  defaultNotFoundComponent: () => <div>Not Found</div>,
+  defaultStaleTime: 5000,
+  defaultPreloadStaleTime: 0,
 })
 
 // Register router for type safety
@@ -40,102 +33,107 @@ export default function App() {
 
 ## createRootRoute
 
-The `createRootRoute` function creates the root route instance that serves as the top-most route in the route tree. It encapsulates all other routes as children, is always matched, and always renders its component. This is where you define your application shell with global layout, error boundaries, and context providers.
+The `createRootRoute` function creates the root route of your application. It serves as the parent for all other routes and typically includes your application shell with navigation, headers, and the Outlet component for rendering child routes.
 
 ```tsx
-import { createRootRoute, Outlet } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/router-devtools'
+import { createRootRoute, Outlet, Link } from '@tanstack/react-router'
 
 export const Route = createRootRoute({
-  component: RootComponent,
-  errorComponent: ({ error, reset }) => (
+  component: () => (
     <div>
-      <h1>Application Error</h1>
-      <p>{error.message}</p>
-      <button onClick={reset}>Try Again</button>
-    </div>
-  ),
-  notFoundComponent: () => <div>Page Not Found</div>,
-  beforeLoad: async ({ context }) => {
-    // Global authentication check
-    const user = await fetchCurrentUser()
-    return { user }
-  },
-})
-
-function RootComponent() {
-  return (
-    <>
       <nav>
         <Link to="/">Home</Link>
         <Link to="/posts">Posts</Link>
-        <Link to="/about">About</Link>
       </nav>
       <main>
         <Outlet />
       </main>
-      <TanStackRouterDevtools position="bottom-right" />
-    </>
-  )
-}
+    </div>
+  ),
+  notFoundComponent: () => <div>404 Not Found</div>,
+  errorComponent: ({ error }) => <div>Error: {error.message}</div>,
+})
 ```
 
 ## createFileRoute
 
-The `createFileRoute` function is a factory for creating file-based route instances. The path string is automatically managed by the TanStack Router CLI (`tsr generate` or `tsr watch`). Each route file exports a `Route` constant that defines the route's loader, component, search params validation, and other options.
+The `createFileRoute` function creates a file-based route instance. The route path is automatically managed by the TanStack Router CLI (`tsr generate` or `tsr watch`), which generates and updates routes based on your file structure.
 
 ```tsx
-// routes/posts.$postId.tsx
+// src/routes/posts.$postId.tsx
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/posts/$postId')({
-  // Validate and parse URL path params
-  params: {
-    parse: (params) => ({ postId: parseInt(params.postId) }),
-    stringify: (params) => ({ postId: String(params.postId) }),
+  loader: async ({ params }) => {
+    const response = await fetch(`/api/posts/${params.postId}`)
+    if (!response.ok) throw new Error('Post not found')
+    return response.json()
   },
-  // Validate search params with fallbacks
-  validateSearch: (search) => ({
-    showComments: search.showComments === 'true',
-    page: Number(search.page) || 1,
-  }),
-  // Define loader dependencies from search params
-  loaderDeps: ({ search }) => ({ page: search.page }),
-  // Load data before rendering
-  loader: async ({ params, deps, abortController }) => {
-    const post = await fetchPost(params.postId, {
-      signal: abortController.signal,
-    })
-    const comments = await fetchComments(params.postId, deps.page)
-    return { post, comments }
-  },
-  // Pending UI shown after pendingMs threshold
-  pendingComponent: () => <div>Loading post...</div>,
-  pendingMs: 500,
-  // Error handling
-  errorComponent: ({ error }) => <div>Failed to load post: {error.message}</div>,
-  // Main component
   component: PostComponent,
 })
 
 function PostComponent() {
-  const { post, comments } = Route.useLoaderData()
-  const { showComments } = Route.useSearch()
-  const { postId } = Route.useParams()
-
+  const post = Route.useLoaderData()
   return (
     <article>
       <h1>{post.title}</h1>
       <p>{post.body}</p>
-      {showComments && <Comments data={comments} />}
     </article>
+  )
+}
+```
+
+## Route Loaders with Data Loading
+
+Route loaders fetch data before rendering a route. They support caching, preloading, and parallel data fetching. Use `loaderDeps` to specify which search params should trigger a reload, and access data with `useLoaderData`.
+
+```tsx
+// src/routes/posts.tsx
+import { createFileRoute } from '@tanstack/react-router'
+import { z } from 'zod'
+
+const searchSchema = z.object({
+  page: z.number().catch(1),
+  filter: z.string().catch(''),
+})
+
+export const Route = createFileRoute('/posts')({
+  validateSearch: searchSchema,
+  loaderDeps: ({ search: { page, filter } }) => ({ page, filter }),
+  loader: async ({ deps: { page, filter }, abortController }) => {
+    const response = await fetch(
+      `/api/posts?page=${page}&filter=${filter}`,
+      { signal: abortController.signal }
+    )
+    return response.json()
+  },
+  staleTime: 10_000, // Cache for 10 seconds
+  pendingComponent: () => <div>Loading posts...</div>,
+  errorComponent: ({ error, reset }) => (
+    <div>
+      <p>Error: {error.message}</p>
+      <button onClick={reset}>Retry</button>
+    </div>
+  ),
+  component: PostsComponent,
+})
+
+function PostsComponent() {
+  const { posts, totalPages } = Route.useLoaderData()
+  const { page } = Route.useSearch()
+
+  return (
+    <div>
+      {posts.map(post => <PostCard key={post.id} post={post} />)}
+      <p>Page {page} of {totalPages}</p>
+    </div>
   )
 }
 ```
 
 ## Link Component
 
-The `Link` component creates type-safe navigation links with automatic `href` generation, active state detection, and preloading support. It supports path params, search params, hash fragments, and state. Links can be cmd/ctrl+clicked to open in new tabs.
+The `Link` component creates type-safe navigation links with support for path params, search params, and hash fragments. It provides active state styling and preloading on hover or intent.
 
 ```tsx
 import { Link } from '@tanstack/react-router'
@@ -144,7 +142,7 @@ function Navigation() {
   return (
     <nav>
       {/* Basic link */}
-      <Link to="/about">About</Link>
+      <Link to="/">Home</Link>
 
       {/* Link with path params */}
       <Link to="/posts/$postId" params={{ postId: '123' }}>
@@ -154,49 +152,31 @@ function Navigation() {
       {/* Link with search params */}
       <Link
         to="/posts"
-        search={{ page: 2, sort: 'newest', filter: ['published'] }}
+        search={{ page: 2, filter: 'published' }}
       >
         Page 2
       </Link>
 
-      {/* Update search params functionally */}
-      <Link to="." search={(prev) => ({ ...prev, page: prev.page + 1 })}>
+      {/* Update search params from current route */}
+      <Link
+        from="/posts"
+        search={(prev) => ({ ...prev, page: prev.page + 1 })}
+      >
         Next Page
       </Link>
 
-      {/* Active styling */}
+      {/* Active link styling */}
       <Link
-        to="/dashboard"
-        activeProps={{ className: 'font-bold text-blue-600' }}
-        inactiveProps={{ className: 'text-gray-600' }}
-        activeOptions={{ exact: true }}
+        to="/posts"
+        activeProps={{ className: 'active' }}
+        inactiveProps={{ className: 'inactive' }}
       >
-        Dashboard
+        Posts
       </Link>
 
-      {/* Preloading on hover */}
-      <Link to="/expensive-page" preload="intent" preloadDelay={100}>
-        Expensive Page
-      </Link>
-
-      {/* Link with hash */}
-      <Link to="/docs" hash="installation">
-        Jump to Installation
-      </Link>
-
-      {/* External link */}
-      <Link href="https://tanstack.com" target="_blank">
-        TanStack Website
-      </Link>
-
-      {/* Render function for custom active state */}
-      <Link to="/notifications">
-        {({ isActive }) => (
-          <>
-            Notifications
-            {isActive && <Badge count={5} />}
-          </>
-        )}
+      {/* Preload on hover */}
+      <Link to="/posts/$postId" params={{ postId: '456' }} preload="intent">
+        Preload on Hover
       </Link>
     </nav>
   )
@@ -205,367 +185,196 @@ function Navigation() {
 
 ## useNavigate Hook
 
-The `useNavigate` hook returns a navigate function for imperative navigation triggered by side effects like form submissions, button clicks, or successful async operations. It supports all the same options as the Link component including path params, search params, and state.
+The `useNavigate` hook returns a function for programmatic navigation. It supports all the same options as the Link component and returns a Promise that resolves when navigation completes.
 
 ```tsx
 import { useNavigate } from '@tanstack/react-router'
 
-function CreatePostForm() {
+function SearchForm() {
   const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
+    const query = formData.get('query') as string
 
-    try {
-      const response = await fetch('/api/posts', {
-        method: 'POST',
-        body: formData,
-      })
-      const { id } = await response.json()
-
-      // Navigate to the new post
-      await navigate({
-        to: '/posts/$postId',
-        params: { postId: id },
-        replace: true, // Replace current history entry
-      })
-    } catch (error) {
-      console.error('Failed to create post', error)
-    }
-  }
-
-  return <form onSubmit={handleSubmit}>{/* form fields */}</form>
-}
-
-function SearchComponent() {
-  const navigate = useNavigate({ from: '/search' })
-
-  const handleSearch = (query: string) => {
-    navigate({
-      search: (prev) => ({ ...prev, q: query, page: 1 }),
+    await navigate({
+      to: '/search',
+      search: { q: query, page: 1 },
     })
   }
 
-  const handleClearFilters = () => {
-    navigate({
-      search: { q: '', page: 1 }, // Reset search params
-    })
-  }
+  const goBack = () => navigate({ to: '..', from: '/posts/$postId' })
+
+  const replaceHistory = () =>
+    navigate({ to: '/dashboard', replace: true })
 
   return (
-    <div>
-      <input onChange={(e) => handleSearch(e.target.value)} />
-      <button onClick={handleClearFilters}>Clear</button>
-    </div>
+    <form onSubmit={handleSubmit}>
+      <input name="query" type="search" />
+      <button type="submit">Search</button>
+    </form>
   )
 }
 ```
 
 ## useParams Hook
 
-The `useParams` hook returns the parsed path parameters from the current route match. It provides type-safe access to dynamic URL segments and supports selecting specific params for optimized re-renders.
+The `useParams` hook returns the parsed path parameters for the current route. Use the `from` option for strict typing or `strict: false` for loose typing across multiple routes.
 
 ```tsx
 import { useParams, getRouteApi } from '@tanstack/react-router'
 
-// Method 1: Using useParams with from option
-function PostHeader() {
+// Option 1: Using from parameter
+function PostDetail() {
   const { postId } = useParams({ from: '/posts/$postId' })
-  return <h1>Post #{postId}</h1>
+  return <div>Post ID: {postId}</div>
 }
 
-// Method 2: Using Route API for type safety
+// Option 2: Using getRouteApi
 const routeApi = getRouteApi('/posts/$postId')
 
-function PostContent() {
-  const params = routeApi.useParams()
-  // params is fully typed: { postId: string }
-  return <div>Viewing post {params.postId}</div>
+function PostDetailAlt() {
+  const { postId } = routeApi.useParams()
+  return <div>Post ID: {postId}</div>
 }
 
-// Method 3: Select specific params to reduce re-renders
+// Option 3: Loose params across routes
+function SharedComponent() {
+  const params = useParams({ strict: false })
+  // params is Partial<AllParams> - may include postId, userId, etc.
+  return <div>Params: {JSON.stringify(params)}</div>
+}
+
+// Option 4: Select specific param
 function PostId() {
   const postId = useParams({
     from: '/posts/$postId',
     select: (params) => params.postId,
   })
-  return <span>{postId}</span>
-}
-
-// Method 4: Loose params when route is uncertain
-function MaybePost() {
-  const params = useParams({ strict: false })
-  // params is Partial<AllParams>
-  if (params.postId) {
-    return <div>Post: {params.postId}</div>
-  }
-  return <div>Not in a post route</div>
+  return <div>Post ID: {postId}</div>
 }
 ```
 
 ## useSearch Hook
 
-The `useSearch` hook returns validated search parameters from the current route. Search params in TanStack Router support complex JSON structures, type validation via `validateSearch`, and can be inherited from parent routes.
+The `useSearch` hook returns the validated and typed search parameters for a route. Search params are automatically parsed from JSON-compatible URL format and validated through the route's `validateSearch` option.
 
 ```tsx
 import { useSearch, getRouteApi } from '@tanstack/react-router'
-import { z } from 'zod'
-import { zodValidator } from '@tanstack/zod-adapter'
 
-// Define search schema with Zod
-const searchSchema = z.object({
-  page: z.number().default(1),
-  pageSize: z.number().default(10),
-  sort: z.enum(['newest', 'oldest', 'popular']).default('newest'),
-  filters: z.array(z.string()).default([]),
-})
+const routeApi = getRouteApi('/products')
 
-// In route definition
-export const Route = createFileRoute('/products')({
-  validateSearch: zodValidator(searchSchema),
-  component: ProductsPage,
-})
+function ProductFilters() {
+  const { page, sort, category } = routeApi.useSearch()
 
-function ProductsPage() {
-  // Type-safe search params
-  const { page, pageSize, sort, filters } = Route.useSearch()
+  // Or with from parameter
+  const search = useSearch({ from: '/products' })
+
+  // Select specific value
+  const currentPage = useSearch({
+    from: '/products',
+    select: (s) => s.page,
+  })
+
+  // Loose search across all routes
+  const looseSearch = useSearch({ strict: false })
 
   return (
     <div>
-      <ProductFilters currentFilters={filters} currentSort={sort} />
-      <ProductList page={page} pageSize={pageSize} sort={sort} filters={filters} />
-      <Pagination
-        currentPage={page}
-        pageSize={pageSize}
-        onPageChange={(newPage) => (
-          <Link to="." search={(prev) => ({ ...prev, page: newPage })}>
-            {newPage}
-          </Link>
-        )}
-      />
+      <p>Page: {page}</p>
+      <p>Sort: {sort}</p>
+      <p>Category: {category}</p>
     </div>
   )
-}
-
-// Access search from anywhere using getRouteApi
-const productApi = getRouteApi('/products')
-
-function ProductFilters() {
-  const search = productApi.useSearch()
-  // search is fully typed based on validateSearch
-  return <div>Current sort: {search.sort}</div>
-}
-
-// Or use loose mode for uncertain routes
-function GlobalSearch() {
-  const search = useSearch({ strict: false })
-  // search is Partial<FullSearchSchema>
-  return <div>Query: {search.q || 'none'}</div>
 }
 ```
 
 ## useLoaderData Hook
 
-The `useLoaderData` hook returns data loaded by the route's `loader` function. Loader data is cached and managed by the router's built-in SWR caching system, supporting preloading, stale-while-revalidate, and automatic garbage collection.
+The `useLoaderData` hook returns the data loaded by a route's loader function. It provides type-safe access to the resolved loader data.
 
 ```tsx
-import { createFileRoute, useLoaderData, getRouteApi } from '@tanstack/react-router'
+import { useLoaderData, getRouteApi } from '@tanstack/react-router'
 
-// Route definition with loader
-export const Route = createFileRoute('/users/$userId')({
-  loader: async ({ params }) => {
-    const user = await fetchUser(params.userId)
-    const posts = await fetchUserPosts(params.userId)
-    return { user, posts }
-  },
-  // Cache configuration
-  staleTime: 1000 * 60 * 5, // 5 minutes
-  gcTime: 1000 * 60 * 30, // 30 minutes
-  component: UserProfile,
+const routeApi = getRouteApi('/posts/$postId')
+
+function PostContent() {
+  // Using getRouteApi
+  const post = routeApi.useLoaderData()
+
+  // Or with from parameter
+  const postAlt = useLoaderData({ from: '/posts/$postId' })
+
+  // Select specific data
+  const title = useLoaderData({
+    from: '/posts/$postId',
+    select: (data) => data.title,
+  })
+
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <p>{post.body}</p>
+      <span>Author: {post.author.name}</span>
+    </article>
+  )
+}
+```
+
+## Search Params Validation with Zod
+
+TanStack Router supports schema-based search param validation using Zod, Valibot, ArkType, or any Standard Schema compatible library. Use adapters for proper input/output type inference.
+
+```tsx
+import { createFileRoute } from '@tanstack/react-router'
+import { fallback, zodValidator } from '@tanstack/zod-adapter'
+import { z } from 'zod'
+
+const productSearchSchema = z.object({
+  page: fallback(z.number(), 1).default(1),
+  pageSize: fallback(z.number(), 20).default(20),
+  sort: fallback(z.enum(['price', 'name', 'date']), 'date').default('date'),
+  order: fallback(z.enum(['asc', 'desc']), 'desc').default('desc'),
+  category: z.string().optional(),
+  minPrice: z.number().optional(),
+  maxPrice: z.number().optional(),
 })
 
-function UserProfile() {
-  // Method 1: Use Route.useLoaderData()
-  const { user, posts } = Route.useLoaderData()
+export const Route = createFileRoute('/products')({
+  validateSearch: zodValidator(productSearchSchema),
+  component: ProductList,
+})
+
+function ProductList() {
+  const { page, pageSize, sort, order, category } = Route.useSearch()
 
   return (
     <div>
-      <h1>{user.name}</h1>
-      <PostList posts={posts} />
+      <Link
+        from="/products"
+        search={(prev) => ({ ...prev, page: prev.page + 1 })}
+      >
+        Next Page
+      </Link>
+      <Link
+        from="/products"
+        search={(prev) => ({ ...prev, sort: 'price', order: 'asc' })}
+      >
+        Sort by Price
+      </Link>
     </div>
   )
-}
-
-// Method 2: Use getRouteApi for code-split components
-const userApi = getRouteApi('/users/$userId')
-
-function UserHeader() {
-  const { user } = userApi.useLoaderData()
-  return <header>{user.name}</header>
-}
-
-// Method 3: Select specific data to reduce re-renders
-function UserPostCount() {
-  const postCount = useLoaderData({
-    from: '/users/$userId',
-    select: (data) => data.posts.length,
-  })
-  return <span>{postCount} posts</span>
-}
-```
-
-## useBlocker Hook
-
-The `useBlocker` hook blocks navigation when certain conditions are met, such as unsaved form changes. It provides a custom UI for confirming navigation and handles browser beforeunload events.
-
-```tsx
-import { useBlocker } from '@tanstack/react-router'
-import { useState } from 'react'
-
-function EditPostForm({ initialData }) {
-  const [formData, setFormData] = useState(initialData)
-  const [isDirty, setIsDirty] = useState(false)
-
-  // Block navigation when form has unsaved changes
-  const { status, proceed, reset } = useBlocker({
-    shouldBlockFn: () => isDirty,
-    withResolver: true,
-    enableBeforeUnload: true, // Block browser refresh/close
-  })
-
-  const handleChange = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
-    setIsDirty(true)
-  }
-
-  const handleSave = async () => {
-    await savePost(formData)
-    setIsDirty(false)
-  }
-
-  return (
-    <>
-      <form>
-        <input
-          value={formData.title}
-          onChange={(e) => handleChange('title', e.target.value)}
-        />
-        <textarea
-          value={formData.body}
-          onChange={(e) => handleChange('body', e.target.value)}
-        />
-        <button type="button" onClick={handleSave}>
-          Save
-        </button>
-      </form>
-
-      {/* Custom confirmation dialog */}
-      {status === 'blocked' && (
-        <div className="modal">
-          <h2>Unsaved Changes</h2>
-          <p>You have unsaved changes. Are you sure you want to leave?</p>
-          <button onClick={proceed}>Leave</button>
-          <button onClick={reset}>Stay</button>
-        </div>
-      )}
-    </>
-  )
-}
-```
-
-## useLocation Hook
-
-The `useLocation` hook returns the current parsed location object including pathname, search params, hash, and state. It's useful for side effects that need to react to location changes or for accessing raw location data.
-
-```tsx
-import { useLocation } from '@tanstack/react-router'
-import { useEffect } from 'react'
-
-function AnalyticsTracker() {
-  const location = useLocation()
-
-  useEffect(() => {
-    // Track page view on location change
-    analytics.track('page_view', {
-      path: location.pathname,
-      search: location.searchStr,
-      hash: location.hash,
-    })
-  }, [location.pathname, location.searchStr])
-
-  return null
-}
-
-function Breadcrumbs() {
-  const pathname = useLocation({
-    select: (location) => location.pathname,
-  })
-
-  const segments = pathname.split('/').filter(Boolean)
-
-  return (
-    <nav>
-      {segments.map((segment, index) => (
-        <span key={index}>
-          {' / '}
-          <Link to={'/' + segments.slice(0, index + 1).join('/')}>
-            {segment}
-          </Link>
-        </span>
-      ))}
-    </nav>
-  )
-}
-```
-
-## useMatch Hook
-
-The `useMatch` hook returns the full route match object for a specific route, providing access to all match data including params, search, loader data, context, and status. It's useful for checking if specific routes are currently active.
-
-```tsx
-import { useMatch, rootRouteId } from '@tanstack/react-router'
-
-function PostSidebar() {
-  // Get match for specific route
-  const match = useMatch({ from: '/posts/$postId' })
-
-  return (
-    <aside>
-      <h3>Post #{match.params.postId}</h3>
-      <p>Status: {match.status}</p>
-      <pre>{JSON.stringify(match.loaderData, null, 2)}</pre>
-    </aside>
-  )
-}
-
-function RootContextDisplay() {
-  // Access root route match
-  const rootMatch = useMatch({ from: rootRouteId })
-  const { user } = rootMatch.context
-
-  return <div>Logged in as: {user?.name}</div>
-}
-
-function ConditionalComponent() {
-  // Check if a route is currently matched
-  const postsMatch = useMatch({ from: '/posts', shouldThrow: false })
-
-  if (postsMatch) {
-    return <PostsNavigation />
-  }
-  return <DefaultNavigation />
 }
 ```
 
 ## redirect Function
 
-The `redirect` function creates a redirect object that can be thrown from `beforeLoad`, `loader`, or server functions to redirect users to a different route. It supports both internal routes with type-safe params and external URLs.
+The `redirect` function creates a redirect object that can be thrown from loaders or `beforeLoad` to navigate users to different routes. It's commonly used for authentication guards and conditional navigation.
 
 ```tsx
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-// Redirect in beforeLoad for authentication
 export const Route = createFileRoute('/dashboard')({
   beforeLoad: async ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
@@ -577,422 +386,421 @@ export const Route = createFileRoute('/dashboard')({
       })
     }
   },
-  component: Dashboard,
-})
+  loader: async ({ context }) => {
+    const user = await context.auth.getUser()
 
-// Redirect in loader based on data
-export const Route = createFileRoute('/posts/$postId')({
-  loader: async ({ params }) => {
-    const post = await fetchPost(params.postId)
-
-    if (!post) {
-      throw redirect({ to: '/posts' })
+    if (!user.hasCompletedOnboarding) {
+      throw redirect({ to: '/onboarding' })
     }
 
-    if (post.status === 'draft') {
-      throw redirect({
-        to: '/posts/$postId/edit',
-        params: { postId: params.postId },
-      })
-    }
-
-    return post
+    return { user }
   },
 })
 
-// External redirect
-export const Route = createFileRoute('/external-auth')({
-  beforeLoad: () => {
-    throw redirect({
-      href: 'https://auth.example.com/login?callback=https://myapp.com/callback',
-    })
-  },
-})
-
-// Using Route.redirect for relative redirects (file-based routes)
-export const Route = createFileRoute('/dashboard/settings')({
+// Using Route.redirect in file-based routes (auto-sets 'from')
+export const SettingsRoute = createFileRoute('/dashboard/settings')({
   beforeLoad: ({ context }) => {
-    if (!context.user.hasSettingsAccess) {
+    if (!context.user.isAdmin) {
       throw Route.redirect({
-        to: '../', // Redirects to /dashboard
+        to: '../', // Relative redirect to /dashboard
       })
     }
   },
 })
 ```
 
-## getRouteApi Function
+## useBlocker Hook
 
-The `getRouteApi` function provides type-safe access to route hooks without importing the route directly, which is useful for code-split components. It returns an object with pre-bound hooks for params, search, loader data, context, and navigation.
+The `useBlocker` hook prevents navigation when certain conditions are met, useful for protecting unsaved form data. It can show custom confirmation dialogs or use the browser's native confirm dialog.
 
 ```tsx
-import { getRouteApi } from '@tanstack/react-router'
+import { useBlocker } from '@tanstack/react-router'
+import { useState } from 'react'
 
-// Create route API instance
-const postRouteApi = getRouteApi('/posts/$postId')
+function EditForm() {
+  const [isDirty, setIsDirty] = useState(false)
+  const [formData, setFormData] = useState({ title: '', content: '' })
 
-// Use in any component without importing Route
-function PostActions() {
-  const params = postRouteApi.useParams()
-  const search = postRouteApi.useSearch()
-  const loaderData = postRouteApi.useLoaderData()
-  const navigate = postRouteApi.useNavigate()
+  // With custom UI
+  const { status, proceed, reset, next } = useBlocker({
+    shouldBlockFn: () => isDirty,
+    withResolver: true,
+  })
 
-  const handleEdit = () => {
-    navigate({
-      to: '/posts/$postId/edit',
-      params: { postId: params.postId },
-    })
-  }
+  // Or with native confirm dialog
+  useBlocker({
+    shouldBlockFn: ({ next }) => {
+      if (!isDirty) return false
+      return !confirm('You have unsaved changes. Leave anyway?')
+    },
+  })
 
   return (
     <div>
-      <h2>{loaderData.post.title}</h2>
-      <button onClick={handleEdit}>Edit</button>
+      <form onChange={() => setIsDirty(true)}>
+        <input
+          value={formData.title}
+          onChange={(e) => setFormData(f => ({ ...f, title: e.target.value }))}
+        />
+        <textarea
+          value={formData.content}
+          onChange={(e) => setFormData(f => ({ ...f, content: e.target.value }))}
+        />
+        <button type="submit">Save</button>
+      </form>
+
+      {status === 'blocked' && (
+        <div className="modal">
+          <p>You have unsaved changes!</p>
+          <p>Navigate to {next.pathname}?</p>
+          <button onClick={proceed}>Leave</button>
+          <button onClick={reset}>Stay</button>
+        </div>
+      )}
     </div>
   )
 }
+```
 
-// Route API also provides redirect for type-safe redirects
-function checkPostAccess(postId: string) {
-  const post = getPost(postId)
-  if (!post) {
-    throw postRouteApi.redirect({ to: '/posts' })
-  }
-  return post
+## Route Context with beforeLoad
+
+Route context enables dependency injection throughout your route tree. Use `createRootRouteWithContext` to type your context and `beforeLoad` to extend it at any route level.
+
+```tsx
+// src/routes/__root.tsx
+import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
+
+interface RouterContext {
+  auth: AuthService
+  queryClient: QueryClient
 }
+
+export const Route = createRootRouteWithContext<RouterContext>()({
+  component: () => <Outlet />,
+})
+
+// src/routes/dashboard.tsx
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/dashboard')({
+  beforeLoad: async ({ context }) => {
+    const user = await context.auth.getUser()
+    return {
+      user,
+      permissions: await fetchPermissions(user.id),
+    }
+  },
+  loader: ({ context }) => {
+    // context now includes user and permissions
+    return fetchDashboardData(context.user.id)
+  },
+})
+
+// src/router.tsx
+import { createRouter } from '@tanstack/react-router'
+import { routeTree } from './routeTree.gen'
+
+const router = createRouter({
+  routeTree,
+  context: {
+    auth: authService,
+    queryClient: queryClient,
+  },
+})
 ```
 
 ## Outlet Component
 
-The `Outlet` component renders the next matching child route's component. It's used in parent routes to specify where child content should appear, enabling nested layouts.
+The `Outlet` component renders the matched child route's component within a parent route. It's essential for nested layouts and enables hierarchical UI composition.
 
 ```tsx
-import { createFileRoute, Outlet } from '@tanstack/react-router'
+import { createFileRoute, Outlet, Link } from '@tanstack/react-router'
 
-// Parent layout route (routes/posts.tsx)
-export const Route = createFileRoute('/posts')({
-  component: PostsLayout,
+// Parent layout route
+export const Route = createFileRoute('/dashboard')({
+  component: DashboardLayout,
 })
 
-function PostsLayout() {
+function DashboardLayout() {
   return (
-    <div className="posts-layout">
+    <div className="dashboard">
       <aside>
-        <h2>Posts</h2>
-        <PostsList />
+        <nav>
+          <Link to="/dashboard">Overview</Link>
+          <Link to="/dashboard/analytics">Analytics</Link>
+          <Link to="/dashboard/settings">Settings</Link>
+        </nav>
       </aside>
       <main>
-        {/* Child routes render here */}
-        <Outlet />
+        <Outlet /> {/* Child routes render here */}
       </main>
     </div>
   )
 }
 
-// Child route (routes/posts.$postId.tsx)
-export const Route = createFileRoute('/posts/$postId')({
-  component: PostDetail,
-})
-
-function PostDetail() {
-  const { post } = Route.useLoaderData()
-  return (
-    <article>
-      <h1>{post.title}</h1>
-      <p>{post.body}</p>
-    </article>
-  )
-}
-
-// Nested structure: PostsLayout wraps PostDetail
-// URL: /posts/123 renders:
-// <PostsLayout>
-//   <PostDetail />  {/* rendered via <Outlet /> */}
-// </PostsLayout>
+// Child routes automatically nest inside the Outlet
+// src/routes/dashboard.index.tsx -> renders at /dashboard
+// src/routes/dashboard.analytics.tsx -> renders at /dashboard/analytics
 ```
 
 ## createServerFn (TanStack Start)
 
-The `createServerFn` function creates server functions that run exclusively on the server but can be called from anywhere in the application. They provide type-safe RPC-style communication with automatic serialization, validation, and error handling.
+Server functions in TanStack Start enable type-safe RPC between client and server. They can access databases, environment variables, and server-only APIs while maintaining full type safety.
 
 ```tsx
 import { createServerFn } from '@tanstack/react-start'
-import { redirect } from '@tanstack/react-router'
 import { z } from 'zod'
-import { db } from './db'
+import { db } from '~/db'
 
-// Basic server function
+// Simple server function
 export const getServerTime = createServerFn().handler(async () => {
   return new Date().toISOString()
 })
 
-// Server function with input validation
-const createPostSchema = z.object({
-  title: z.string().min(1).max(200),
-  body: z.string().min(1),
-  published: z.boolean().default(false),
-})
-
-export const createPost = createServerFn({ method: 'POST' })
-  .inputValidator(createPostSchema)
+// With input validation
+export const getUser = createServerFn({ method: 'GET' })
+  .inputValidator(z.object({ userId: z.string() }))
   .handler(async ({ data }) => {
-    const post = await db.posts.create({
-      data: {
-        title: data.title,
-        body: data.body,
-        published: data.published,
-      },
-    })
+    const user = await db.users.findUnique({ where: { id: data.userId } })
+    if (!user) throw new Error('User not found')
+    return user
+  })
+
+// POST with mutation
+export const createPost = createServerFn({ method: 'POST' })
+  .inputValidator(z.object({
+    title: z.string().min(1),
+    content: z.string().min(10),
+  }))
+  .handler(async ({ data }) => {
+    const post = await db.posts.create({ data })
     return post
   })
 
-// Server function with authentication
-export const getCurrentUser = createServerFn().handler(async () => {
-  const session = await getSession()
-  if (!session) {
-    throw redirect({ to: '/login' })
-  }
-  return session.user
+// Usage in components
+function UserProfile({ userId }: { userId: string }) {
+  const { data: user } = useQuery({
+    queryKey: ['user', userId],
+    queryFn: () => getUser({ data: { userId } }),
+  })
+
+  return <div>{user?.name}</div>
+}
+
+// Usage in loaders
+export const Route = createFileRoute('/posts/$postId')({
+  loader: ({ params }) => getPost({ data: { postId: params.postId } }),
 })
+```
 
-// Server function with request context
-import { getRequestHeader, setResponseHeaders } from '@tanstack/react-start/server'
+## Server Function Error Handling and Redirects
 
-export const getCachedData = createServerFn({ method: 'GET' }).handler(async () => {
+Server functions can throw errors, redirects, and not-found responses that are automatically handled by the router when called from route lifecycles.
+
+```tsx
+import { createServerFn } from '@tanstack/react-start'
+import { redirect, notFound } from '@tanstack/react-router'
+import { getRequestHeader } from '@tanstack/react-start/server'
+
+export const requireAuth = createServerFn().handler(async () => {
   const authHeader = getRequestHeader('Authorization')
 
-  // Set cache headers
-  setResponseHeaders(
-    new Headers({
-      'Cache-Control': 'public, max-age=300',
-    }),
-  )
-
-  return fetchData(authHeader)
-})
-
-// Usage in components
-function CreatePostButton() {
-  const handleCreate = async () => {
-    const post = await createPost({
-      data: { title: 'New Post', body: 'Content here' },
-    })
-    console.log('Created post:', post.id)
+  if (!authHeader) {
+    throw redirect({ to: '/login' })
   }
 
-  return <button onClick={handleCreate}>Create Post</button>
-}
+  const user = await validateToken(authHeader)
 
-// Usage in route loaders
-export const Route = createFileRoute('/dashboard')({
-  loader: async () => {
-    const user = await getCurrentUser()
-    const posts = await getUserPosts({ data: { userId: user.id } })
-    return { user, posts }
-  },
+  if (!user) {
+    throw redirect({
+      to: '/login',
+      search: { error: 'session_expired' },
+    })
+  }
+
+  return user
+})
+
+export const getPost = createServerFn({ method: 'GET' })
+  .inputValidator((data: { postId: string }) => data)
+  .handler(async ({ data }) => {
+    const post = await db.posts.findUnique({
+      where: { id: data.postId },
+    })
+
+    if (!post) {
+      throw notFound()
+    }
+
+    if (post.status === 'draft') {
+      throw new Error('Post not published')
+    }
+
+    return post
+  })
+
+// In route loader - errors/redirects handled automatically
+export const Route = createFileRoute('/posts/$postId')({
+  beforeLoad: () => requireAuth(),
+  loader: ({ params }) => getPost({ data: { postId: params.postId } }),
+  errorComponent: ({ error }) => <div>Error: {error.message}</div>,
+  notFoundComponent: () => <div>Post not found</div>,
 })
 ```
 
-## TanStack Start Root Route
+## Middleware (TanStack Start)
 
-The root route in TanStack Start defines the HTML document shell and is always rendered. It uses special components like `HeadContent` for meta tags and `Scripts` for client-side JavaScript hydration.
-
-```tsx
-// src/routes/__root.tsx
-import {
-  Outlet,
-  createRootRoute,
-  HeadContent,
-  Scripts,
-} from '@tanstack/react-router'
-import type { ReactNode } from 'react'
-
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'My TanStack Start App' },
-      { name: 'description', content: 'Built with TanStack Start' },
-    ],
-    links: [
-      { rel: 'stylesheet', href: '/styles.css' },
-      { rel: 'icon', href: '/favicon.ico' },
-    ],
-  }),
-  component: RootComponent,
-  errorComponent: ({ error }) => (
-    <RootDocument>
-      <div>
-        <h1>Error</h1>
-        <p>{error.message}</p>
-      </div>
-    </RootDocument>
-  ),
-})
-
-function RootComponent() {
-  return (
-    <RootDocument>
-      <Outlet />
-    </RootDocument>
-  )
-}
-
-function RootDocument({ children }: { children: ReactNode }) {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <header>
-          <nav>
-            <Link to="/">Home</Link>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
-        <main>{children}</main>
-        <Scripts />
-      </body>
-    </html>
-  )
-}
-```
-
-## Search Param Validation with Adapters
-
-TanStack Router supports schema validation libraries like Zod, Valibot, and ArkType for type-safe search params with automatic input/output type inference. Adapters handle the distinction between what's required when navigating vs. what's available when reading.
+Middleware enables composable request/response handling for server functions and routes. It supports authentication, logging, context injection, and request modification.
 
 ```tsx
-import { createFileRoute, retainSearchParams, stripSearchParams } from '@tanstack/react-router'
-import { zodValidator, fallback } from '@tanstack/zod-adapter'
+import { createMiddleware, createServerFn } from '@tanstack/react-start'
+import { zodValidator } from '@tanstack/zod-adapter'
 import { z } from 'zod'
 
-// Define schema with defaults and fallbacks
-const productSearchSchema = z.object({
-  page: fallback(z.number(), 1).default(1),
-  pageSize: fallback(z.number(), 20).default(20),
-  sort: fallback(z.enum(['price', 'name', 'date']), 'date').default('date'),
-  category: z.string().optional(),
-  filters: z.array(z.string()).default([]),
+// Logging middleware
+const loggingMiddleware = createMiddleware().server(async ({ next }) => {
+  const start = Date.now()
+  const result = await next()
+  console.log(`Request took ${Date.now() - start}ms`)
+  return result
 })
 
-export const Route = createFileRoute('/products')({
-  validateSearch: zodValidator(productSearchSchema),
-  search: {
-    middlewares: [
-      // Keep category param when navigating between pages
-      retainSearchParams(['category']),
-      // Remove default values from URL
-      stripSearchParams({
-        page: 1,
-        pageSize: 20,
-        sort: 'date',
-      }),
-    ],
-  },
-  loaderDeps: ({ search }) => ({
-    page: search.page,
-    pageSize: search.pageSize,
-    sort: search.sort,
-    category: search.category,
-    filters: search.filters,
-  }),
-  loader: async ({ deps }) => {
-    return fetchProducts(deps)
-  },
-  component: ProductsPage,
+// Auth middleware with context
+const authMiddleware = createMiddleware().server(async ({ next }) => {
+  const user = await getCurrentUser()
+  return next({
+    context: { user },
+  })
 })
 
-function ProductsPage() {
-  const { page, sort, category, filters } = Route.useSearch()
+// Input validation middleware
+const workspaceMiddleware = createMiddleware({ type: 'function' })
+  .inputValidator(zodValidator(z.object({ workspaceId: z.string() })))
+  .server(async ({ next, data, context }) => {
+    const workspace = await db.workspaces.findUnique({
+      where: { id: data.workspaceId, userId: context.user.id },
+    })
 
-  return (
-    <div>
-      {/* Navigating with search - no required params due to defaults */}
-      <Link to="/products" search={{ page: page + 1 }}>
-        Next Page
-      </Link>
+    if (!workspace) throw new Error('Workspace not found')
 
-      {/* Update specific params */}
-      <Link to="." search={(prev) => ({ ...prev, sort: 'price' })}>
-        Sort by Price
-      </Link>
+    return next({
+      context: { workspace },
+    })
+  })
 
-      {/* Clear filters */}
-      <Link to="." search={(prev) => ({ ...prev, filters: [], page: 1 })}>
-        Clear Filters
-      </Link>
-    </div>
-  )
-}
+// Composing middleware
+export const getWorkspaceData = createServerFn({ method: 'GET' })
+  .middleware([loggingMiddleware, authMiddleware, workspaceMiddleware])
+  .handler(async ({ context }) => {
+    // context.user and context.workspace are available
+    return db.data.findMany({
+      where: { workspaceId: context.workspace.id },
+    })
+  })
+
+// Global middleware in src/start.ts
+import { createStart, createMiddleware } from '@tanstack/react-start'
+
+const globalAuth = createMiddleware().server(async ({ next }) => {
+  // Runs for every request
+  return next()
+})
+
+export const startInstance = createStart(() => ({
+  requestMiddleware: [globalAuth],
+}))
 ```
 
-## Data Loading with Router Context
+## Server Context Utilities
 
-Router context enables dependency injection throughout the route tree. You define context requirements using `createRootRouteWithContext` and provide implementations when creating the router. Context flows down through `beforeLoad` and is available in all loaders.
+Access and modify request/response data within server functions using context utilities. These enable header manipulation, cookie access, and cache control.
 
 ```tsx
-// routes/__root.tsx
-import { createRootRouteWithContext } from '@tanstack/react-router'
-import type { QueryClient } from '@tanstack/react-query'
+import { createServerFn } from '@tanstack/react-start'
+import {
+  getRequest,
+  getRequestHeader,
+  setResponseHeader,
+  setResponseHeaders,
+  setResponseStatus,
+} from '@tanstack/react-start/server'
 
-interface RouterContext {
-  queryClient: QueryClient
-  auth: {
-    user: User | null
-    login: (credentials: Credentials) => Promise<void>
-    logout: () => Promise<void>
+export const getCachedData = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    // Access request
+    const request = getRequest()
+    const authHeader = getRequestHeader('Authorization')
+    const userAgent = getRequestHeader('User-Agent')
+
+    // Set cache headers
+    setResponseHeaders(new Headers({
+      'Cache-Control': 'public, max-age=300',
+      'CDN-Cache-Control': 'max-age=3600',
+    }))
+
+    // Set individual header
+    setResponseHeader('X-Custom-Header', 'value')
+
+    // Set status code
+    setResponseStatus(200)
+
+    return fetchData()
   }
-}
+)
 
-export const Route = createRootRouteWithContext<RouterContext>()({
-  component: RootComponent,
+// Cookie handling example
+export const getUserPreferences = createServerFn().handler(async () => {
+  const request = getRequest()
+  const cookies = request.headers.get('Cookie')
+  const theme = parseCookie(cookies, 'theme') || 'light'
+
+  setResponseHeader(
+    'Set-Cookie',
+    `lastVisit=${Date.now()}; Path=/; HttpOnly`
+  )
+
+  return { theme }
 })
+```
 
-// router.tsx
-import { createRouter } from '@tanstack/react-router'
-import { QueryClient } from '@tanstack/react-query'
-import { routeTree } from './routeTree.gen'
+## File-Based Routing Configuration
 
-const queryClient = new QueryClient()
+Configure file-based routing through `tsr.config.json` to customize route generation, code splitting, and file naming conventions.
 
-export function createAppRouter() {
-  return createRouter({
-    routeTree,
-    context: {
-      queryClient,
-      auth: createAuthContext(),
-    },
-  })
-}
-
-// routes/dashboard.tsx - Using context in routes
-export const Route = createFileRoute('/dashboard')({
-  beforeLoad: ({ context }) => {
-    if (!context.auth.user) {
-      throw redirect({ to: '/login' })
-    }
-    return { user: context.auth.user }
-  },
-  loader: async ({ context }) => {
-    // Use queryClient from context
-    return context.queryClient.fetchQuery({
-      queryKey: ['dashboard-data'],
-      queryFn: fetchDashboardData,
-    })
-  },
-  component: Dashboard,
-})
-
-function Dashboard() {
-  const { user } = Route.useRouteContext()
-  return <h1>Welcome, {user.name}</h1>
+```json
+{
+  "routesDirectory": "./src/routes",
+  "generatedRouteTree": "./src/routeTree.gen.ts",
+  "routeFileIgnorePrefix": "-",
+  "routeFileIgnorePattern": "\\.(test|spec)\\.",
+  "quoteStyle": "single",
+  "semicolons": false,
+  "autoCodeSplitting": true
 }
 ```
 
-TanStack Router and Start provide a comprehensive solution for building type-safe, performant web applications. The router excels in applications requiring complex navigation patterns, validated URL state, and optimized data loading with its built-in caching layer. For single-page applications, the router delivers end-to-end type safety from route definitions through to component rendering, with features like automatic code splitting, preloading, and search param management.
+```
+Project structure example:
+src/routes/
+├── __root.tsx           # Root layout
+├── index.tsx            # Home page (/)
+├── posts.tsx            # Posts layout (/posts)
+├── posts.index.tsx      # Posts list (/posts)
+├── posts.$postId.tsx    # Post detail (/posts/:postId)
+├── posts_.$postId.edit.tsx  # Edit post (pathless layout)
+├── _auth.tsx            # Auth layout (pathless)
+├── _auth.login.tsx      # Login (/login)
+├── _auth.register.tsx   # Register (/register)
+├── dashboard/
+│   ├── route.tsx        # Dashboard layout (/dashboard)
+│   ├── index.tsx        # Dashboard home (/dashboard)
+│   ├── -components/     # Ignored (starts with -)
+│   │   └── Chart.tsx
+│   └── analytics.tsx    # Analytics (/dashboard/analytics)
+```
 
-TanStack Start extends these capabilities into full-stack territory, enabling server-side rendering, streaming, and server functions while maintaining the same developer experience. The integration with validation libraries (Zod, Valibot, ArkType) ensures runtime safety at serialization boundaries, while middleware patterns enable clean authentication, logging, and request handling. Both libraries work seamlessly with TanStack Query for external data fetching, making them suitable for applications ranging from simple SPAs to complex full-stack applications with sophisticated data requirements.
+## Summary
+
+TanStack Router and Start provide a comprehensive solution for building type-safe, full-stack React applications. The router excels at client-side navigation with its file-based routing, powerful search param handling, built-in caching, and data loading primitives. Key patterns include using `createFileRoute` for file-based routes, `validateSearch` with Zod for type-safe URL state, and `loaderDeps` for proper cache keying. The nested layout system with `Outlet` enables complex UI compositions while maintaining clean code organization.
+
+TanStack Start extends these capabilities to the server with `createServerFn` for type-safe RPCs, middleware for request/response handling, and seamless integration with the router's data loading system. Common integration patterns include using server functions in route loaders for SSR data fetching, middleware for authentication and authorization, and the redirect/notFound utilities for navigation control. Together, these tools provide a complete framework for building modern web applications with excellent developer experience and runtime type safety.

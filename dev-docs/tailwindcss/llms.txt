@@ -46,6 +46,18 @@ npx parcel src/index.html
 
 --------------------------------
 
+### Start Phoenix Development Server
+
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
+
+Launch the Phoenix development server which will start the Tailwind watcher and enable hot-reloading of CSS changes during development.
+
+```bash
+mix phx.server
+```
+
+--------------------------------
+
 ### Start Tailwind CLI Build Process
 
 Source: https://v3.tailwindcss.com/docs/index
@@ -58,18 +70,6 @@ npx tailwindcss -i ./src/input.css -o ./src/output.css --watch
 
 --------------------------------
 
-### Start Development Server
-
-Source: https://v3.tailwindcss.com/docs/guides/create-react-app
-
-Run the development server to begin building your application with Tailwind CSS. The build process will watch for changes and recompile styles automatically.
-
-```bash
-npm run start
-```
-
---------------------------------
-
 ### Start Development Build Process
 
 Source: https://v3.tailwindcss.com/docs/guides/symfony
@@ -78,6 +78,18 @@ Run the npm watch script to start the development build process. This watches fo
 
 ```bash
 npm run watch
+```
+
+--------------------------------
+
+### Start Development Server
+
+Source: https://v3.tailwindcss.com/docs/guides/create-react-app
+
+Run the development server to begin building your application with Tailwind CSS. The build process will watch for changes and recompile styles automatically.
+
+```bash
+npm run start
 ```
 
 --------------------------------
@@ -95,28 +107,14 @@ cd my-project
 
 --------------------------------
 
-### Create a new Laravel project using Composer
+### Start Gatsby development server
 
-Source: https://v3.tailwindcss.com/docs/guides/laravel
+Source: https://v3.tailwindcss.com/docs/guides/gatsby
 
-This command initializes a new Laravel application named 'my-project' using Composer. After creation, it navigates into the project directory, preparing the environment for subsequent setup steps.
-
-```Terminal
-composer create-project laravel/laravel my-project
-cd my-project
-```
-
---------------------------------
-
-### Create New Phoenix Project
-
-Source: https://v3.tailwindcss.com/docs/guides/phoenix
-
-Start by creating a new Phoenix project if you don't have one set up already, then navigate into its directory. This command initializes a standard Phoenix application structure.
+This command initiates the Gatsby development server, compiling your project and making it accessible locally. It allows you to see your changes in real-time as you develop, with Tailwind CSS styles applied.
 
 ```Terminal
-mix phx.new myproject
-cd myproject
+gatsby develop
 ```
 
 --------------------------------
@@ -133,51 +131,51 @@ Run the development server with the build process to watch for file changes and 
 
 --------------------------------
 
-### Start Gatsby development server
+### Start Development Build Process
 
-Source: https://v3.tailwindcss.com/docs/guides/gatsby
+Source: https://v3.tailwindcss.com/docs/guides/adonisjs
 
-This command initiates the Gatsby development server, compiling your project and making it accessible locally. It allows you to see your changes in real-time as you develop, with Tailwind CSS styles applied.
+Run the development server to compile Tailwind CSS and watch for changes. This command starts the build process and enables hot module reloading.
 
-```Terminal
-gatsby develop
+```bash
+npm run dev
 ```
 
 --------------------------------
 
-### Start the Angular development server
+### Start Angular Development Server
 
 Source: https://v3.tailwindcss.com/docs/guides/angular
 
-This command starts the Angular development server, which compiles the application and serves it locally. It also watches for file changes and automatically reloads the browser, facilitating the development process.
+Run the Angular development server using ng serve to compile your project and enable hot-reloading during development.
 
-```Terminal
+```bash
 ng serve
 ```
 
 --------------------------------
 
-### Start Phoenix Server with Tailwind CSS Build
+### Install Tailwind CSS CLI and Initialize Configuration
 
-Source: https://v3.tailwindcss.com/docs/guides/phoenix
+Source: https://v3.tailwindcss.com/docs/installation
 
-Run `mix phx.server` to start your Phoenix development server. This command will also trigger the Tailwind CSS build process, compiling your styles and applying them to your application for live preview.
+This command installs Tailwind CSS as a development dependency using npm and then initializes a `tailwind.config.js` file in your project. The `tailwindcss init` part creates a basic configuration file, which is essential for customizing Tailwind's default settings.
 
 ```Terminal
-mix phx.server
+npm install -D tailwindcss@3npx tailwindcss init
 ```
 
 --------------------------------
 
-### Create Qwik Project with npm
+### Create Phoenix Project
 
-Source: https://v3.tailwindcss.com/docs/guides/qwik
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
 
-Initialize a new Qwik project using Create Qwik. This command scaffolds the project structure and installs base dependencies required for Qwik development.
+Initialize a new Phoenix project using the mix command-line tool. This creates the project directory structure and installs initial dependencies.
 
 ```bash
-npm create qwik@latest my-project
-cd my-project
+mix phx.new myproject
+cd myproject
 ```
 
 --------------------------------
@@ -218,11 +216,11 @@ npm install -D postcss-import
 
 --------------------------------
 
-### Create SvelteKit Project
+### Create a new SvelteKit project using npx
 
 Source: https://v3.tailwindcss.com/docs/guides/sveltekit
 
-Initialize a new SvelteKit project using the official CLI tool. This creates the project directory structure and installs base dependencies required for a SvelteKit application.
+This command initializes a new SvelteKit project named 'my-project' and then navigates into its directory. It's the first step to set up a SvelteKit application.
 
 ```bash
 npx sv create my-project
@@ -244,19 +242,15 @@ cd my-project
 
 --------------------------------
 
-### Control grid column placement with Tailwind CSS `col-start` and `col-end`
+### Create a new Remix project
 
-Source: https://v3.tailwindcss.com/docs/grid-column
+Source: https://v3.tailwindcss.com/docs/guides/remix
 
-This example illustrates the use of `col-start-*` and `col-end-*` utilities to position grid items by specifying their starting and ending grid lines. These can also be combined with `col-span-*` for more precise control over column placement and spanning.
+Initialize a new Remix application using the official `create-remix` tool. This command sets up the basic project structure and navigates into the new directory.
 
-```html
-<div class="grid grid-cols-6 gap-4">
-  <div class="col-start-2 col-span-4 ...">01</div>
-  <div class="col-start-1 col-end-3 ...">02</div>
-  <div class="col-end-7 col-span-2 ...">03</div>
-  <div class="col-start-1 col-end-7 ...">04</div>
-</div>
+```Terminal
+npx create-remix@latest my-project
+cd my-project
 ```
 
 --------------------------------
@@ -281,22 +275,19 @@ Shows the HTML markup for a button component before and after extracting utility
 
 --------------------------------
 
-### Style Qwik Component with Tailwind Utility Classes
+### Control grid column placement with Tailwind CSS `col-start` and `col-end`
 
-Source: https://v3.tailwindcss.com/docs/guides/qwik
+Source: https://v3.tailwindcss.com/docs/grid-column
 
-Create a Qwik component using the component$ function and apply Tailwind CSS utility classes via the class attribute. This example demonstrates basic text styling with size, weight, and decoration utilities.
+This example illustrates the use of `col-start-*` and `col-end-*` utilities to position grid items by specifying their starting and ending grid lines. These can also be combined with `col-span-*` for more precise control over column placement and spanning.
 
-```typescript
-import { component$ } from '@builder.io/qwik'
-
-export default component$(() => {
-  return (
-    <h1 class="text-3xl font-bold underline">
-      Hello World!
-    </h1>
-  )
-})
+```html
+<div class="grid grid-cols-6 gap-4">
+  <div class="col-start-2 col-span-4 ...">01</div>
+  <div class="col-start-1 col-end-3 ...">02</div>
+  <div class="col-end-7 col-span-2 ...">03</div>
+  <div class="col-start-1 col-end-7 ...">04</div>
+</div>
 ```
 
 --------------------------------
@@ -364,6 +355,19 @@ module.exports = {
 
 --------------------------------
 
+### Create Astro Project with npm
+
+Source: https://v3.tailwindcss.com/docs/guides/astro
+
+Initialize a new Astro project using the create-astro CLI tool. This command creates a new directory with the project name and sets up the basic Astro project structure.
+
+```bash
+npm create astro@latest my-project
+cd my-project
+```
+
+--------------------------------
+
 ### Add Play CDN Script to HTML
 
 Source: https://v3.tailwindcss.com/docs/installation/play-cdn
@@ -388,14 +392,14 @@ Basic setup to use Tailwind CSS in the browser by adding the Play CDN script tag
 
 --------------------------------
 
-### Create Remix Project
+### Initialize a new Qwik project using npm
 
-Source: https://v3.tailwindcss.com/docs/guides/remix
+Source: https://v3.tailwindcss.com/docs/guides/qwik
 
-Initialize a new Remix project using the Create Remix CLI tool. This command creates a new directory with the project name and sets up the basic Remix project structure.
+This command initializes a new Qwik project named 'my-project' using `create qwik@latest` and then navigates into the newly created directory. It's the foundational step to set up a Qwik application before integrating Tailwind CSS.
 
 ```bash
-npx create-remix@latest my-project
+npm create qwik@latest my-project
 cd my-project
 ```
 
@@ -414,40 +418,14 @@ cd my-project
 
 --------------------------------
 
-### Install Tailwind CSS and Dependencies
+### Create Laravel Project with Composer
 
-Source: https://v3.tailwindcss.com/docs/guides/remix
+Source: https://v3.tailwindcss.com/docs/guides/laravel
 
-Install Tailwind CSS v3 and required PostCSS plugins as development dependencies, then generate configuration files. The init command creates tailwind.config.ts and postcss.config.js automatically.
-
-```bash
-npm install -D tailwindcss@3 postcss autoprefixer
-npx tailwindcss init --ts -p
-```
-
---------------------------------
-
-### Create a new Angular project using Angular CLI
-
-Source: https://v3.tailwindcss.com/docs/guides/angular
-
-This command initializes a new Angular application with the specified project name. It also navigates into the newly created project directory, preparing for subsequent installation steps.
-
-```Terminal
-ng new my-project
-cd my-project
-```
-
---------------------------------
-
-### Create Astro Project with npm
-
-Source: https://v3.tailwindcss.com/docs/guides/astro
-
-Initialize a new Astro project using the create-astro CLI tool. This command creates a new directory with the project name and sets up the basic Astro project structure.
+Initialize a new Laravel project using Composer's create-project command. This sets up the basic Laravel application structure and dependencies required for the framework.
 
 ```bash
-npm create astro@latest my-project
+composer create-project laravel/laravel my-project
 cd my-project
 ```
 
@@ -457,11 +435,108 @@ cd my-project
 
 Source: https://v3.tailwindcss.com/docs/guides/solidjs
 
-This command initializes a new SolidJS project using the Vite template for JavaScript and then navigates into the newly created project directory. It's the foundational step for setting up your development environment.
+Initialize a new SolidJS application quickly using `degit` and the official SolidJS Vite template. This command sets up the basic project structure and navigates into the new directory.
 
-```bash
+```shell
 npx degit solidjs/templates/js my-project
 cd my-project
+```
+
+--------------------------------
+
+### Install Tailwind CLI
+
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
+
+Run the mix command to download the standalone Tailwind CLI tool and generate the default tailwind.config.js configuration file in the assets directory.
+
+```bash
+mix tailwind.install
+```
+
+--------------------------------
+
+### Create Vite React Project
+
+Source: https://v3.tailwindcss.com/docs/guides/vite
+
+Initialize a new React project using Create Vite with the React template. This command creates a new directory with all necessary Vite configuration and React dependencies pre-configured.
+
+```bash
+npm create vite@latest my-project -- --template react
+cd my-project
+```
+
+--------------------------------
+
+### Install Tailwind CSS and PostCSS dependencies
+
+Source: https://v3.tailwindcss.com/docs/guides/remix
+
+Install Tailwind CSS, PostCSS, and Autoprefixer as development dependencies. Afterward, run the Tailwind CSS initialization command to generate `tailwind.config.ts` and `postcss.config.js` configuration files.
+
+```Terminal
+npm install -D tailwindcss@3 postcss autoprefixer
+npx tailwindcss init --ts -p
+```
+
+--------------------------------
+
+### Create Angular Project with CLI
+
+Source: https://v3.tailwindcss.com/docs/guides/angular
+
+Initialize a new Angular project using Angular CLI. This creates the project directory structure and installs core Angular dependencies required for the application.
+
+```bash
+ng new my-project
+cd my-project
+```
+
+--------------------------------
+
+### Apply Tailwind CSS classes and PostCSS in Svelte component
+
+Source: https://v3.tailwindcss.com/docs/guides/sveltekit
+
+This `+page.svelte` example demonstrates applying Tailwind utility classes directly to HTML elements. It also shows how to use a `<style lang="postcss">` block for global styles, enabling theme functions and other PostCSS features within Svelte components.
+
+```svelte
+<h1 class="text-3xl font-bold underline">
+  Hello world!
+</h1>
+
+<style lang="postcss">
+  :global(html) {
+    background-color: theme(colors.gray.100);
+  }
+</style>
+```
+
+--------------------------------
+
+### Install Tailwind CSS and Dependencies
+
+Source: https://v3.tailwindcss.com/docs/guides/nextjs
+
+Install Tailwind CSS v3 along with peer dependencies (PostCSS and Autoprefixer) as development dependencies. The init command generates tailwind.config.js and postcss.config.js configuration files.
+
+```bash
+npm install -D tailwindcss@3 postcss autoprefixer
+npx tailwindcss init -p
+```
+
+--------------------------------
+
+### Install Tailwind CSS and Dependencies
+
+Source: https://v3.tailwindcss.com/docs/guides/adonisjs
+
+Install Tailwind CSS v3 along with PostCSS and Autoprefixer as development dependencies. The init command generates the required configuration files automatically.
+
+```bash
+npm install -D tailwindcss@3 postcss autoprefixer
+npx tailwindcss init -p
 ```
 
 --------------------------------
@@ -483,32 +558,6 @@ touch src/index.html
 
 --------------------------------
 
-### Create Vite React Project
-
-Source: https://v3.tailwindcss.com/docs/guides/vite
-
-Initialize a new React project using Create Vite with the React template. This command creates a new directory with all necessary Vite configuration and React dependencies pre-configured.
-
-```bash
-npm create vite@latest my-project -- --template react
-cd my-project
-```
-
---------------------------------
-
-### Install Tailwind CSS and Dependencies
-
-Source: https://v3.tailwindcss.com/docs/guides/nextjs
-
-Install Tailwind CSS v3 along with peer dependencies (PostCSS and Autoprefixer) as development dependencies. The init command generates tailwind.config.js and postcss.config.js configuration files.
-
-```bash
-npm install -D tailwindcss@3 postcss autoprefixer
-npx tailwindcss init -p
-```
-
---------------------------------
-
 ### Install Tailwind CSS via npm
 
 Source: https://v3.tailwindcss.com/docs/guides/create-react-app
@@ -522,27 +571,20 @@ npx tailwindcss init
 
 --------------------------------
 
-### Install Tailwind CSS and initialize configuration in Angular
+### Apply Tailwind CSS utility classes in a Remix component
 
-Source: https://v3.tailwindcss.com/docs/guides/angular
+Source: https://v3.tailwindcss.com/docs/guides/remix
 
-This step installs `tailwindcss`, `postcss`, and `autoprefixer` as development dependencies via npm. After installation, it runs the `npx tailwindcss init` command to generate a `tailwind.config.js` file, which is crucial for configuring Tailwind CSS.
+Demonstrates how to use Tailwind's utility classes directly within a Remix component's JSX. This example applies text size, font weight, and underline styles to an `h1` element.
 
-```Terminal
-npm install -D tailwindcss@3 postcss autoprefixer
-npx tailwindcss init
-```
-
---------------------------------
-
-### Create a new Rspack project using npm
-
-Source: https://v3.tailwindcss.com/docs/guides/rspack
-
-This command initializes a new Rspack project using the `rspack@latest` CLI. It sets up the basic project structure and necessary configuration files.
-
-```bash
-npm create rspack@latest
+```tsx
+export default function Index() {
+  return (
+    <h1 className="text-3xl font-bold underline">
+      Hello world!
+    </h1>
+  )
+}
 ```
 
 --------------------------------
@@ -577,26 +619,14 @@ This example shows a chat notification UI using traditional HTML structure and c
 
 --------------------------------
 
-### Initialize a new AdonisJS project using npm
+### Create a new Rspack project using npm
 
-Source: https://v3.tailwindcss.com/docs/guides/adonisjs
+Source: https://v3.tailwindcss.com/docs/guides/rspack
 
-This command creates a new AdonisJS project named 'my-project' with the 'web' kit, which includes common web development tools. It sets up the basic project structure and dependencies.
+This command initializes a new Rspack project using the `rspack@latest` CLI. It sets up the basic project structure and necessary configuration files.
 
 ```bash
-npm init adonisjs@latest my-project -- --kit=webcd my-project
-```
-
---------------------------------
-
-### Install Tailwind CSS CLI with Phoenix Mix Task
-
-Source: https://v3.tailwindcss.com/docs/guides/phoenix
-
-Run the `mix tailwind.install` command to download the standalone Tailwind CLI executable. This command also generates a default `tailwind.config.js` file in your `./assets` directory, setting up the core configuration for Tailwind CSS.
-
-```Terminal
-mix tailwind.install
+npm create rspack@latest
 ```
 
 --------------------------------
@@ -609,19 +639,6 @@ Install the Symfony Webpack Encore bundle using Composer. This package handles b
 
 ```bash
 composer require symfony/webpack-encore-bundle
-```
-
---------------------------------
-
-### Install Tailwind CSS and PostCSS dependencies for Gatsby
-
-Source: https://v3.tailwindcss.com/docs/guides/gatsby
-
-This command installs `tailwindcss`, `postcss`, `autoprefixer`, and `gatsby-plugin-postcss` as development dependencies using npm. It then initializes Tailwind CSS, generating `tailwind.config.js` and `postcss.config.js` for further configuration.
-
-```Terminal
-npm install -D tailwindcss@3 postcss autoprefixer gatsby-plugin-postcss
-npx tailwindcss init -p
 ```
 
 --------------------------------
@@ -639,6 +656,19 @@ cd my-project
 
 --------------------------------
 
+### Install Tailwind CSS and PostCSS dependencies for Gatsby
+
+Source: https://v3.tailwindcss.com/docs/guides/gatsby
+
+This command installs `tailwindcss`, `postcss`, `autoprefixer`, and `gatsby-plugin-postcss` as development dependencies using npm. It then initializes Tailwind CSS, generating `tailwind.config.js` and `postcss.config.js` for further configuration.
+
+```Terminal
+npm install -D tailwindcss@3 postcss autoprefixer gatsby-plugin-postcss
+npx tailwindcss init -p
+```
+
+--------------------------------
+
 ### Installing Autoprefixer as a Development Dependency
 
 Source: https://v3.tailwindcss.com/docs/browser-support
@@ -647,18 +677,6 @@ This command demonstrates how to install `autoprefixer` using npm, saving it as 
 
 ```bash
 npm install -D autoprefixer
-```
-
---------------------------------
-
-### Install Tailwind CSS and PostCSS dependencies for AdonisJS
-
-Source: https://v3.tailwindcss.com/docs/guides/adonisjs
-
-This command installs Tailwind CSS, PostCSS, and Autoprefixer as development dependencies. It then initializes Tailwind CSS, generating `tailwind.config.js` and `postcss.config.js` files for configuration.
-
-```bash
-npm install -D tailwindcss@3 postcss autoprefixernpx tailwindcss init -p
 ```
 
 --------------------------------
@@ -676,6 +694,31 @@ npx tailwindcss init
 
 --------------------------------
 
+### Create a new Gatsby project using Gatsby CLI
+
+Source: https://v3.tailwindcss.com/docs/guides/gatsby
+
+This command initializes a new Gatsby project with a specified name and then navigates into the project directory. It's the first step to set up a Gatsby application before integrating Tailwind CSS.
+
+```Terminal
+gatsby new my-project
+cd my-project
+```
+
+--------------------------------
+
+### Install Tailwind CSS Typography plugin via npm
+
+Source: https://v3.tailwindcss.com/docs/typography-plugin
+
+Provides the command to install the `@tailwindcss/typography` plugin as a development dependency using npm. This step is required before configuring and using the plugin in a project.
+
+```bash
+npm install -D @tailwindcss/typography
+```
+
+--------------------------------
+
 ### Install Tailwind CSS with Astro Integration
 
 Source: https://v3.tailwindcss.com/docs/guides/astro
@@ -688,14 +731,14 @@ npx astro add tailwind
 
 --------------------------------
 
-### Create a new Gatsby project using Gatsby CLI
+### Create a new Meteor project using CLI
 
-Source: https://v3.tailwindcss.com/docs/guides/gatsby
+Source: https://v3.tailwindcss.com/docs/guides/meteor
 
-This command initializes a new Gatsby project with a specified name and then navigates into the project directory. It's the first step to set up a Gatsby application before integrating Tailwind CSS.
+This command initializes a new Meteor application named 'my-project' and then navigates into the newly created project directory. It's the first step to set up your development environment.
 
-```Terminal
-gatsby new my-project
+```terminal
+meteor create my-project
 cd my-project
 ```
 
@@ -713,15 +756,26 @@ npm install -D tailwindcss@3 postcss postcss-loader autoprefixernpx tailwindcss 
 
 --------------------------------
 
-### Create a new Meteor project using CLI
+### Integrate Compiled Tailwind CSS into HTML
 
-Source: https://v3.tailwindcss.com/docs/guides/meteor
+Source: https://v3.tailwindcss.com/docs/index
 
-This command initializes a new Meteor application named 'my-project' and then navigates into the newly created project directory. It's the first step to set up your development environment.
+Links the generated `output.css` file in the `<head>` section of an HTML document. This step makes Tailwind's utility classes available for styling your content directly within your HTML markup.
 
-```terminal
-meteor create my-project
-cd my-project
+```html
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="./output.css" rel="stylesheet">
+</head>
+<body>
+  <h1 class="text-3xl font-bold underline">
+    Hello world!
+  </h1>
+</body>
+</html>
 ```
 
 --------------------------------
@@ -751,26 +805,34 @@ module.exports = {
 
 --------------------------------
 
-### Integrate Compiled Tailwind CSS into HTML
+### Align Grid Item to Start with place-self-start
 
-Source: https://v3.tailwindcss.com/docs/index
+Source: https://v3.tailwindcss.com/docs/place-self
 
-Links the generated `output.css` file in the `<head>` section of an HTML document. This step makes Tailwind's utility classes available for styling your content directly within your HTML markup.
+Shows how to use place-self-start to align a grid item to the start position on both horizontal and vertical axes. Useful for positioning items at the top-left corner of their grid cell.
 
 ```html
-<!doctype html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="./output.css" rel="stylesheet">
-</head>
-<body>
-  <h1 class="text-3xl font-bold underline">
-    Hello world!
-  </h1>
-</body>
-</html>
+<div class="grid grid-cols-3 gap-4 ...">
+  <div>01</div>
+  <div class="place-self-start ...">02</div>
+  <div>03</div>
+  <div>04</div>
+  <div>05</div>
+  <div>06</div>
+</div>
+```
+
+--------------------------------
+
+### Create AdonisJS Project with npm
+
+Source: https://v3.tailwindcss.com/docs/guides/adonisjs
+
+Initialize a new AdonisJS project using the Create AdonisJS CLI tool. This command creates a new project directory with the web kit preset, which includes necessary dependencies and project structure.
+
+```bash
+npm init adonisjs@latest my-project -- --kit=web
+cd my-project
 ```
 
 --------------------------------
@@ -796,66 +858,34 @@ module.exports = {
 
 --------------------------------
 
-### Align Grid Item to Start with place-self-start
+### Configure Tailwind Plugin in config.exs
 
-Source: https://v3.tailwindcss.com/docs/place-self
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
 
-Shows how to use place-self-start to align a grid item to the start position on both horizontal and vertical axes. Useful for positioning items at the top-left corner of their grid cell.
+Set up Tailwind CSS configuration including version, CLI arguments for input/output paths, and asset directory. This file specifies which Tailwind version to use and how to process CSS files.
 
-```html
-<div class="grid grid-cols-3 gap-4 ...">
-  <div>01</div>
-  <div class="place-self-start ...">02</div>
-  <div>03</div>
-  <div>04</div>
-  <div>05</div>
-  <div>06</div>
-</div>
+```elixir
+config :tailwind, version: "3.4.17", default: [
+  args: ~w(
+    --config=tailwind.config.js
+    --input=css/app.css
+    --output=../priv/static/assets/app.css
+  ),
+  cd: Path.expand("../assets", __DIR__)
+]
 ```
 
 --------------------------------
 
-### Use Tailwind Utility Classes in React Component
+### Install Tailwind CSS and Dependencies via npm
 
-Source: https://v3.tailwindcss.com/docs/guides/remix
+Source: https://v3.tailwindcss.com/docs/guides/angular
 
-Apply Tailwind CSS utility classes to React components using the className attribute. This example demonstrates basic text styling with Tailwind's responsive and utility classes.
-
-```typescript
-export default function Index() {
-  return (
-    <h1 className="text-3xl font-bold underline">
-      Hello world!
-    </h1>
-  )
-}
-```
-
---------------------------------
-
-### Create a new Ember.js project using Ember CLI
-
-Source: https://v3.tailwindcss.com/docs/guides/emberjs
-
-This command initializes a new Ember.js project named 'my-project' with Embroider support and without a welcome page. It then navigates into the newly created project directory, preparing it for further configuration.
+Install Tailwind CSS v3, PostCSS, and Autoprefixer as development dependencies, then generate the default Tailwind configuration file. These tools are required for processing Tailwind's utility classes.
 
 ```bash
-npx ember-cli new my-project --embroider --no-welcomecd my-project
-```
-
---------------------------------
-
-### Override Component Classes with Tailwind Utilities
-
-Source: https://v3.tailwindcss.com/docs/adding-custom-styles
-
-Demonstrates how utility classes can override component styles defined in the components layer. In this example, the rounded-none utility overrides the border-radius from the card component.
-
-```HTML
-<!-- Will look like a card, but with square corners -->
-<div class="card rounded-none">
-  <!-- ... -->
-</div>
+npm install -D tailwindcss@3 postcss autoprefixer
+npx tailwindcss init
 ```
 
 --------------------------------
@@ -895,6 +925,21 @@ Extend the default Tailwind theme by modifying the tailwind.config object within
 
 --------------------------------
 
+### Override Component Classes with Tailwind Utilities
+
+Source: https://v3.tailwindcss.com/docs/adding-custom-styles
+
+Demonstrates how utility classes can override component styles defined in the components layer. In this example, the rounded-none utility overrides the border-radius from the card component.
+
+```HTML
+<!-- Will look like a card, but with square corners -->
+<div class="card rounded-none">
+  <!-- ... -->
+</div>
+```
+
+--------------------------------
+
 ### Apply Tailwind CSS Utility Classes in Astro
 
 Source: https://v3.tailwindcss.com/docs/guides/astro
@@ -905,6 +950,42 @@ Use Tailwind CSS utility classes to style HTML elements in Astro components. Thi
 <h1 class="text-3xl font-bold underline">
   Hello world!
 </h1>
+```
+
+--------------------------------
+
+### Create a new Ember.js project using Ember CLI
+
+Source: https://v3.tailwindcss.com/docs/guides/emberjs
+
+This command initializes a new Ember.js project named 'my-project' with Embroider support and without a welcome page. It then navigates into the newly created project directory, preparing it for further configuration.
+
+```bash
+npx ember-cli new my-project --embroider --no-welcomecd my-project
+```
+
+--------------------------------
+
+### Apply `prose` classes to an HTML article with example content
+
+Source: https://v3.tailwindcss.com/docs/typography-plugin
+
+Presents a comprehensive example of using `prose` and responsive `lg:prose-xl` classes on an `<article>` element containing various HTML tags like `<h1>` and `<p>`. This demonstrates how the plugin automatically styles common typographic elements within the provided content.
+
+```html
+<article class="prose lg:prose-xl">
+  <h1>Garlic bread with cheese: What the science tells us</h1>
+  <p>
+    For years parents have espoused the health benefits of eating garlic bread with cheese to their
+    children, with the food earning such an iconic status in our culture that kids will often dress
+    up as warm, cheesy loaf for Halloween.
+  </p>
+  <p>
+    But a recent study shows that the celebrated appetizer may be linked to a series of rabies cases
+    springing up around the country.
+  </p>
+  <!-- ... -->
+</article>
 ```
 
 --------------------------------
@@ -928,14 +1009,16 @@ Aligns grid items to the start of their grid areas on both axes using the place-
 
 --------------------------------
 
-### Install Tailwind CSS Typography Plugin
+### Use arbitrary grid column values in HTML
 
-Source: https://v3.tailwindcss.com/docs/typography-plugin
+Source: https://v3.tailwindcss.com/docs/grid-column
 
-Install the @tailwindcss/typography package from npm as a development dependency. This plugin provides prose classes for styling vanilla HTML content.
+Apply one-off grid column values directly in HTML using square bracket notation without modifying the theme config. This example uses an arbitrary col-[16_/_span_16] utility class for a custom grid span.
 
-```bash
-npm install -D @tailwindcss/typography
+```html
+<div class="col-[16_/_span_16]">
+  <!-- ... -->
+</div>
 ```
 
 --------------------------------
@@ -973,38 +1056,6 @@ Illustrates the practical application and output of the `prefix` configuration. 
 
 --------------------------------
 
-### Use arbitrary grid column values in HTML
-
-Source: https://v3.tailwindcss.com/docs/grid-column
-
-Apply one-off grid column values directly in HTML using square bracket notation without modifying the theme config. This example uses an arbitrary col-[16_/_span_16] utility class for a custom grid span.
-
-```html
-<div class="col-[16_/_span_16]">
-  <!-- ... -->
-</div>
-```
-
---------------------------------
-
-### Example of using Tailwind CSS classes in a SolidJS component
-
-Source: https://v3.tailwindcss.com/docs/guides/solidjs
-
-This SolidJS component demonstrates how to apply Tailwind CSS utility classes directly to HTML elements within your JSX. It shows a basic `h1` element styled with bold text, a large font size, and an underline, illustrating immediate usage of Tailwind.
-
-```jsx
-export default function App() {
-  return (
-    <h1 class="text-3xl font-bold underline">
-      Hello world!
-    </h1>
-  )
-}
-```
-
---------------------------------
-
 ### Place Content Start - Tailwind CSS Grid Alignment
 
 Source: https://v3.tailwindcss.com/docs/place-content
@@ -1022,30 +1073,6 @@ Packs grid items against the start of the block axis using the place-content-sta
 
 --------------------------------
 
-### Include compiled CSS and use Tailwind classes in app.blade.php
-
-Source: https://v3.tailwindcss.com/docs/guides/laravel
-
-This HTML snippet for `app.blade.php` demonstrates how to include the compiled CSS using Laravel Vite's `@vite` directive within the `<head>` section. It also shows an example of applying Tailwind CSS utility classes to an `<h1>` element.
-
-```HTML
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  @vite('resources/css/app.css')
-</head>
-<body>
-  <h1 class="text-3xl font-bold underline">
-    Hello world!
-  </h1>
-</body>
-</html>
-```
-
---------------------------------
-
 ### Generate PostCSS and Tailwind CSS config files via CLI
 
 Source: https://v3.tailwindcss.com/docs/configuration
@@ -1058,22 +1085,6 @@ npx tailwindcss init -p
 
 --------------------------------
 
-### Add Tailwind Plugin Dependency to Phoenix
-
-Source: https://v3.tailwindcss.com/docs/guides/phoenix
-
-Add the `:tailwind` dependency to your `mix.exs` file to integrate the Tailwind CSS plugin into your Phoenix project. After adding, run `mix deps.get` to fetch and install the new dependency.
-
-```Elixir
-defp deps do
-  [
-    {:tailwind, "~> 0.1", runtime: Mix.env() == :dev}
-  ]
-end
-```
-
---------------------------------
-
 ### Define Gradient Starting Color with from-* Utility
 
 Source: https://v3.tailwindcss.com/docs/gradient-color-stops
@@ -1082,22 +1093,6 @@ Sets the starting color of a gradient using Tailwind's from-* utilities. The exa
 
 ```html
 <div class="bg-gradient-to-r from-indigo-500 ..."></div>
-```
-
---------------------------------
-
-### Import CSS in SvelteKit Layout
-
-Source: https://v3.tailwindcss.com/docs/guides/sveltekit
-
-Create a root layout component (+layout.svelte) and import the app.css file to make Tailwind styles available globally throughout the application.
-
-```svelte
-<script>
-  import "../app.css";
-</script>
-
-<slot />
 ```
 
 --------------------------------
@@ -1156,16 +1151,38 @@ Illustrates how to use `row-start-*` and `row-end-*` utilities to precisely posi
 
 --------------------------------
 
-### Apply Responsive Contrast at Breakpoints in Tailwind CSS
+### Add Tailwind Dependency to mix.exs
 
-Source: https://v3.tailwindcss.com/docs/contrast
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
 
-This example demonstrates applying contrast utilities responsively using breakpoint variant modifiers. The `md:contrast-150` class ensures that the `contrast-150` utility is only active on medium screen sizes and above, adapting the design to different viewports.
+Configure the Tailwind plugin as a development dependency in the Phoenix project's mix.exs file. The plugin is only loaded during development mode.
 
-```html
-<div class="contrast-125 md:contrast-150">
-  <!-- ... -->
-</div>
+```elixir
+defp deps do
+  [
+    {:tailwind, "~> 0.1", runtime: Mix.env() == :dev}
+  ]
+end
+```
+
+--------------------------------
+
+### Configure Deployment Alias in mix.exs
+
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
+
+Define the assets.deploy alias to build and minify CSS during production deployment. This ensures Tailwind CSS is compiled and optimized when deploying the application.
+
+```elixir
+defp aliases do
+  [
+    setup: ["deps.get", "ecto.setup"],
+    "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
+    "ecto.reset": ["ecto.drop", "ecto.setup"],
+    test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+    "assets.deploy": ["tailwind default --minify", "esbuild default --minify", "phx.digest"]
+  ]
+end
 ```
 
 --------------------------------
@@ -1198,14 +1215,16 @@ Demonstrates how Tailwind CSS classes are applied directly within HTML attribute
 
 --------------------------------
 
-### Generate default Tailwind CSS configuration file using CLI
+### Apply Responsive Contrast at Breakpoints in Tailwind CSS
 
-Source: https://v3.tailwindcss.com/docs/configuration
+Source: https://v3.tailwindcss.com/docs/contrast
 
-This command initializes a basic `tailwind.config.js` file at the root of your project. It's the standard way to set up Tailwind CSS configuration, providing a minimal starting point for customization.
+This example demonstrates applying contrast utilities responsively using breakpoint variant modifiers. The `md:contrast-150` class ensures that the `contrast-150` utility is only active on medium screen sizes and above, adapting the design to different viewports.
 
-```bash
-npx tailwindcss init
+```html
+<div class="contrast-125 md:contrast-150">
+  <!-- ... -->
+</div>
 ```
 
 --------------------------------
@@ -1223,25 +1242,6 @@ export default function Home() {
       Hello world!
     </h1>
   )
-}
-```
-
---------------------------------
-
-### Configure Tailwind Template Paths
-
-Source: https://v3.tailwindcss.com/docs/guides/qwik
-
-Configure content paths in tailwind.config.js to specify which template files Tailwind should scan for class names. This enables Tailwind to generate only the CSS utilities used in your project.
-
-```javascript
-/** @type {import('tailwindcss').Config} */
-module.exports = {
-  content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
 }
 ```
 
@@ -1266,6 +1266,83 @@ export default {
 
 --------------------------------
 
+### Use Tailwind Utility Classes in Edge Template
+
+Source: https://v3.tailwindcss.com/docs/guides/adonisjs
+
+Create an AdonisJS Edge template with Tailwind CSS utility classes. The example demonstrates including compiled CSS via Vite and applying Tailwind classes for styling HTML elements.
+
+```html
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body>
+  <h1 class="text-3xl font-bold underline">
+    Hello world!
+  </h1>
+</body>
+</html>
+```
+
+--------------------------------
+
+### Generate default Tailwind CSS configuration file using CLI
+
+Source: https://v3.tailwindcss.com/docs/configuration
+
+This command initializes a basic `tailwind.config.js` file at the root of your project. It's the standard way to set up Tailwind CSS configuration, providing a minimal starting point for customization.
+
+```bash
+npx tailwindcss init
+```
+
+--------------------------------
+
+### Apply Tailwind Utility Classes in Angular Template
+
+Source: https://v3.tailwindcss.com/docs/guides/angular
+
+Use Tailwind CSS utility classes directly in Angular component templates to style HTML elements. This example demonstrates applying text size, font weight, and text decoration utilities.
+
+```html
+<h1 class="text-3xl font-bold underline">
+  Hello world!
+</h1>
+```
+
+--------------------------------
+
+### Enable Tailwind Watcher in dev.exs
+
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
+
+Configure the Tailwind watcher in development mode to automatically rebuild CSS when template files change. This enables hot-reloading during development.
+
+```elixir
+watchers: [
+  esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]},
+  tailwind: {Tailwind, :install_and_run, [:default, ~w(--watch)]}
+]
+```
+
+--------------------------------
+
+### Apply Arbitrary Aspect Ratio Value
+
+Source: https://v3.tailwindcss.com/docs/aspect-ratio
+
+Use square bracket syntax to generate custom aspect ratio values on the fly without modifying the theme configuration. This example applies a 4/3 aspect ratio using arbitrary value syntax.
+
+```html
+<iframe class="w-full aspect-[4/3]" src="https://www.youtube.com/..."></iframe>
+```
+
+--------------------------------
+
 ### Apply justify-start utility in Tailwind CSS
 
 Source: https://v3.tailwindcss.com/docs/justify-content
@@ -1278,19 +1355,6 @@ Demonstrates how to use the `justify-start` utility class in Tailwind CSS to ali
   <div>02</div>
   <div>03</div>
 </div>
-```
-
---------------------------------
-
-### Install Tailwind CSS Rails Gem
-
-Source: https://v3.tailwindcss.com/docs/guides/ruby-on-rails
-
-Add the tailwindcss-rails gem to your project dependencies and run the install command to generate the Tailwind configuration file in the config directory.
-
-```bash
-./bin/bundle add tailwindcss-rails
-./bin/rails tailwindcss:install
 ```
 
 --------------------------------
@@ -1327,38 +1391,6 @@ Applies justify-items alignment conditionally on hover using the hover: variant 
 
 --------------------------------
 
-### Apply Tailwind CSS classes in a Nuxt Vue component
-
-Source: https://v3.tailwindcss.com/docs/guides/nuxtjs
-
-This example demonstrates how to use Tailwind's utility classes directly within the `template` section of a Vue component in Nuxt. It applies text size, font weight, and underline styles to an `<h1>` element.
-
-```vue
-<template>
-  <h1 class="text-3xl font-bold underline">
-    Hello world!
-  </h1>
-</template>
-```
-
---------------------------------
-
-### Configure PostCSS for Tailwind CSS
-
-Source: https://v3.tailwindcss.com/docs/guides/parcel
-
-Create a .postcssrc configuration file in the project root to enable the Tailwind CSS plugin. This file tells PostCSS to process Tailwind directives during the build process.
-
-```json
-{
-  "plugins": {
-    "tailwindcss": {}
-  }
-}
-```
-
---------------------------------
-
 ### Use Tailwind Utility Classes in Rails Templates
 
 Source: https://v3.tailwindcss.com/docs/guides/ruby-on-rails
@@ -1389,35 +1421,18 @@ Uses the self-start class to align a flex item to the start of the container's c
 
 --------------------------------
 
-### Configure Tailwind Template Paths
+### Apply Tailwind CSS classes in a Nuxt Vue component
 
-Source: https://v3.tailwindcss.com/docs/guides/sveltekit
+Source: https://v3.tailwindcss.com/docs/guides/nuxtjs
 
-Specify the paths to all template files in tailwind.config.js so Tailwind can scan and generate CSS for all used utility classes. This configuration supports HTML, JavaScript, Svelte, and TypeScript files.
+This example demonstrates how to use Tailwind's utility classes directly within the `template` section of a Vue component in Nuxt. It applies text size, font weight, and underline styles to an `<h1>` element.
 
-```javascript
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: ['./src/**/*.{html,js,svelte,ts}'],
-  theme: {
-    extend: {}
-  },
-  plugins: []
-};
-```
-
---------------------------------
-
-### Force hardware acceleration for transforms in Tailwind CSS
-
-Source: https://v3.tailwindcss.com/docs/translate
-
-This example shows how to apply the `transform-gpu` utility class to an element to force hardware acceleration for its transforms. This can improve performance for transitions by offloading rendering to the GPU. The `transform-cpu` utility is also mentioned for reverting this behavior conditionally.
-
-```html
-<div class="translate-y-6 transform-gpu">
-  <!-- ... -->
-</div>
+```vue
+<template>
+  <h1 class="text-3xl font-bold underline">
+    Hello world!
+  </h1>
+</template>
 ```
 
 --------------------------------
@@ -1446,6 +1461,22 @@ module.exports = {
 
 --------------------------------
 
+### Configure PostCSS for Tailwind CSS
+
+Source: https://v3.tailwindcss.com/docs/guides/parcel
+
+Create a .postcssrc configuration file in the project root to enable the Tailwind CSS plugin. This file tells PostCSS to process Tailwind directives during the build process.
+
+```json
+{
+  "plugins": {
+    "tailwindcss": {}
+  }
+}
+```
+
+--------------------------------
+
 ### Add custom col-start utilities in Tailwind config
 
 Source: https://v3.tailwindcss.com/docs/grid-column
@@ -1466,6 +1497,158 @@ module.exports = {
     }
   }
 }
+```
+
+--------------------------------
+
+### Configure Tailwind CSS content paths in tailwind.config.js
+
+Source: https://v3.tailwindcss.com/docs/guides/qwik
+
+This configuration snippet for `tailwind.config.js` specifies the files where Tailwind CSS should scan for utility classes. It ensures that all JavaScript, TypeScript, JSX, TSX, and MDX files within the `src` directory are processed to generate the final optimized CSS output.
+
+```javascript
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+```
+
+--------------------------------
+
+### Configure Template Paths in tailwind.config.js
+
+Source: https://v3.tailwindcss.com/docs/guides/phoenix
+
+Specify content paths for Tailwind to scan for utility class usage. This configuration tells Tailwind which files to analyze to determine which CSS classes to generate.
+
+```javascript
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    './js/**/*.js',
+    '../lib/*_web.ex',
+    '../lib/*_web/**/*.*ex',
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+```
+
+--------------------------------
+
+### Force hardware acceleration for transforms in Tailwind CSS
+
+Source: https://v3.tailwindcss.com/docs/translate
+
+This example shows how to apply the `transform-gpu` utility class to an element to force hardware acceleration for its transforms. This can improve performance for transitions by offloading rendering to the GPU. The `transform-cpu` utility is also mentioned for reverting this behavior conditionally.
+
+```html
+<div class="translate-y-6 transform-gpu">
+  <!-- ... -->
+</div>
+```
+
+--------------------------------
+
+### Justify Items Start - Tailwind CSS Grid Alignment
+
+Source: https://v3.tailwindcss.com/docs/justify-items
+
+Aligns grid items against the start of their inline axis using the justify-items-start utility class. Apply this class to a grid container to left-align (or start-align in RTL) all child items within their grid cells.
+
+```html
+<div class="grid justify-items-start ...">
+  <div>01</div>
+  <div>02</div>
+  <div>03</div>
+  <div>04</div>
+  <div>05</div>
+  <div>06</div>
+</div>
+```
+
+--------------------------------
+
+### Use Tailwind Utility Classes in Blade Template
+
+Source: https://v3.tailwindcss.com/docs/guides/laravel
+
+Apply Tailwind CSS utility classes directly in HTML elements within Blade templates. This example demonstrates basic styling with text size, font weight, and text decoration utilities in a Laravel Blade file.
+
+```html
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  @vite('resources/css/app.css')
+</head>
+<body>
+  <h1 class="text-3xl font-bold underline">
+    Hello world!
+  </h1>
+</body>
+</html>
+```
+
+--------------------------------
+
+### Apply inline start scroll padding with `scroll-ps-20` (CSS)
+
+Source: https://v3.tailwindcss.com/docs/scroll-padding
+
+The `scroll-ps-20` utility class sets the inline start scroll padding of an element to `5rem` (80px). This is useful for ensuring content aligns correctly within a scroll container, respecting text directionality.
+
+```css
+scroll-padding-inline-start: 5rem; /* 80px */
+```
+
+--------------------------------
+
+### Position Replaced Elements with Tailwind CSS Object Utilities
+
+Source: https://v3.tailwindcss.com/docs/object-position
+
+HTML examples demonstrating how to use Tailwind's object-* utility classes to position replaced elements (images) within fixed-size containers. The object-none class prevents content scaling, while object-* classes control positioning. Each example uses a 24x24 pixel container with a yellow background to visualize positioning.
+
+```html
+<img class="object-none object-left-top bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-top bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-right-top bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-left bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-center bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-right bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-left-bottom bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-bottom bg-yellow-300 w-24 h-24 ..." src="...">
+<img class="object-none object-right-bottom bg-yellow-300 w-24 h-24 ..." src="...">
+```
+
+--------------------------------
+
+### Enable PostCSS processing in SvelteKit's svelte.config.js
+
+Source: https://v3.tailwindcss.com/docs/guides/sveltekit
+
+This configuration updates `svelte.config.js` to import `vitePreprocess` from `@sveltejs/vite-plugin-svelte`. It enables SvelteKit to process `<style>` blocks using PostCSS, which is required for Tailwind CSS to function correctly within Svelte components.
+
+```javascript
+import adapter from '@sveltejs/adapter-auto';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+  kit: {
+    adapter: adapter()
+  },
+  preprocess: vitePreprocess()
+};
+export default config;
 ```
 
 --------------------------------
@@ -1500,88 +1683,69 @@ This example demonstrates the recommended approach for organizing CSS with `post
 
 --------------------------------
 
-### Apply Tailwind CSS classes in an AdonisJS Edge template
+### Add custom col-span utilities in Tailwind config
 
-Source: https://v3.tailwindcss.com/docs/guides/adonisjs
+Source: https://v3.tailwindcss.com/docs/grid-column
 
-This example demonstrates how to include the compiled CSS in an AdonisJS Edge template and use Tailwind's utility classes to style HTML elements. The `@vite` directive ensures that the CSS and JavaScript assets are properly linked.
-
-```html
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  @vite(['resources/css/app.css', 'resources/js/app.js'])
-</head>
-<body>
-  <h1 class="text-3xl font-bold underline">
-    Hello world!
-  </h1>
-</body>
-</html>
-```
-
---------------------------------
-
-### Configure SvelteKit for PostCSS Processing
-
-Source: https://v3.tailwindcss.com/docs/guides/sveltekit
-
-Enable PostCSS processing in SvelteKit style blocks by importing and configuring vitePreprocess in svelte.config.js. This allows Tailwind directives to be processed within component styles.
+Customize the gridColumn section of your Tailwind theme config to add new col-span-* utilities. The span keyword must be included directly in the value name as it configures the grid-column shorthand property. This example adds a col-span-16 utility.
 
 ```javascript
-import adapter from '@sveltejs/adapter-auto';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-/** @type {import('@sveltejs/kit').Config} */
-const config = {
-  kit: {
-    adapter: adapter()
-  },
-  preprocess: vitePreprocess()
-};
-
-export default config;
+module.exports = {
+  theme: {
+    extend: {
+      gridColumn: {
+        'span-16': 'span 16 / span 16',
+      }
+    }
+  }
+}
 ```
 
 --------------------------------
 
-### Justify Items Start - Tailwind CSS Grid Alignment
+### Use Tailwind CSS utility classes in a React component
 
-Source: https://v3.tailwindcss.com/docs/justify-items
+Source: https://v3.tailwindcss.com/docs/guides/meteor
 
-Aligns grid items against the start of their inline axis using the justify-items-start utility class. Apply this class to a grid container to left-align (or start-align in RTL) all child items within their grid cells.
+This example demonstrates how to apply Tailwind CSS utility classes directly within a React component's JSX. It shows a simple `h1` element styled with text size, font weight, and an underline, confirming that Tailwind is correctly integrated and working.
+
+```jsx
+export const App = () => (
+  <h1 className="text-3xl font-bold underline">
+    Hello world!
+  </h1>
+)
+```
+
+--------------------------------
+
+### Implement Scroll Snap Start with Tailwind CSS HTML
+
+Source: https://v3.tailwindcss.com/docs/scroll-snap-align
+
+This HTML snippet illustrates the use of the `snap-start` utility class in Tailwind CSS. When applied to child elements within a scroll container (which has `snap-x` or `snap-y`), it causes each element to snap to its starting edge (left for horizontal, top for vertical) as the user scrolls.
 
 ```html
-<div class="grid justify-items-start ...">
-  <div>01</div>
-  <div>02</div>
-  <div>03</div>
-  <div>04</div>
-  <div>05</div>
-  <div>06</div>
+<div class="snap-x ...">
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1604999565976-8913ad2ddb7c?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1540206351-d6465b3ac5c1?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1622890806166-111d7f6c7c97?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1590523277543-a94d2e4eb00b?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1575424909138-46b05e5919ec?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
+  <div class="snap-start ...">
+    <img src="https://images.unsplash.com/photo-1559333086-b0a56225a93c?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
+  </div>
 </div>
-```
-
---------------------------------
-
-### Position Replaced Elements with Tailwind CSS Object Utilities
-
-Source: https://v3.tailwindcss.com/docs/object-position
-
-HTML examples demonstrating how to use Tailwind's object-* utility classes to position replaced elements (images) within fixed-size containers. The object-none class prevents content scaling, while object-* classes control positioning. Each example uses a 24x24 pixel container with a yellow background to visualize positioning.
-
-```html
-<img class="object-none object-left-top bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-top bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-right-top bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-left bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-center bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-right bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-left-bottom bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-bottom bg-yellow-300 w-24 h-24 ..." src="...">
-<img class="object-none object-right-bottom bg-yellow-300 w-24 h-24 ..." src="...">
 ```
 
 --------------------------------
@@ -1628,142 +1792,14 @@ This snippet demonstrates how to apply standard cursor styles to HTML elements u
 
 --------------------------------
 
-### Tailwind CSS Sizing Quick Reference
+### Apply Tailwind CSS `row-span` on Hover State
 
-Source: https://v3.tailwindcss.com/docs/size
+Source: https://v3.tailwindcss.com/docs/grid-row
 
-This table provides a quick reference for Tailwind CSS `size-*` utilities, mapping each class to its corresponding `width` and `height` CSS properties and their calculated values. It serves as a comprehensive guide for understanding the utility classes.
-
-```plaintext
-Class      | Properties
----|---
-size-0     | width: 0px; height: 0px;
-size-px    | width: 1px; height: 1px;
-size-0.5   | width: 0.125rem; /* 2px */ height: 0.125rem; /* 2px */
-size-1     | width: 0.25rem; /* 4px */ height: 0.25rem; /* 4px */
-size-1.5   | width: 0.375rem; /* 6px */ height: 0.375rem; /* 6px */
-size-2     | width: 0.5rem; /* 8px */ height: 0.5rem; /* 8px */
-size-2.5   | width: 0.625rem; /* 10px */ height: 0.625rem; /* 10px */
-size-3     | width: 0.75rem; /* 12px */ height: 0.75rem; /* 12px */
-size-3.5   | width: 0.875rem; /* 14px */ height: 0.875rem; /* 14px */
-size-4     | width: 1rem; /* 16px */ height: 1rem; /* 16px */
-size-5     | width: 1.25rem; /* 20px */ height: 1.25rem; /* 20px */
-size-6     | width: 1.5rem; /* 24px */ height: 1.5rem; /* 24px */
-size-7     | width: 1.75rem; /* 28px */ height: 1.75rem; /* 28px */
-size-8     | width: 2rem; /* 32px */ height: 2rem; /* 32px */
-size-9     | width: 2.25rem; /* 36px */ height: 2.25rem; /* 36px */
-size-10    | width: 2.5rem; /* 40px */ height: 2.5rem; /* 40px */
-size-11    | width: 2.75rem; /* 44px */ height: 2.75rem; /* 44px */
-size-12    | width: 3rem; /* 48px */ height: 3rem; /* 48px */
-size-14    | width: 3.5rem; /* 56px */ height: 3.5rem; /* 56px */
-size-16    | width: 4rem; /* 64px */ height: 4rem; /* 64px */
-size-20    | width: 5rem; /* 80px */ height: 5rem; /* 80px */
-size-24    | width: 6rem; /* 96px */ height: 6rem; /* 96px */
-size-28    | width: 7rem; /* 112px */ height: 7rem; /* 112px */
-size-32    | width: 8rem; /* 128px */ height: 8rem; /* 128px */
-size-36    | width: 9rem; /* 144px */ height: 9rem; /* 144px */
-size-40    | width: 10rem; /* 160px */ height: 10rem; /* 160px */
-size-44    | width: 11rem; /* 176px */ height: 11rem; /* 176px */
-size-48    | width: 12rem; /* 192px */ height: 12rem; /* 192px */
-size-52    | width: 13rem; /* 208px */ height: 13rem; /* 208px */
-size-56    | width: 14rem; /* 224px */ height: 14rem; /* 224px */
-size-60    | width: 15rem; /* 240px */ height: 15rem; /* 240px */
-size-64    | width: 16rem; /* 256px */ height: 16rem; /* 256px */
-size-72    | width: 18rem; /* 288px */ height: 18rem; /* 288px */
-size-80    | width: 20rem; /* 320px */ height: 20rem; /* 320px */
-size-96    | width: 24rem; /* 384px */ height: 24rem; /* 384px */
-size-auto  | width: auto; height: auto;
-size-1/2   | width: 50%; height: 50%;
-size-1/3   | width: 33.333333%; height: 33.333333%;
-size-2/3   | width: 66.666667%; height: 66.666667%;
-size-1/4   | width: 25%; height: 25%;
-size-2/4   | width: 50%; height: 50%;
-size-3/4   | width: 75%; height: 75%;
-size-1/5   | width: 20%; height: 20%;
-size-2/5   | width: 40%; height: 40%;
-size-3/5   | width: 60%; height: 60%;
-size-4/5   | width: 80%; height: 80%;
-size-1/6   | width: 16.666667%; height: 16.666667%;
-size-2/6   | width: 33.333333%; height: 33.333333%;
-size-3/6   | width: 50%; height: 50%;
-size-4/6   | width: 66.666667%; height: 66.666667%;
-size-5/6   | width: 83.333333%; height: 83.333333%;
-size-1/12  | width: 8.333333%; height: 8.333333%;
-size-2/12  | width: 16.666667%; height: 16.666667%;
-size-3/12  | width: 25%; height: 25%;
-size-4/12  | width: 33.333333%; height: 33.333333%;
-size-5/12  | width: 41.666667%; height: 41.666667%;
-size-6/12  | width: 50%; height: 50%;
-size-7/12  | width: 58.333333%; height: 58.333333%;
-size-8/12  | width: 66.666667%; height: 66.666667%;
-size-9/12  | width: 75%; height: 75%;
-size-10/12 | width: 83.333333%; height: 83.333333%;
-size-11/12 | width: 91.666667%; height: 91.666667%;
-size-full  | width: 100%; height: 100%;
-size-min   | width: min-content; height: min-content;
-size-max   | width: max-content; height: max-content;
-size-fit   | width: fit-content; height: fit-content;
-```
-
---------------------------------
-
-### Apply inline start scroll padding with `scroll-ps-20` (CSS)
-
-Source: https://v3.tailwindcss.com/docs/scroll-padding
-
-The `scroll-ps-20` utility class sets the inline start scroll padding of an element to `5rem` (80px). This is useful for ensuring content aligns correctly within a scroll container, respecting text directionality.
-
-```css
-scroll-padding-inline-start: 5rem; /* 80px */
-```
-
---------------------------------
-
-### Add custom col-span utilities in Tailwind config
-
-Source: https://v3.tailwindcss.com/docs/grid-column
-
-Customize the gridColumn section of your Tailwind theme config to add new col-span-* utilities. The span keyword must be included directly in the value name as it configures the grid-column shorthand property. This example adds a col-span-16 utility.
-
-```javascript
-module.exports = {
-  theme: {
-    extend: {
-      gridColumn: {
-        'span-16': 'span 16 / span 16',
-      }
-    }
-  }
-}
-```
-
---------------------------------
-
-### Implement Horizontal Scroll Snapping in Tailwind CSS
-
-Source: https://v3.tailwindcss.com/docs/scroll-snap-type
-
-This example demonstrates how to create a horizontal scroll snapping effect using Tailwind CSS utilities. Apply `snap-x` to the parent container and `snap-center` to its direct children. This setup ensures that scrolling horizontally will snap to the center of each child element.
+Shows how to conditionally apply `row-span` utilities based on user interaction states using variant modifiers. This example uses the `hover:` prefix to change an element's row span when the user hovers over it, enabling dynamic grid layouts.
 
 ```html
-<div class="snap-x ...">
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.com/photo-1604999565976-8913ad2ddb7c?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.com/photo-1540206351-d6465b3ac5c1?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.unsplash.com/photo-1622890806166-111d7f6c7c97?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.com/photo-1590523277543-a94d2e4eb00b?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.com/photo-1575424909138-46b05e5919ec?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
-  <div class="snap-center ...">
-    <img src="https://images.unsplash.com/photo-1559333086-b0a56225a93c?ixlib=rb-1.2.1&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=320&h=160&q=80" />
-  </div>
+<div class="row-span-3 hover:row-span-4">
+  <!-- ... -->
 </div>
 ```
