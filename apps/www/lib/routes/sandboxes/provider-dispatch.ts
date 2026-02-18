@@ -51,6 +51,7 @@ export async function getInstanceById(
 
 /**
  * Like getInstanceById but returns null on failure instead of throwing.
+ * Logs a warning (not error) since callers typically handle null gracefully.
  */
 export async function tryGetInstanceById(
   instanceId: string,
@@ -60,7 +61,8 @@ export async function tryGetInstanceById(
   try {
     return await getInstanceById(instanceId, morphClient);
   } catch (error) {
-    console.error(`[${logTag}] Failed to load instance ${instanceId}`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[${logTag}] Instance ${instanceId} not found: ${message}`);
     return null;
   }
 }

@@ -1244,9 +1244,14 @@ export class PveLxcClient {
   }
 
   /**
-   * Stop a container
+   * Stop a container (idempotent - succeeds if already stopped)
    */
   async stopContainer(vmid: number): Promise<void> {
+    const status = await this.getContainerStatus(vmid);
+    if (status === "stopped") {
+      console.warn(`[PveLxcClient] Container ${vmid} already stopped`);
+      return;
+    }
     const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",

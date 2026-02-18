@@ -1691,7 +1691,16 @@ sandboxesRouter.openapi(
     try {
       // Get instance via provider dispatch and pause it
       // Morph preserves RAM state; PVE LXC pause() stops the container
-      const instance = await getInstanceById(id, getMorphClientOrNull());
+      const instance = await tryGetInstanceById(
+        id,
+        getMorphClientOrNull(),
+        "sandboxes.stop"
+      );
+      if (!instance) {
+        // Instance doesn't exist - treat as already stopped (idempotent)
+        console.warn(`[sandboxes.stop] Instance ${id} already stopped or deleted`);
+        return c.body(null, 204);
+      }
       await instance.pause();
       if (isPveLxcInstanceId(id)) {
         console.log(`[sandboxes.stop] PVE LXC container ${id} stopped`);

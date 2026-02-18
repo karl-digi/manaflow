@@ -307,10 +307,9 @@ export function stopContainersForRunsFromTree(
         if (t.provider === "pve-lxc") {
           // PVE LXC uses the same sandbox API endpoint as Morph
           // Note: LXC doesn't support hibernate, so containers are stopped (not paused)
+          // API returns 204 whether container was running or already stopped
           await stopCmuxSandbox(t.containerName);
-          serverLogger.info(
-            `Successfully stopped PVE LXC instance: ${t.containerName}`
-          );
+          serverLogger.info(`PVE LXC instance stopped: ${t.containerName}`);
           return {
             success: true,
             containerName: t.containerName,
