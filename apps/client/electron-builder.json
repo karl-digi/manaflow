@@ -47,8 +47,8 @@
   ],
   "extraResources": [
     {
-      "from": "assets/manaflow-logos/manaflow.iconset",
-      "to": "manaflow-logos/manaflow.iconset"
+      "from": "assets/cmux-logos/cmux.iconset",
+      "to": "cmux-logos/cmux.iconset"
     },
     {
       "from": "electron/app-update.yml",
