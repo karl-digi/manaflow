@@ -1,6 +1,6 @@
 import { DiffModeEnum, DiffView } from "@git-diff-view/react";
 import type { DiffFileHighlighter } from "@git-diff-view/core";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,7 @@ import { FileDiffHeaderWithViewed } from "../file-diff-header-with-viewed";
 import { LargeDiffPlaceholder } from "./large-diff-placeholder";
 import {
   LARGE_DIFF_THRESHOLD,
+  VIEWPORT_RENDER_MARGIN,
   type FileDiffRowClassNames,
   type PreparedDiffFile,
 } from "./types";
@@ -41,15 +42,46 @@ function DiffFileRow({
   const entry = preparedFile.entry;
   const isVeryLarge = preparedFile.totalLines > LARGE_DIFF_THRESHOLD;
   const [loadLargeDiff, setLoadLargeDiff] = useState(false);
+  const [isInViewport, setIsInViewport] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoadLargeDiff(false);
   }, [entry.filePath, preparedFile.totalLines]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (typeof IntersectionObserver !== "function") {
+      setIsInViewport(true);
+      return;
+    }
+
+    const element = rowRef.current;
+    if (!element) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsInViewport(entry?.isIntersecting ?? false),
+      { rootMargin: VIEWPORT_RENDER_MARGIN, threshold: 0 }
+    );
+    observer.observe(element);
+
+    return () => {
+      observer.unobserve(element);
+      observer.disconnect();
+    };
+  }, []);
+
   const canRenderDiff = Boolean(preparedFile.diffFile);
+  const shouldRenderDiff = isExpanded && isInViewport;
 
   return (
     <div
+      ref={rowRef}
       id={anchorId}
       className={cn("bg-white dark:bg-neutral-900", classNames?.container)}
     >
@@ -112,7 +144,7 @@ function DiffFileRow({
             deletions={entry.deletions}
             onLoadAnyway={() => setLoadLargeDiff(true)}
           />
-        ) : canRenderDiff && preparedFile.diffFile ? (
+        ) : shouldRenderDiff && canRenderDiff && preparedFile.diffFile ? (
           <div className="cmux-git-diff-view w-full overflow-x-auto border-t border-neutral-200/80 dark:border-neutral-800/70">
             <DiffView
               diffFile={preparedFile.diffFile}
@@ -124,7 +156,7 @@ function DiffFileRow({
               registerHighlighter={registerHighlighter}
             />
           </div>
-        ) : (
+        ) : canRenderDiff && preparedFile.diffFile ? null : (
           <div className="grid grow place-content-center bg-neutral-50 px-3 py-6 text-center text-xs text-neutral-500 dark:bg-neutral-900/50 dark:text-neutral-400">
             Unable to render diff
           </div>
