@@ -391,24 +391,22 @@ export function Sidebar({ tasks, teamSlugOrId, onToggleHidden }: SidebarProps) {
             ))}
           </ul>
 
-          {isElectron && (
-            <div className="mt-4 flex flex-col">
-              <SidebarSectionHeader
-                title="Pull requests"
-                to="/$teamSlugOrId/prs"
-                params={{ teamSlugOrId }}
+          <div className="mt-4 flex flex-col">
+            <SidebarSectionHeader
+              title="Pull requests"
+              to="/$teamSlugOrId/prs"
+              params={{ teamSlugOrId }}
+              preferences={prPreferences}
+              onPreferencesChange={prPreferenceHandlers}
+            />
+            <div className="ml-2 pt-px">
+              <SidebarPullRequestList
+                teamSlugOrId={teamSlugOrId}
                 preferences={prPreferences}
                 onPreferencesChange={prPreferenceHandlers}
               />
-              <div className="ml-2 pt-px">
-                <SidebarPullRequestList
-                  teamSlugOrId={teamSlugOrId}
-                  preferences={prPreferences}
-                  onPreferencesChange={prPreferenceHandlers}
-                />
-              </div>
             </div>
-          )}
+          </div>
 
           <div className="mt-2 flex flex-col gap-0.5">
             <SidebarWorkspacesSection
