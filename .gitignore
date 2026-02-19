@@ -46,8 +46,8 @@ packages/cloudrouter/npm/cloudrouter-linux-x64/cloudrouter
 packages/cloudrouter/npm/cloudrouter-win32-x64/cloudrouter.exe
 
 # Agent skills (local)
-.agents/skills/
-.claude/skills/
+# .agents/skills/
+# .claude/skills/
 .vercel
 scripts/vnc-proxy/vnc-proxy
 

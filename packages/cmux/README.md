@@ -1,4 +1,6 @@
-# cmux
+# cmux (Legacy - Web App Bundler)
+
+> **DEPRECATED**: This package is the legacy TypeScript web app bundler. For the primary cmux CLI (cloud VM control with browser automation), see [`packages/cmux-devbox`](../cmux-devbox/README.md) (Go).
 
 A single-executable web app multiplexer with built-in Convex backend. cmux allows you to run multiple coding agent CLIs in parallel across different tasks, each with their own isolated environment.
 
