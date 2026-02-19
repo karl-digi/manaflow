@@ -164,16 +164,39 @@ function stripCSPHeaders(source: Headers): Headers {
   return headers;
 }
 
-function addPermissiveCORS(headers: Headers): Headers {
-  headers.set("access-control-allow-origin", "*");
+function addPermissiveCORS(headers: Headers, origin?: string | null): Headers {
+  // Use the request origin if provided, otherwise use * (but * is incompatible with credentials)
+  // When credentials mode is 'include', browsers require the exact origin, not *
+  if (origin) {
+    headers.set("access-control-allow-origin", origin);
+  } else {
+    headers.set("access-control-allow-origin", "*");
+  }
   headers.set(
     "access-control-allow-methods",
     "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD",
   );
-  headers.set("access-control-allow-headers", "*");
+  headers.set(
+    "access-control-allow-headers",
+    "Authorization, Content-Type, X-Client-Version, X-Client-Type, X-Request-Id, Accept, Origin, Cache-Control",
+  );
   headers.set("access-control-expose-headers", "*");
   headers.set("access-control-allow-credentials", "true");
   headers.set("access-control-max-age", "86400");
+  return headers;
+}
+
+function fixCORSForCredentials(headers: Headers, origin: string | null): Headers {
+  // If request has Origin and response has allow-credentials=true but allow-origin=*,
+  // browsers will reject it. Fix by replacing * with the actual origin.
+  // Also always set credentials=true for cross-origin requests with Authorization headers.
+  const allowOrigin = headers.get("access-control-allow-origin");
+  
+  if (origin && allowOrigin === "*") {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-credentials", "true");
+  }
+  
   return headers;
 }
 
@@ -647,9 +670,10 @@ export default {
 
     // Handle OPTIONS preflight for all ports (CORS requires this)
     if (request.method === "OPTIONS") {
+      const origin = request.headers.get("Origin");
       return new Response(null, {
         status: 204,
-        headers: addPermissiveCORS(new Headers()),
+        headers: addPermissiveCORS(new Headers(), origin),
       });
     }
 
@@ -752,12 +776,13 @@ export default {
 
     const contentType = response.headers.get("content-type") || "";
     const skipServiceWorker = port === "39378";
+    const requestOrigin = request.headers.get("Origin");
 
     // Apply HTMLRewriter to HTML responses
     if (contentType.includes("text/html")) {
       let responseHeaders = stripCSPHeaders(response.headers);
       if (skipServiceWorker) {
-        responseHeaders = addPermissiveCORS(responseHeaders);
+        responseHeaders = addPermissiveCORS(responseHeaders, requestOrigin);
       }
       const rewriter = new HTMLRewriter()
         .on("head", new HeadRewriter(skipServiceWorker))
@@ -783,7 +808,7 @@ export default {
       let sanitizedHeaders = sanitizeRewrittenResponseHeaders(response.headers);
       sanitizedHeaders = stripCSPHeaders(sanitizedHeaders);
       if (skipServiceWorker) {
-        sanitizedHeaders = addPermissiveCORS(sanitizedHeaders);
+        sanitizedHeaders = addPermissiveCORS(sanitizedHeaders, requestOrigin);
       }
       return new Response(rewritten, {
         status: response.status,
@@ -794,7 +819,9 @@ export default {
 
     let responseHeaders = stripCSPHeaders(response.headers);
     if (skipServiceWorker) {
-      responseHeaders = addPermissiveCORS(responseHeaders);
+      responseHeaders = addPermissiveCORS(responseHeaders, requestOrigin);
+    } else {
+      responseHeaders = fixCORSForCredentials(responseHeaders, requestOrigin);
     }
     return new Response(response.body, {
       status: response.status,
