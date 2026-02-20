@@ -26,6 +26,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cachedGetUser } from "@/lib/cachedGetUser";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  HEATMAP_MODEL_OPTIONS,
+  normalizeHeatmapModel,
+  TOOLTIP_LANGUAGE_OPTIONS,
+} from "@/lib/heatmap-settings";
 import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
@@ -155,9 +161,9 @@ function SettingsComponent() {
 
   // Heatmap settings state
   const [heatmapModel, setHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [originalHeatmapModel, setOriginalHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
     useState<number>(0);
@@ -171,30 +177,7 @@ function SettingsComponent() {
   const [originalHeatmapColors, setOriginalHeatmapColors] =
     useState<HeatmapColors>(createDefaultHeatmapColors);
 
-  // Heatmap model options from model-config.ts
-  const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
-    { value: "anthropic", label: "Claude Opus 4.1" },
-    { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
-    { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
-  ];
-
-  // Tooltip language options
-  const TOOLTIP_LANGUAGE_OPTIONS = [
-    { value: "en", label: "English" },
-    { value: "zh-Hant", label: "繁體中文" },
-    { value: "zh-Hans", label: "简体中文" },
-    { value: "ja", label: "日本語" },
-    { value: "ko", label: "한국어" },
-    { value: "es", label: "Español" },
-    { value: "fr", label: "Français" },
-    { value: "de", label: "Deutsch" },
-    { value: "pt", label: "Português" },
-    { value: "ru", label: "Русский" },
-    { value: "vi", label: "Tiếng Việt" },
-    { value: "th", label: "ไทย" },
-    { value: "id", label: "Bahasa Indonesia" },
-  ];
+  // Heatmap model and tooltip language options are imported from @/lib/heatmap-settings
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -336,13 +319,11 @@ function SettingsComponent() {
       prev === nextCodexPattern ? prev : nextCodexPattern
     );
 
-    if (workspaceSettings?.heatmapModel) {
-      const nextModel = workspaceSettings.heatmapModel;
-      setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
-      setOriginalHeatmapModel((prev) =>
-        prev === nextModel ? prev : nextModel
-      );
-    }
+    const nextModel = normalizeHeatmapModel(
+      workspaceSettings?.heatmapModel ?? null
+    );
+    setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
+    setOriginalHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
     if (workspaceSettings?.heatmapThreshold !== undefined) {
       const nextThreshold = workspaceSettings.heatmapThreshold;
       setHeatmapThreshold((prev) =>
@@ -865,12 +846,12 @@ function SettingsComponent() {
               onAutoPrEnabledChange={setAutoPrEnabled}
               heatmapModel={heatmapModel}
               onHeatmapModelChange={setHeatmapModel}
-              heatmapModelOptions={HEATMAP_MODEL_OPTIONS}
+              heatmapModelOptions={[...HEATMAP_MODEL_OPTIONS]}
               heatmapThreshold={heatmapThreshold}
               onHeatmapThresholdChange={setHeatmapThreshold}
               heatmapTooltipLanguage={heatmapTooltipLanguage}
               onHeatmapTooltipLanguageChange={setHeatmapTooltipLanguage}
-              tooltipLanguageOptions={TOOLTIP_LANGUAGE_OPTIONS}
+              tooltipLanguageOptions={[...TOOLTIP_LANGUAGE_OPTIONS]}
               heatmapColors={heatmapColors}
               onHeatmapColorsChange={setHeatmapColors}
               worktreePath={codexWorktreePathPattern}
