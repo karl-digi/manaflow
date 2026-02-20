@@ -562,10 +562,10 @@ export function GeneralSection({
       </SettingSection>
 
       {!env.NEXT_PUBLIC_WEB_MODE ? (
-        <SettingSection title="Worktree Location">
+        <SettingSection title="Worktree Settings">
           <SettingRow
-            label="Custom Worktree Path"
-            description="Specify where to store git worktrees. Leave empty to use the default ~/cmux location."
+            label="Worktree path pattern"
+            description="Custom path for worktrees. Use ~ for home directory."
             noBorder
           >
             <div className="w-full sm:w-[30rem]">
@@ -575,11 +575,11 @@ export function GeneralSection({
                 value={worktreePath}
                 onChange={(event) => onWorktreePathChange(event.target.value)}
                 className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-                placeholder="~/my-custom-worktrees"
+                placeholder="~/.cmux/worktrees/"
                 autoComplete="off"
               />
               <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                Default location: ~/cmux
+                Default location: ~/.cmux/worktrees/
               </p>
             </div>
           </SettingRow>

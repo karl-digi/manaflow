@@ -628,6 +628,11 @@ const convexSchema = defineSchema({
     alwaysForcePush: v.optional(v.boolean()), // Legacy field - kept for schema compatibility
     // Git settings
     branchPrefix: v.optional(v.string()), // Prefix for generated branch names (default: "dev/")
+    // Worktree mode settings (Codex-style)
+    worktreeMode: v.optional(
+      v.union(v.literal("legacy"), v.literal("codex-style"))
+    ), // "legacy" = ~/cmux/<repo>/origin/, "codex-style" = use existing local repos
+    codexWorktreePathPattern: v.optional(v.string()), // Base path for codex-style worktrees (default: ~/.cmux/worktrees/). ShortId and repoName are appended automatically.
     // Heatmap review settings
     heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2")
     heatmapThreshold: v.optional(v.number()), // Score threshold for filtering (0-1, default: 0)
@@ -643,6 +648,37 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+
+  // Source repo mappings for Codex-style worktrees
+  // Maps projects to local repo paths per user
+  sourceRepoMappings: defineTable({
+    projectFullName: v.string(), // e.g., "owner/repo"
+    localRepoPath: v.string(), // e.g., "/Users/karlchow/Desktop/code/cmux"
+    lastVerifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_team_user_project", ["teamId", "userId", "projectFullName"])
+    .index("by_team_user", ["teamId", "userId"]),
+
+  // Worktree registry for tracking active worktrees (settings page)
+  worktreeRegistry: defineTable({
+    worktreePath: v.string(),
+    sourceRepoPath: v.string(),
+    projectFullName: v.string(),
+    branchName: v.string(),
+    shortId: v.string(),
+    mode: v.union(v.literal("legacy"), v.literal("codex-style")),
+    taskRunIds: v.optional(v.array(v.id("taskRuns"))),
+    lastUsedAt: v.number(),
+    createdAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_worktree_path", ["worktreePath"]),
   workspaceConfigs: defineTable({
     projectFullName: v.string(),
     maintenanceScript: v.optional(v.string()),

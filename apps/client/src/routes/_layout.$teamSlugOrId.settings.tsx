@@ -8,6 +8,7 @@ import {
 } from "@/components/settings/sections/AIProvidersSection";
 import { ArchivedTasksSection } from "@/components/settings/sections/ArchivedTasksSection";
 import { GitSection } from "@/components/settings/sections/GitSection";
+import { WorktreesSection } from "@/components/settings/sections/WorktreesSection";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { api } from "@cmux/convex/api";
@@ -34,7 +35,7 @@ import { DEFAULT_BRANCH_PREFIX } from "@cmux/shared";
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
   validateSearch: z.object({
-    section: z.enum(["general", "ai-providers", "git", "archived"]).default("general"),
+    section: z.enum(["general", "ai-providers", "git", "worktrees", "archived"]).default("general"),
   }),
 });
 
@@ -130,6 +131,11 @@ function SettingsComponent() {
   // Default to shared constant for new users, empty string means no prefix
   const [branchPrefix, setBranchPrefix] = useState<string>(DEFAULT_BRANCH_PREFIX);
   const [originalBranchPrefix, setOriginalBranchPrefix] = useState<string>(DEFAULT_BRANCH_PREFIX);
+  // Worktree mode settings
+  const [worktreeMode, setWorktreeMode] = useState<"legacy" | "codex-style">("codex-style");
+  const [originalWorktreeMode, setOriginalWorktreeMode] = useState<"legacy" | "codex-style">("codex-style");
+  const [codexWorktreePathPattern, setCodexWorktreePathPattern] = useState<string>("");
+  const [originalCodexWorktreePathPattern, setOriginalCodexWorktreePathPattern] = useState<string>("");
   const usedListRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const [expandedUsedList, setExpandedUsedList] = useState<
     Record<string, boolean>
@@ -311,6 +317,23 @@ function SettingsComponent() {
     );
     setOriginalBranchPrefix((prev) =>
       prev === nextBranchPrefix ? prev : nextBranchPrefix
+    );
+
+    // Worktree mode settings
+    const nextWorktreeMode = workspaceSettings?.worktreeMode ?? "codex-style";
+    setWorktreeMode((prev) =>
+      prev === nextWorktreeMode ? prev : nextWorktreeMode
+    );
+    setOriginalWorktreeMode((prev) =>
+      prev === nextWorktreeMode ? prev : nextWorktreeMode
+    );
+
+    const nextCodexPattern = workspaceSettings?.codexWorktreePathPattern ?? "";
+    setCodexWorktreePathPattern((prev) =>
+      prev === nextCodexPattern ? prev : nextCodexPattern
+    );
+    setOriginalCodexWorktreePathPattern((prev) =>
+      prev === nextCodexPattern ? prev : nextCodexPattern
     );
 
     if (workspaceSettings?.heatmapModel) {
@@ -571,6 +594,10 @@ function SettingsComponent() {
     // Git settings changes
     const branchPrefixChanged = branchPrefix !== originalBranchPrefix;
 
+    // Worktree mode changes
+    const worktreeModeChanged = worktreeMode !== originalWorktreeMode;
+    const codexPatternChanged = codexWorktreePathPattern !== originalCodexWorktreePathPattern;
+
     // Heatmap settings changes
     const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
     const heatmapThresholdChanged = heatmapThreshold !== originalHeatmapThreshold;
@@ -583,6 +610,8 @@ function SettingsComponent() {
       autoPrChanged ||
       bypassAnthropicProxyChanged ||
       branchPrefixChanged ||
+      worktreeModeChanged ||
+      codexPatternChanged ||
       apiKeysChanged ||
       baseUrlsChanged ||
       containerSettingsChanged ||
@@ -602,12 +631,14 @@ function SettingsComponent() {
       let savedWorkspaceSettings = false;
       let savedContainerSettings = false;
 
-      // Save worktree path / auto PR / git / heatmap settings if changed
+      // Save worktree path / auto PR / git / worktree mode / heatmap settings if changed
       const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
         autoPrEnabled !== originalAutoPrEnabled ||
         bypassAnthropicProxy !== originalBypassAnthropicProxy ||
         branchPrefix !== originalBranchPrefix ||
+        worktreeMode !== originalWorktreeMode ||
+        codexWorktreePathPattern !== originalCodexWorktreePathPattern ||
         heatmapModel !== originalHeatmapModel ||
         heatmapThreshold !== originalHeatmapThreshold ||
         heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
@@ -620,6 +651,8 @@ function SettingsComponent() {
           autoPrEnabled,
           bypassAnthropicProxy,
           branchPrefix,
+          worktreeMode,
+          codexWorktreePathPattern,
           heatmapModel,
           heatmapThreshold,
           heatmapTooltipLanguage,
@@ -629,6 +662,8 @@ function SettingsComponent() {
         setOriginalAutoPrEnabled(autoPrEnabled);
         setOriginalBypassAnthropicProxy(bypassAnthropicProxy);
         setOriginalBranchPrefix(branchPrefix);
+        setOriginalWorktreeMode(worktreeMode);
+        setOriginalCodexWorktreePathPattern(codexWorktreePathPattern);
         setOriginalHeatmapModel(heatmapModel);
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
@@ -789,7 +824,8 @@ function SettingsComponent() {
     }
   };
 
-  const activeSection = section;
+  // In web mode, worktrees section is not available - fall back to general
+  const activeSection = (env.NEXT_PUBLIC_WEB_MODE && section === "worktrees") ? "general" : section;
   const selectedTheme = resolvedTheme;
 
   return (
@@ -837,8 +873,8 @@ function SettingsComponent() {
               tooltipLanguageOptions={TOOLTIP_LANGUAGE_OPTIONS}
               heatmapColors={heatmapColors}
               onHeatmapColorsChange={setHeatmapColors}
-              worktreePath={worktreePath}
-              onWorktreePathChange={setWorktreePath}
+              worktreePath={codexWorktreePathPattern}
+              onWorktreePathChange={setCodexWorktreePathPattern}
               onContainerSettingsChange={handleContainerSettingsChange}
             />
           ) : activeSection === "git" ? (
@@ -846,6 +882,8 @@ function SettingsComponent() {
               branchPrefix={branchPrefix}
               onBranchPrefixChange={setBranchPrefix}
             />
+          ) : activeSection === "worktrees" ? (
+            <WorktreesSection teamSlugOrId={teamSlugOrId} />
           ) : activeSection === "archived" ? (
             <ArchivedTasksSection teamSlugOrId={teamSlugOrId} />
           ) : (
@@ -884,7 +922,7 @@ function SettingsComponent() {
         </div>
       </div>
 
-      {(activeSection === "ai-providers" || activeSection === "git") && (
+      {(activeSection === "ai-providers" || activeSection === "git" || activeSection === "worktrees") && (
         <div
           className="sticky bottom-0 border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
         >

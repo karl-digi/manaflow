@@ -72,10 +72,23 @@ export const reserve = authMutation({
     const sequence = existingSetting?.nextLocalWorkspaceSequence ?? 0;
     const repoName = deriveRepoBaseName({ projectFullName, repoUrl });
     const workspaceName = generateWorkspaceName({ repoName, sequence });
-    const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
+    const defaultDescriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
       branch,
     });
+
+    // When linking from a cloud task, inherit the task text (original prompt)
+    let descriptor = defaultDescriptor;
+    if (args.linkedFromCloudTaskRunId) {
+      const cloudTaskRun = await ctx.db.get(args.linkedFromCloudTaskRunId);
+      if (cloudTaskRun) {
+        const cloudTask = await ctx.db.get(cloudTaskRun.taskId);
+        if (cloudTask) {
+          // Use the cloud task's text (original prompt), not PR title
+          descriptor = cloudTask.text || defaultDescriptor;
+        }
+      }
+    }
 
     if (existingSetting) {
       await ctx.db.patch(existingSetting._id, {

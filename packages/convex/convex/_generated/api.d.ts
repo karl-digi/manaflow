@@ -72,6 +72,7 @@ import type * as sandboxInstanceMaintenance from "../sandboxInstanceMaintenance.
 import type * as sandboxInstances from "../sandboxInstances.js";
 import type * as screenshots_http from "../screenshots_http.js";
 import type * as seed from "../seed.js";
+import type * as sourceRepoMappings from "../sourceRepoMappings.js";
 import type * as stack from "../stack.js";
 import type * as stack_webhook from "../stack_webhook.js";
 import type * as stack_webhook_actions from "../stack_webhook_actions.js";
@@ -92,6 +93,7 @@ import type * as warmPool from "../warmPool.js";
 import type * as warmPoolMaintenance from "../warmPoolMaintenance.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
+import type * as worktreeRegistry from "../worktreeRegistry.js";
 
 import type {
   ApiFromModules,
@@ -164,6 +166,7 @@ declare const fullApi: ApiFromModules<{
   sandboxInstances: typeof sandboxInstances;
   screenshots_http: typeof screenshots_http;
   seed: typeof seed;
+  sourceRepoMappings: typeof sourceRepoMappings;
   stack: typeof stack;
   stack_webhook: typeof stack_webhook;
   stack_webhook_actions: typeof stack_webhook_actions;
@@ -184,6 +187,7 @@ declare const fullApi: ApiFromModules<{
   warmPoolMaintenance: typeof warmPoolMaintenance;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceSettings: typeof workspaceSettings;
+  worktreeRegistry: typeof worktreeRegistry;
 }>;
 
 /**

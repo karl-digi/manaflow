@@ -162,7 +162,8 @@ async function handleStartTask(
     // Run with auth context (both token and authHeaderJson needed for www API calls)
     const results = await runWithAuth(authToken, authHeaderJson, async () => {
       // Determine which agents to spawn
-      const agentsToSpawn = selectedAgents || ["claude-code"];
+      // Default to claude/opus-4.5 if no agent specified (matches CLI default)
+      const agentsToSpawn = selectedAgents || ["claude/opus-4.5"];
       const agentCount = agentsToSpawn.length;
 
       // Fetch workspace settings for branchPrefix (same as socket.io handler)

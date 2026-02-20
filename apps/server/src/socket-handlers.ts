@@ -79,7 +79,7 @@ import {
   getLastVSCodeDetectionResult,
   refreshVSCodeDetection,
 } from "./vscode/serveWeb";
-import { getProjectPaths } from "./workspace";
+import { getProjectPaths, getWorktreePath } from "./workspace";
 import {
   collectRepoFullNamesForRun,
   EMPTY_AGGREGATE,
@@ -1422,20 +1422,55 @@ export function setupSocketHandlers(
                 : descriptorBase;
           }
 
-          const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
-            ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
-            : path.join(os.homedir(), "cmux", "local-workspaces");
-          const resolvedWorkspacePath = path.join(
-            workspaceRoot,
-            workspaceName
+          // Use Codex-style worktree path: ~/.cmux/worktrees/{shortId}/{repoName}/
+          // This integrates with VSCode's Source Control view
+          const effectiveRepoUrl =
+            repoUrl ?? (projectFullName ? `https://github.com/${projectFullName}.git` : "");
+
+          // Look up custom source repo mapping from settings (P1 fix)
+          let mappedLocalRepoPath: string | undefined;
+          if (projectFullName) {
+            try {
+              const mapping = await convex.query(api.sourceRepoMappings.getByProject, {
+                teamSlugOrId,
+                projectFullName,
+              });
+              if (mapping?.localRepoPath) {
+                mappedLocalRepoPath = mapping.localRepoPath;
+                serverLogger.info(
+                  `[create-local-workspace] Using mapped local repo path: ${mappedLocalRepoPath}`
+                );
+              }
+            } catch (mappingError) {
+              serverLogger.warn(
+                "[create-local-workspace] Failed to lookup source repo mapping:",
+                mappingError
+              );
+            }
+          }
+
+          const worktreeInfo = await getWorktreePath(
+            {
+              repoUrl: effectiveRepoUrl,
+              branch: branch || "main",
+              localRepoPath: mappedLocalRepoPath,
+              projectFullName: projectFullName ?? undefined,
+            },
+            teamSlugOrId
           );
+
+          const resolvedWorkspacePath = worktreeInfo.worktreePath;
           workspacePath = resolvedWorkspacePath;
 
-          await fs.mkdir(workspaceRoot, { recursive: true });
+          // Create the worktree directory structure
+          const worktreeParentDir = path.dirname(resolvedWorkspacePath);
+          await fs.mkdir(worktreeParentDir, { recursive: true });
           cleanupWorkspace = async () => {
             await fs
               .rm(resolvedWorkspacePath, { recursive: true, force: true })
               .catch(() => undefined);
+            // Also try to clean up the parent shortId directory if empty
+            await fs.rmdir(worktreeParentDir).catch(() => undefined);
           };
 
           const writeEnvVariablesIfPresent = async (): Promise<
@@ -1472,6 +1507,60 @@ export function setupSocketHandlers(
                 serverLogger.info(
                   `[create-local-workspace] Wrote env vars to ${envFile}`
                 );
+
+                // Add .env to .git/info/exclude so it doesn't show in git status
+                // This works even if repo doesn't have .env in .gitignore
+                try {
+                  const gitExcludeFile = path.join(
+                    resolvedWorkspacePath,
+                    ".git",
+                    "info",
+                    "exclude"
+                  );
+                  // For worktrees, .git is a file pointing to the main repo's .git dir
+                  // Check if .git is a file (worktree) or directory (regular repo)
+                  const gitPath = path.join(resolvedWorkspacePath, ".git");
+                  const gitStat = await fs.stat(gitPath);
+
+                  let excludePath: string;
+                  if (gitStat.isFile()) {
+                    // Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
+                    const gitContent = await fs.readFile(gitPath, "utf8");
+                    const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/m);
+                    if (gitdirMatch) {
+                      excludePath = path.join(gitdirMatch[1].trim(), "info", "exclude");
+                    } else {
+                      excludePath = gitExcludeFile;
+                    }
+                  } else {
+                    excludePath = gitExcludeFile;
+                  }
+
+                  // Ensure info directory exists
+                  await fs.mkdir(path.dirname(excludePath), { recursive: true });
+
+                  // Read existing exclude file or create empty
+                  let existingExclude = "";
+                  try {
+                    existingExclude = await fs.readFile(excludePath, "utf8");
+                  } catch {
+                    // File doesn't exist, that's fine
+                  }
+
+                  // Add .env if not already excluded
+                  if (!existingExclude.includes(".env")) {
+                    const newExclude = existingExclude.trimEnd() + "\n.env\n";
+                    await fs.writeFile(excludePath, newExclude, "utf8");
+                    serverLogger.info(
+                      `[create-local-workspace] Added .env to git exclude: ${excludePath}`
+                    );
+                  }
+                } catch (excludeError) {
+                  serverLogger.warn(
+                    "[create-local-workspace] Failed to add .env to git exclude",
+                    { error: excludeError }
+                  );
+                }
               } catch (error) {
                 serverLogger.warn(
                   "[create-local-workspace] Failed to write saved env vars to disk",
@@ -1696,7 +1785,113 @@ export function setupSocketHandlers(
           });
           responded = true;
 
-          if (repoUrl) {
+          // Codex-style: Create worktree from existing local repo
+          if (worktreeInfo.mode === "codex-style" && worktreeInfo.sourceRepoPath) {
+            const repoMgr = RepositoryManager.getInstance();
+            const sourceRepo = worktreeInfo.sourceRepoPath;
+
+            // Fetch latest from origin
+            try {
+              serverLogger.info(
+                `[create-local-workspace] Fetching latest from origin in ${sourceRepo}`
+              );
+              await repoMgr.fetchLatest(sourceRepo, branch);
+            } catch (fetchErr) {
+              serverLogger.warn(
+                `[create-local-workspace] Failed to fetch latest: ${fetchErr}`
+              );
+            }
+
+            // Determine branch for worktree
+            let worktreeBranch = branch;
+            if (!worktreeBranch) {
+              worktreeBranch = await repoMgr.getDefaultBranch(sourceRepo);
+            }
+
+            // Create worktree from local repo
+            serverLogger.info(
+              `[create-local-workspace] Creating worktree at ${resolvedWorkspacePath} from ${sourceRepo} on branch ${worktreeBranch}`
+            );
+
+            try {
+              // Create worktree tracking the same branch as the cloud task (like Codex does)
+              // First, check if a local branch with this name already exists
+              let branchExists = false;
+              try {
+                await execFileAsync(
+                  "git",
+                  ["rev-parse", "--verify", worktreeBranch],
+                  { cwd: sourceRepo }
+                );
+                branchExists = true;
+              } catch {
+                // Branch doesn't exist locally, that's fine
+              }
+
+              if (branchExists) {
+                // Branch exists locally, create worktree using existing branch
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", resolvedWorkspacePath, worktreeBranch],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree using existing branch ${worktreeBranch}`
+                );
+              } else {
+                // Branch doesn't exist locally, create it tracking the remote
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", "-b", worktreeBranch, resolvedWorkspacePath, `origin/${worktreeBranch}`],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree with new branch ${worktreeBranch} tracking origin/${worktreeBranch}`
+                );
+              }
+            } catch (error) {
+              // If that fails, try detached HEAD as fallback
+              const execErr = isExecError(error) ? error : null;
+              serverLogger.warn(
+                `[create-local-workspace] Failed to create worktree with branch, trying detached: ${execErr?.stderr || error}`
+              );
+              try {
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", "--detach", resolvedWorkspacePath, `origin/${worktreeBranch}`],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree in detached HEAD state at origin/${worktreeBranch}`
+                );
+              } catch (detachErr) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const detachExecErr = isExecError(detachErr) ? detachErr : null;
+                throw new Error(
+                  `Failed to create worktree: ${detachExecErr?.stderr || detachErr}`
+                );
+              }
+            }
+
+            // Verify worktree was created
+            try {
+              await execFileAsync(
+                "git",
+                ["rev-parse", "--verify", "HEAD"],
+                { cwd: resolvedWorkspacePath }
+              );
+            } catch (verifyErr) {
+              if (cleanupWorkspace) {
+                await cleanupWorkspace();
+              }
+              throw new Error(
+                `Worktree creation failed: ${verifyErr instanceof Error ? verifyErr.message : "Unknown error"}`
+              );
+            }
+          } else if (repoUrl) {
+            // Legacy: Clone when no local source repo
             if (cleanupWorkspace) {
               await cleanupWorkspace();
             }
@@ -1706,7 +1901,7 @@ export function setupSocketHandlers(
             }
             cloneArgs.push(repoUrl, resolvedWorkspacePath);
             try {
-              await execFileAsync("git", cloneArgs, { cwd: workspaceRoot });
+              await execFileAsync("git", cloneArgs, { cwd: worktreeParentDir });
             } catch (error) {
               if (cleanupWorkspace) {
                 await cleanupWorkspace();
@@ -1791,6 +1986,28 @@ export function setupSocketHandlers(
             id: taskRunId,
             worktreePath: resolvedWorkspacePath,
           });
+
+          // Register the worktree in the registry for settings page display
+          try {
+            await convex.mutation(api.worktreeRegistry.register, {
+              teamSlugOrId,
+              worktreePath: resolvedWorkspacePath,
+              sourceRepoPath: worktreeInfo.sourceRepoPath || repoUrl || projectFullName || "local",
+              projectFullName: projectFullName || "local",
+              branchName: branch || "main",
+              shortId: worktreeInfo.shortId || workspaceName || "local",
+              mode: worktreeInfo.mode,
+              taskRunId,
+            });
+            serverLogger.info(
+              `[create-local-workspace] Registered worktree in registry: ${resolvedWorkspacePath}`
+            );
+          } catch (regError) {
+            serverLogger.warn(
+              `[create-local-workspace] Failed to register worktree in registry:`,
+              regError
+            );
+          }
 
           await convex.mutation(api.taskRuns.updateStatusPublic, {
             teamSlugOrId,
@@ -2399,7 +2616,427 @@ export function setupSocketHandlers(
     // Continue with all other handlers...
     // (I'll include the rest of the handlers in the next message due to length)
 
-    socket.on("open-in-editor", async (data, callback) => {
+    // Scan filesystem for existing worktrees and register them
+    socket.on(
+      "scan-worktrees",
+      async (
+        data: { teamSlugOrId: string },
+        callback: (response: {
+          success: boolean;
+          found: number;
+          registered: number;
+          error?: string;
+        }) => void
+      ) => {
+        // Guard callback in case client didn't provide one
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : (response: { success: boolean; found: number; registered: number; error?: string }) => {
+                serverLogger.info("[scan-worktrees] No callback provided, result:", response);
+              };
+
+        const teamSlugOrId = data.teamSlugOrId || safeTeam;
+        const convex = getConvex();
+
+        try {
+          // Check for custom worktree path setting
+          const settings = await convex.query(api.workspaceSettings.get, {
+            teamSlugOrId,
+          });
+          const customPattern = settings?.codexWorktreePathPattern;
+
+          // Determine base path - use custom pattern or default
+          let worktreeBasePath: string;
+          if (customPattern) {
+            worktreeBasePath = customPattern.replace(/^~/, os.homedir());
+          } else {
+            worktreeBasePath = path.join(os.homedir(), ".cmux", "worktrees");
+          }
+
+          // Check if the worktrees directory exists
+          try {
+            await fs.access(worktreeBasePath);
+          } catch {
+            safeCallback({ success: true, found: 0, registered: 0 });
+            return;
+          }
+
+          // Read all directories in worktree base path (these are shortId dirs)
+          const shortIdEntries = await fs.readdir(worktreeBasePath, {
+            withFileTypes: true,
+          });
+          const shortIdDirs = shortIdEntries.filter((e) => e.isDirectory());
+
+          let found = 0;
+          let registered = 0;
+
+          // Helper to sanitize git URLs (strip credentials)
+          const sanitizeGitUrl = (url: string): string => {
+            try {
+              // Handle SSH URLs (git@github.com:owner/repo.git)
+              if (url.startsWith("git@")) {
+                return url;
+              }
+              // Handle HTTPS URLs that may have credentials
+              const parsed = new URL(url);
+              parsed.username = "";
+              parsed.password = "";
+              return parsed.toString().replace(/\/$/, "");
+            } catch {
+              return url; // Return as-is if parsing fails
+            }
+          };
+
+          // Codex-style worktrees are at ~/.cmux/worktrees/<shortId>/<repoName>/
+          // So we need to iterate into each shortId directory
+          for (const shortIdDir of shortIdDirs) {
+            const shortIdPath = path.join(worktreeBasePath, shortIdDir.name);
+
+            // Check if shortIdPath itself is a git worktree (legacy or direct)
+            const directGitPath = path.join(shortIdPath, ".git");
+            try {
+              await fs.access(directGitPath);
+              // This shortId dir is itself a worktree
+              found++;
+              await registerWorktree(shortIdPath, shortIdDir.name, shortIdDir.name);
+              continue;
+            } catch {
+              // Not a direct worktree, check subdirectories
+            }
+
+            // Read subdirectories (repo name dirs)
+            let repoEntries;
+            try {
+              repoEntries = await fs.readdir(shortIdPath, { withFileTypes: true });
+            } catch {
+              continue;
+            }
+
+            for (const repoEntry of repoEntries) {
+              if (!repoEntry.isDirectory()) continue;
+
+              const worktreePath = path.join(shortIdPath, repoEntry.name);
+              const gitPath = path.join(worktreePath, ".git");
+
+              try {
+                await fs.access(gitPath);
+              } catch {
+                continue; // Not a git repo, skip
+              }
+
+              found++;
+              await registerWorktree(worktreePath, shortIdDir.name, repoEntry.name);
+            }
+          }
+
+          async function registerWorktree(
+            worktreePath: string,
+            shortId: string,
+            repoName: string
+          ) {
+            // Try to get branch name
+            let branchName = "unknown";
+            try {
+              const { stdout } = await execFileAsync(
+                "git",
+                ["branch", "--show-current"],
+                { cwd: worktreePath }
+              );
+              branchName = stdout.trim() || "unknown";
+            } catch {
+              // Ignore errors getting branch name
+            }
+
+            // Try to get remote URL for source repo path (sanitized)
+            let sourceRepoPath = worktreePath;
+            let projectFullName = repoName;
+            try {
+              const { stdout } = await execFileAsync(
+                "git",
+                ["config", "--get", "remote.origin.url"],
+                { cwd: worktreePath }
+              );
+              const rawUrl = stdout.trim();
+              sourceRepoPath = sanitizeGitUrl(rawUrl);
+              // Extract owner/repo from URL (fixed regex to handle dots in repo names)
+              const match = rawUrl.match(
+                /(?:github\.com[:/])([^/]+\/[^/]+?)(?:\.git)?$/
+              );
+              if (match) {
+                projectFullName = match[1].replace(/\.git$/, "");
+              }
+            } catch {
+              // Ignore errors getting remote URL
+            }
+
+            // Register the worktree
+            try {
+              await convex.mutation(api.worktreeRegistry.register, {
+                teamSlugOrId,
+                worktreePath,
+                sourceRepoPath,
+                projectFullName,
+                branchName,
+                shortId,
+                mode: "codex-style" as const,
+              });
+              registered++;
+              serverLogger.info(
+                `[scan-worktrees] Registered existing worktree: ${worktreePath}`
+              );
+            } catch (regError) {
+              serverLogger.warn(
+                `[scan-worktrees] Failed to register worktree ${worktreePath}:`,
+                regError
+              );
+            }
+          }
+
+          safeCallback({ success: true, found, registered });
+        } catch (error) {
+          serverLogger.error("[scan-worktrees] Error scanning worktrees:", error);
+          safeCallback({
+            success: false,
+            found: 0,
+            registered: 0,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+    );
+
+    // Delete a worktree from filesystem and registry
+    socket.on(
+      "delete-worktree",
+      async (
+        data: { teamSlugOrId: string; worktreePath: string },
+        callback: (response: { success: boolean; error?: string }) => void
+      ) => {
+        // Guard callback in case client didn't provide one
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : (response: { success: boolean; error?: string }) => {
+                serverLogger.info("[delete-worktree] No callback provided, result:", response);
+              };
+
+        const { teamSlugOrId: teamId, worktreePath } = data;
+        const resolvedTeamId = teamId || safeTeam;
+
+        if (!worktreePath) {
+          safeCallback({ success: false, error: "Worktree path is required" });
+          return;
+        }
+
+        // Security: Ensure the path is within allowed worktree directories
+        const homeDir = os.homedir();
+        const allowedPrefixes = [
+          path.join(homeDir, ".cmux", "worktrees"),
+          path.join(homeDir, "cmux"),
+        ];
+
+        // P2 fix: Include custom worktree path pattern from settings if configured
+        try {
+          const settings = await getConvex().query(api.workspaceSettings.get, {
+            teamSlugOrId: resolvedTeamId,
+          });
+          if (settings?.codexWorktreePathPattern) {
+            // codexWorktreePathPattern is a base path (not a template with placeholders)
+            // ShortId and repoName are appended automatically during worktree creation
+            const customPattern = settings.codexWorktreePathPattern.replace(/\/+$/, ""); // Remove trailing slashes
+            const resolvedCustomPath = path.resolve(customPattern.replace(/^~/, homeDir));
+            if (resolvedCustomPath && !allowedPrefixes.includes(resolvedCustomPath)) {
+              allowedPrefixes.push(resolvedCustomPath);
+            }
+          }
+        } catch (settingsError) {
+          serverLogger.warn("[delete-worktree] Failed to fetch workspace settings for custom path:", settingsError);
+        }
+
+        const normalizedPath = path.resolve(worktreePath);
+        // P1 fix: Proper path boundary check to prevent overmatch
+        // e.g., /home/user/cmuxFoo should NOT match /home/user/cmux prefix
+        const isAllowed = allowedPrefixes.some((prefix) =>
+          normalizedPath === prefix || normalizedPath.startsWith(prefix + path.sep)
+        );
+
+        if (!isAllowed) {
+          serverLogger.warn(
+            `[delete-worktree] Rejected deletion of path outside allowed directories: ${worktreePath}`
+          );
+          safeCallback({
+            success: false,
+            error: "Cannot delete worktrees outside of cmux directories",
+          });
+          return;
+        }
+
+        try {
+          // Check if the worktree path exists
+          try {
+            await fs.access(normalizedPath);
+          } catch {
+            // Path doesn't exist, just remove from registry
+            serverLogger.info(
+              `[delete-worktree] Path doesn't exist, removing from registry only: ${worktreePath}`
+            );
+            await getConvex().mutation(api.worktreeRegistry.remove, {
+              teamSlugOrId: resolvedTeamId,
+              worktreePath,
+            });
+            safeCallback({ success: true });
+            return;
+          }
+
+          // Check if it's a git worktree and try to remove it properly
+          const gitPath = path.join(normalizedPath, ".git");
+          try {
+            const gitContent = await fs.readFile(gitPath, "utf-8");
+            // If .git is a file (worktree), it contains "gitdir: /path/to/main/.git/worktrees/name"
+            if (gitContent.startsWith("gitdir:")) {
+              const gitdirMatch = gitContent.match(/gitdir:\s*(.+)/);
+              if (gitdirMatch) {
+                // This is a proper git worktree, try to remove it via git
+                const parentGitDir = gitdirMatch[1].trim().replace(/\/worktrees\/[^/]+$/, "");
+                const parentRepoPath = path.dirname(parentGitDir);
+
+                try {
+                  await execFileAsync("git", ["worktree", "remove", "--force", normalizedPath], {
+                    cwd: parentRepoPath,
+                  });
+                  serverLogger.info(
+                    `[delete-worktree] Removed git worktree via git command: ${worktreePath}`
+                  );
+                } catch (gitError) {
+                  serverLogger.warn(
+                    `[delete-worktree] git worktree remove failed, falling back to rm: ${gitError}`
+                  );
+                  // Fall back to manual deletion
+                  await fs.rm(normalizedPath, { recursive: true, force: true });
+                }
+              }
+            }
+          } catch {
+            // .git is a directory (regular clone) or doesn't exist, just delete the folder
+            await fs.rm(normalizedPath, { recursive: true, force: true });
+            serverLogger.info(
+              `[delete-worktree] Deleted worktree folder: ${worktreePath}`
+            );
+          }
+
+          // Also check if parent shortId directory is now empty and remove it
+          const parentDir = path.dirname(normalizedPath);
+          if (allowedPrefixes.some((prefix) => parentDir.startsWith(prefix) && parentDir !== prefix)) {
+            try {
+              const remaining = await fs.readdir(parentDir);
+              if (remaining.length === 0) {
+                await fs.rmdir(parentDir);
+                serverLogger.info(
+                  `[delete-worktree] Removed empty parent directory: ${parentDir}`
+                );
+              }
+            } catch {
+              // Ignore errors cleaning up parent
+            }
+          }
+
+          // Remove from registry
+          await getConvex().mutation(api.worktreeRegistry.remove, {
+            teamSlugOrId: resolvedTeamId,
+            worktreePath,
+          });
+
+          serverLogger.info(`[delete-worktree] Successfully deleted worktree: ${worktreePath}`);
+          safeCallback({ success: true });
+        } catch (error) {
+          serverLogger.error("[delete-worktree] Error deleting worktree:", error);
+          safeCallback({
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+    );
+
+    // Validate worktree paths exist on filesystem
+    socket.on(
+      "validate-worktrees",
+      async (
+        data: { teamSlugOrId: string; worktreePaths: string[] },
+        callback: (response: {
+          success: boolean;
+          validPaths: string[];
+          invalidPaths: string[];
+          error?: string;
+        }) => void
+      ) => {
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : () => {};
+
+        const { worktreePaths } = data;
+        const validPaths: string[] = [];
+        const invalidPaths: string[] = [];
+
+        for (const worktreePath of worktreePaths) {
+          try {
+            await fs.access(worktreePath);
+            validPaths.push(worktreePath);
+          } catch {
+            invalidPaths.push(worktreePath);
+          }
+        }
+
+        safeCallback({
+          success: true,
+          validPaths,
+          invalidPaths,
+        });
+      }
+    );
+
+    // Clean up a task's worktreePath if it doesn't exist on filesystem
+    socket.on(
+      "cleanup-stale-workspace",
+      async (
+        data: { teamSlugOrId: string; taskId: string },
+        callback: (response: { success: boolean; error?: string }) => void
+      ) => {
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : () => {};
+
+        const { teamSlugOrId: teamId, taskId } = data;
+        const resolvedTeamId = teamId || safeTeam;
+
+        if (!taskId) {
+          safeCallback({ success: false, error: "Task ID is required" });
+          return;
+        }
+
+        try {
+          // Clear the worktreePath on the task
+          await getConvex().mutation(api.tasks.updateWorktreePath, {
+            teamSlugOrId: resolvedTeamId,
+            id: taskId as Id<"tasks">,
+            worktreePath: undefined,
+          });
+          serverLogger.info(`[cleanup-stale-workspace] Cleared worktreePath for task ${taskId}`);
+          safeCallback({ success: true });
+        } catch (error) {
+          serverLogger.error("[cleanup-stale-workspace] Error:", error);
+          safeCallback({
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+    );
+
+    socket.on("open-in-editor", (data, callback) => {
       // In web mode, opening local editors is not supported
       if (env.NEXT_PUBLIC_WEB_MODE) {
         callback?.({ success: false, error: "Opening local editors is not available in the web version." });
@@ -2447,39 +3084,38 @@ export function setupSocketHandlers(
             throw new Error(`Unknown editor: ${editor}`);
         }
 
-        console.log("command", command);
+        serverLogger.info(`Opening ${path} in ${editor} with command:`, command);
 
-        const childProcess = spawn(command[0], command.slice(1));
-
-        childProcess.on("close", (code) => {
-          if (code === 0) {
-            serverLogger.info(`Successfully opened ${path} in ${editor}`);
-            // Send success callback
-            if (callback) {
-              callback({ success: true });
-            }
-          } else {
-            serverLogger.error(
-              `Error opening ${editor}: process exited with code ${code}`
-            );
-            const error = `Failed to open ${editor}: process exited with code ${code}`;
-            socket.emit("open-in-editor-error", { error });
-            // Send error callback
-            if (callback) {
-              callback({ success: false, error });
-            }
-          }
+        const childProcess = spawn(command[0], command.slice(1), {
+          detached: true,
+          stdio: "ignore",
         });
 
+        // Track if we've already responded (to avoid double callback)
+        let responded = false;
+
         childProcess.on("error", (error) => {
-          serverLogger.error(`Error opening ${editor}:`, error);
+          serverLogger.error(`Error spawning ${editor}:`, error);
           const errorMessage = `Failed to open ${editor}: ${error.message}`;
           socket.emit("open-in-editor-error", { error: errorMessage });
-          // Send error callback
-          if (callback) {
+          if (!responded && callback) {
+            responded = true;
             callback({ success: false, error: errorMessage });
           }
         });
+
+        // Unref so the parent process can exit independently
+        childProcess.unref();
+
+        // Respond immediately after spawn - editors like VS Code detach and run independently
+        // Use a short delay to catch immediate spawn errors
+        setTimeout(() => {
+          if (!responded && callback) {
+            responded = true;
+            serverLogger.info(`Successfully spawned ${editor} for ${path}`);
+            callback({ success: true });
+          }
+        }, 200);
       } catch (error) {
         serverLogger.error("Error opening editor:", error);
         const errorMessage =
@@ -2578,30 +3214,41 @@ export function setupSocketHandlers(
           branchOverride?: string;
         }): Promise<FileInfo[]> => {
           // Use unauthenticated URL for path derivation (consistent folder names)
-          const projectPaths = await getProjectPaths(targetRepoUrl, safeTeam);
+          // Pass projectFullName for auto-detection of local repos
+          const projectPaths = await getProjectPaths(
+            targetRepoUrl,
+            safeTeam,
+            undefined,
+            repoFullName
+          );
 
-          await fs.mkdir(projectPaths.projectPath, { recursive: true });
-          await fs.mkdir(projectPaths.worktreesPath, { recursive: true });
-
-          // Inject GitHub OAuth token for private repo access
-          // Use authenticated URL for git operations, but store clean URL as remote
-          let authenticatedRepoUrl = targetRepoUrl;
-          const githubToken = await getGitHubOAuthToken();
-          if (githubToken && targetRepoUrl.startsWith("https://github.com/")) {
-            authenticatedRepoUrl = targetRepoUrl.replace(
-              "https://github.com/",
-              `https://x-access-token:${githubToken}@github.com/`
+          // Codex-style mode requires an existing local repo
+          // If no local repo found (mode is "legacy" as fallback), notify frontend and return empty
+          if (projectPaths.mode === "legacy") {
+            const repoDisplayName = repoFullName || targetRepoUrl;
+            serverLogger.warn(
+              `[create-local-workspace] No local repository found for ${repoDisplayName}. ` +
+                `Please add a source repo mapping in Settings > Worktrees, or clone the repository locally first.`
             );
+            // Emit event to frontend so it can show a notification/toast
+            socket.emit("local-repo-not-found", {
+              repoFullName: repoDisplayName,
+              message: `No local repository found for "${repoDisplayName}". Please clone the repository locally first, then add a source repo mapping in Settings > Worktrees.`,
+            });
+            return [];
           }
 
-          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
-          // If branchOverride is undefined, ensureRepository auto-detects and fetches default branch
-          await repoManager.ensureRepository(
-            authenticatedRepoUrl,
-            projectPaths.originPath,
-            branchOverride,
-            targetRepoUrl // clean URL for remote storage
+          // Codex-style: originPath points to existing local repo, just fetch latest
+          serverLogger.info(
+            `[create-local-workspace] Using existing local repo at ${projectPaths.originPath}`
           );
+          try {
+            await repoManager.fetchLatest(projectPaths.originPath, branchOverride);
+          } catch (fetchErr) {
+            serverLogger.warn(
+              `[create-local-workspace] Failed to fetch latest: ${fetchErr}`
+            );
+          }
 
           // Get the branch name for worktree path (either override or detected default)
           const baseBranch =
@@ -3601,6 +4248,48 @@ Please address the issue mentioned in the comment above.`;
               // Continue anyway - lazy sync will handle it when worker becomes available
             }
           }
+        }
+
+        // Wait for the worktree directory to exist (handles race condition when
+        // create-local-workspace is still in progress)
+        const maxWaitMs = 30000;
+        const pollIntervalMs = 500;
+        let waited = 0;
+        let dirExists = false;
+
+        while (waited < maxWaitMs) {
+          try {
+            await fs.access(normalizedPath);
+            dirExists = true;
+            break;
+          } catch {
+            // Directory doesn't exist yet, wait and retry
+            if (waited === 0) {
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Waiting for directory to exist: ${normalizedPath}`
+              );
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+            waited += pollIntervalMs;
+          }
+        }
+
+        if (!dirExists) {
+          serverLogger.warn(
+            `[trigger-local-cloud-sync] Directory still doesn't exist after ${maxWaitMs}ms: ${normalizedPath}`
+          );
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Workspace directory not ready. Please try again.",
+          };
+          callback(response);
+          return;
+        }
+
+        if (waited > 0) {
+          serverLogger.info(
+            `[trigger-local-cloud-sync] Directory exists after ${waited}ms: ${normalizedPath}`
+          );
         }
 
         if (!status.found) {

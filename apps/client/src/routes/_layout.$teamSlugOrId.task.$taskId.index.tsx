@@ -950,6 +950,7 @@ function TaskDetailPage() {
           }
           onToggleAutoSync={linkedLocalWorkspace ? handleToggleAutoSync : undefined}
           autoSyncEnabled={autoSyncEnabled}
+          linkedLocalWorkspace={linkedLocalWorkspace}
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}

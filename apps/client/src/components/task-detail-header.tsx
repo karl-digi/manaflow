@@ -79,6 +79,11 @@ interface TaskDetailHeaderProps {
   onToggleAutoSync?: () => void;
   autoSyncEnabled?: boolean;
   teamSlugOrId: string;
+  /** Linked local workspace for cloud tasks - use its worktreePath for "Open with VS Code" */
+  linkedLocalWorkspace?: {
+    task?: { worktreePath?: string | null } | null;
+    taskRun?: { worktreePath?: string | null } | null;
+  } | null;
 }
 
 const ENABLE_MERGE_BUTTON = false;
@@ -265,6 +270,7 @@ export function TaskDetailHeader({
   onToggleAutoSync,
   autoSyncEnabled = true,
   teamSlugOrId,
+  linkedLocalWorkspace,
 }: TaskDetailHeaderProps) {
   const sidebar = useSidebarOptional();
   const navigate = useNavigate();
@@ -282,10 +288,34 @@ export function TaskDetailHeader({
       clipboard.copy(selectedRun.newBranch);
     }
   };
-  const worktreePath = useMemo(
-    () => selectedRun?.worktreePath || task?.worktreePath || null,
-    [selectedRun?.worktreePath, task?.worktreePath],
-  );
+  // Compute worktreePath for "Open with VS Code" button
+  // IMPORTANT: Cloud task paths like /root/workspace are NOT accessible locally
+  // Only return a path for:
+  // 1. Linked local workspaces (preferred - opens local worktree for cloud task)
+  // 2. Local workspace tasks (isLocalWorkspace=true, path is on local filesystem)
+  const worktreePath = useMemo(() => {
+    // Priority 1: If there's a linked local workspace, use its path
+    // This allows opening local worktree when viewing a cloud task
+    if (linkedLocalWorkspace) {
+      return (
+        linkedLocalWorkspace.taskRun?.worktreePath ||
+        linkedLocalWorkspace.task?.worktreePath ||
+        null
+      );
+    }
+    // Priority 2: For local workspace tasks, the path is on local filesystem
+    if (task?.isLocalWorkspace) {
+      return selectedRun?.worktreePath || task?.worktreePath || null;
+    }
+    // For cloud tasks without linked local workspace, return null
+    // The /root/workspace path is inside the cloud sandbox, not accessible locally
+    return null;
+  }, [
+    linkedLocalWorkspace,
+    task?.isLocalWorkspace,
+    selectedRun?.worktreePath,
+    task?.worktreePath,
+  ]);
 
   // Find parent run if this is a child run (for comparing against parent's branch)
   const parentRun = useMemo(() => {

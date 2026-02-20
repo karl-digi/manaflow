@@ -663,6 +663,47 @@ export interface ClientToServerEvents {
     data: TriggerLocalCloudSync,
     callback: (response: TriggerLocalCloudSyncResponse) => void
   ) => void;
+  // Scan filesystem for existing worktrees and register them
+  "scan-worktrees": (
+    data: { teamSlugOrId: string },
+    callback: (response: {
+      success: boolean;
+      found: number;
+      registered: number;
+      error?: string;
+    }) => void
+  ) => void;
+  // Delete a worktree from filesystem and registry
+  "delete-worktree": (
+    data: { teamSlugOrId: string; worktreePath: string },
+    callback: (response: {
+      success: boolean;
+      error?: string;
+    }) => void
+  ) => void;
+  // Validate worktree paths and clean up stale entries
+  "validate-worktrees": (
+    data: { teamSlugOrId: string; worktreePaths: string[] },
+    callback: (response: {
+      success: boolean;
+      validPaths: string[];
+      invalidPaths: string[];
+      error?: string;
+    }) => void
+  ) => void;
+  // Clean up a task's worktreePath if it doesn't exist
+  "cleanup-stale-workspace": (
+    data: { teamSlugOrId: string; taskId: string },
+    callback: (response: {
+      success: boolean;
+      error?: string;
+    }) => void
+  ) => void;
+}
+
+export interface LocalRepoNotFound {
+  repoFullName: string;
+  message: string;
 }
 
 export interface ServerToClientEvents {
@@ -676,6 +717,7 @@ export interface ServerToClientEvents {
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
   "docker-pull-progress": (data: DockerPullProgress) => void;
+  "local-repo-not-found": (data: LocalRepoNotFound) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

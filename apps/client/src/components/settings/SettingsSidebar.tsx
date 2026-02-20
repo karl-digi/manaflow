@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { useSidebar } from "@/contexts/sidebar/SidebarContext";
 import {
   disableDragPointerEvents,
@@ -6,10 +7,11 @@ import {
 import { isElectron } from "@/lib/electron";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Archive, ArrowLeft, GitBranch, KeyRound, Settings } from "lucide-react";
+import { Archive, ArrowLeft, FolderGit2, GitBranch, KeyRound, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -17,7 +19,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-export type SettingsSection = "general" | "ai-providers" | "git" | "archived";
+export type SettingsSection = "general" | "ai-providers" | "git" | "worktrees" | "archived";
 
 interface SettingsSidebarProps {
   teamSlugOrId: string;
@@ -29,9 +31,11 @@ interface SettingsSidebarNavItem {
   label: string;
   section: SettingsSection;
   icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  /** If true, this item is only shown in local/desktop mode (not web mode) */
+  localOnly?: boolean;
 }
 
-const navItems: SettingsSidebarNavItem[] = [
+const allNavItems: SettingsSidebarNavItem[] = [
   {
     label: "General",
     section: "general",
@@ -46,6 +50,13 @@ const navItems: SettingsSidebarNavItem[] = [
     label: "Git",
     section: "git",
     icon: GitBranch,
+  },
+  {
+    label: "Worktrees",
+    section: "worktrees",
+    icon: FolderGit2,
+    // Hidden in web mode - worktrees are local-only
+    localOnly: true,
   },
   {
     label: "Archived Tasks",
@@ -74,6 +85,14 @@ export function SettingsSidebar({
   });
   const [isResizing, setIsResizing] = useState(false);
   const { isHidden } = useSidebar();
+
+  // Filter nav items based on web mode - worktrees are local-only
+  const navItems = useMemo(() => {
+    if (env.NEXT_PUBLIC_WEB_MODE) {
+      return allNavItems.filter((item) => !item.localOnly);
+    }
+    return allNavItems;
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));

@@ -852,7 +852,7 @@ export const updateWorktreePath = authMutation({
   args: {
     teamSlugOrId: v.string(),
     id: v.id("tasks"),
-    worktreePath: v.string(),
+    worktreePath: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -1834,6 +1834,7 @@ export const getLinkedLocalWorkspace = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     // Find local workspace task linked from this cloud task run
+    // Exclude archived tasks - they should not block creating a new local workspace
     const linkedTask = await ctx.db
       .query("tasks")
       .withIndex("by_linked_cloud_task_run", (q) =>
@@ -1841,6 +1842,7 @@ export const getLinkedLocalWorkspace = authQuery({
       )
       .filter((q) => q.eq(q.field("teamId"), teamId))
       .filter((q) => q.eq(q.field("userId"), userId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .first();
 
     if (!linkedTask) {

@@ -104,6 +104,7 @@ function LayoutComponent() {
   const activeSettingsSection: SettingsSection =
     sectionFromSearch === "ai-providers" ? "ai-providers" :
     sectionFromSearch === "git" ? "git" :
+    sectionFromSearch === "worktrees" ? "worktrees" :
     sectionFromSearch === "archived" ? "archived" : "general";
 
   useEffect(() => {

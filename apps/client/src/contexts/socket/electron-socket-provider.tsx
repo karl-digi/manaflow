@@ -1,8 +1,9 @@
 import { CmuxIpcSocketClient } from "@/lib/cmux-ipc-socket-client";
-import type { AvailableEditors } from "@cmux/shared";
+import type { AvailableEditors, LocalRepoNotFound } from "@cmux/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
@@ -122,6 +123,20 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
       createdSocket.on("available-editors", (editors: AvailableEditors) => {
         if (disposed) return;
         setAvailableEditors(editors);
+      });
+
+      createdSocket.on("local-repo-not-found", (data: LocalRepoNotFound) => {
+        if (disposed) return;
+        toast.error("Local Repository Not Found", {
+          description: data.message,
+          duration: 10000,
+          action: {
+            label: "Settings",
+            onClick: () => {
+              window.location.href = `/${teamSlugOrId}/settings?section=worktrees`;
+            },
+          },
+        });
       });
 
       // Connect the socket

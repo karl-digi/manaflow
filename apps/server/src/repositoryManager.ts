@@ -876,6 +876,29 @@ export class RepositoryManager {
     }
   }
 
+  /**
+   * Fetch latest changes from remote for an existing local repository.
+   * Used for codex-style mode where we use existing local repos instead of cloning.
+   */
+  async fetchLatest(repoPath: string, branch?: string): Promise<void> {
+    serverLogger.info(`[fetchLatest] Fetching latest for ${repoPath}`);
+    try {
+      // Get the branch to fetch (use provided or detect default)
+      const targetBranch = branch || (await this.getDefaultBranch(repoPath));
+
+      // Fetch from origin
+      const fetchCmd = `git fetch origin ${targetBranch}`;
+      await this.executeGitCommand(fetchCmd, { cwd: repoPath });
+
+      serverLogger.info(
+        `[fetchLatest] Successfully fetched ${targetBranch} for ${repoPath}`
+      );
+    } catch (error) {
+      serverLogger.warn(`[fetchLatest] Failed to fetch: ${error}`);
+      // Don't throw - fetching is best-effort for existing repos
+    }
+  }
+
   private async pullLatestChanges(
     repoPath: string,
     branch: string,
@@ -1038,6 +1061,239 @@ export class RepositoryManager {
       serverLogger.info(`Removed worktree at ${worktreePath}`);
     } catch (error) {
       serverLogger.warn(`Failed to remove worktree at ${worktreePath}:`, error);
+    }
+  }
+
+  /**
+   * Check if a path is a valid git repository.
+   */
+  async isValidGitRepository(repoPath: string): Promise<boolean> {
+    try {
+      await this.executeGitCommand(`git rev-parse --git-dir`, {
+        cwd: repoPath,
+        suppressErrorLogging: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * List all worktrees for a repository.
+   * Returns parsed worktree information including path, branch, and HEAD commit.
+   */
+  async listWorktrees(
+    repoPath: string
+  ): Promise<Array<{ path: string; branch: string | null; head: string | null }>> {
+    try {
+      const { stdout } = await this.executeGitCommand(
+        `git worktree list --porcelain`,
+        { cwd: repoPath }
+      );
+
+      const worktrees: Array<{
+        path: string;
+        branch: string | null;
+        head: string | null;
+      }> = [];
+      let currentWorktree: {
+        path: string;
+        branch: string | null;
+        head: string | null;
+      } | null = null;
+
+      const lines = stdout.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          if (currentWorktree) {
+            worktrees.push(currentWorktree);
+          }
+          currentWorktree = {
+            path: line.substring(9),
+            branch: null,
+            head: null,
+          };
+        } else if (line.startsWith("HEAD ") && currentWorktree) {
+          currentWorktree.head = line.substring(5);
+        } else if (line.startsWith("branch refs/heads/") && currentWorktree) {
+          currentWorktree.branch = line.substring(18);
+        } else if (line === "" && currentWorktree) {
+          worktrees.push(currentWorktree);
+          currentWorktree = null;
+        }
+      }
+
+      if (currentWorktree) {
+        worktrees.push(currentWorktree);
+      }
+
+      return worktrees;
+    } catch (error) {
+      serverLogger.warn(`Failed to list worktrees for ${repoPath}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a worktree from an existing local repository (Codex-style).
+   * Does NOT clone - assumes the source repo already exists locally.
+   */
+  async createWorktreeFromLocalRepo(
+    sourceRepoPath: string,
+    worktreePath: string,
+    branchName: string,
+    baseBranch: string = "main",
+    authenticatedUrl?: string
+  ): Promise<string> {
+    serverLogger.info(
+      `Creating worktree from local repo ${sourceRepoPath} for branch ${branchName}`
+    );
+
+    // Use the same locking mechanism as createWorktree
+    const inProcessLockKey = `${sourceRepoPath}::${branchName}`;
+    const existingLock = this.worktreeLocks.get(inProcessLockKey);
+    if (existingLock) {
+      serverLogger.info(
+        `Waiting for existing worktree operation on ${sourceRepoPath} (${branchName})...`
+      );
+      const lockTimeout = CLONE_FETCH_TIMEOUT_MS;
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Worktree lock timeout after ${lockTimeout}ms for ${branchName}`
+              )
+            ),
+          lockTimeout
+        );
+      });
+      try {
+        await Promise.race([existingLock, timeoutPromise]);
+      } catch (err) {
+        serverLogger.warn(
+          `Worktree lock wait failed or timed out, proceeding anyway: ${err}`
+        );
+        this.worktreeLocks.delete(inProcessLockKey);
+      }
+    }
+
+    let releaseInProcessLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseInProcessLock = () => {
+        this.worktreeLocks.delete(inProcessLockKey);
+        resolve();
+      };
+    });
+    this.worktreeLocks.set(inProcessLockKey, lockPromise);
+
+    try {
+      const fetchSource = await this.getFetchSource(
+        sourceRepoPath,
+        authenticatedUrl
+      );
+
+      // Try to fetch the branch from remote if it exists
+      let remoteBranchAvailable = false;
+      try {
+        await this.removeStaleGitLock(sourceRepoPath, "shallow.lock", 15_000);
+        const fetchCmd = `git fetch ${fetchSource} +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+        await this.executeGitCommand(fetchCmd, {
+          cwd: sourceRepoPath,
+          suppressErrorLogging: true,
+        });
+        remoteBranchAvailable = true;
+      } catch {
+        // Branch doesn't exist on remote, which is fine
+      }
+
+      // Check if branch already has a worktree
+      const existingWorktreePath = await this.findWorktreeUsingBranch(
+        sourceRepoPath,
+        branchName
+      );
+      if (existingWorktreePath) {
+        serverLogger.info(
+          `Branch ${branchName} already attached to worktree at ${existingWorktreePath}`
+        );
+        await this.ensureWorktreeConfigured(existingWorktreePath, branchName);
+        return existingWorktreePath;
+      }
+
+      // Check if local branch exists
+      let branchExists = false;
+      try {
+        await this.executeGitCommand(
+          `git rev-parse --verify refs/heads/${branchName}`,
+          { cwd: sourceRepoPath, suppressErrorLogging: true }
+        );
+        branchExists = true;
+      } catch {
+        // Branch doesn't exist locally
+      }
+
+      // Create the worktree
+      if (branchExists) {
+        serverLogger.info(
+          `Branch ${branchName} exists, creating worktree without new branch`
+        );
+        await this.executeGitCommand(
+          `git worktree add "${worktreePath}" ${branchName}`,
+          { cwd: sourceRepoPath }
+        );
+      } else if (remoteBranchAvailable) {
+        serverLogger.info(
+          `Remote branch origin/${branchName} found; creating worktree tracking remote`
+        );
+        await this.executeGitCommand(
+          `git worktree add -B "${branchName}" "${worktreePath}" origin/${branchName}`,
+          { cwd: sourceRepoPath }
+        );
+      } else {
+        serverLogger.info(
+          `Creating new branch ${branchName} from origin/${baseBranch}`
+        );
+        await this.executeGitCommand(
+          `git worktree add -b "${branchName}" "${worktreePath}" origin/${baseBranch}`,
+          { cwd: sourceRepoPath }
+        );
+      }
+
+      // Configure the worktree
+      await this.configureWorktreeBranch(worktreePath, branchName);
+      await this.setupGitHooks(worktreePath);
+
+      serverLogger.info(`Successfully created worktree at ${worktreePath}`);
+      return worktreePath;
+    } catch (error) {
+      // Handle "already exists" case
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        const alreadyExists =
+          msg.includes("already exists") ||
+          msg.includes("is already checked out");
+        if (alreadyExists) {
+          const actualPath =
+            (await this.findWorktreeUsingBranch(sourceRepoPath, branchName)) ||
+            worktreePath;
+          serverLogger.info(
+            `Worktree already present at ${actualPath}; ensuring configuration`
+          );
+          try {
+            await this.ensureWorktreeConfigured(actualPath, branchName);
+          } catch (e) {
+            serverLogger.warn(
+              `Post-existence configuration failed for ${actualPath}:`,
+              e
+            );
+          }
+          return actualPath;
+        }
+      }
+      throw error;
+    } finally {
+      releaseInProcessLock!();
     }
   }
 

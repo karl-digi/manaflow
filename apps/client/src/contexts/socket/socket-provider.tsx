@@ -1,8 +1,9 @@
-import type { AvailableEditors } from "@cmux/shared";
+import type { AvailableEditors, LocalRepoNotFound } from "@cmux/shared";
 import { connectToMainServer } from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { deriveProxyServiceUrl } from "../../lib/deriveProxyServiceUrl";
 import { stackClientApp } from "../../lib/stack";
@@ -102,10 +103,25 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
         setAvailableEditors(data);
       };
 
+      const handleLocalRepoNotFound = (data: LocalRepoNotFound) => {
+        toast.error("Local Repository Not Found", {
+          description: data.message,
+          duration: 10000,
+          action: {
+            label: "Settings",
+            onClick: () => {
+              // Navigate to Settings > Worktrees
+              window.location.href = `/${teamSlugOrId}/settings?section=worktrees`;
+            },
+          },
+        });
+      };
+
       newSocket.on("connect", handleConnect);
       newSocket.on("disconnect", handleDisconnect);
       newSocket.on("connect_error", handleConnectError);
       newSocket.on("available-editors", handleAvailableEditors);
+      newSocket.on("local-repo-not-found", handleLocalRepoNotFound);
     })();
 
     return () => {
@@ -116,6 +132,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
         createdSocket.off("disconnect");
         createdSocket.off("connect_error");
         createdSocket.off("available-editors");
+        createdSocket.off("local-repo-not-found");
         createdSocket.disconnect();
       }
       // Reset boot handle so future mounts can suspend appropriately

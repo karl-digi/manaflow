@@ -37,6 +37,7 @@ import {
   workspaceConfigsRouter,
   previewRouter,
   settingsRouter,
+  worktreesRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -179,6 +180,7 @@ app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
 app.route("/", editorSettingsRouter);
 app.route("/", settingsRouter);
+app.route("/", worktreesRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

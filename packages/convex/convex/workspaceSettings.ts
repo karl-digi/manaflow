@@ -40,6 +40,10 @@ export const update = authMutation({
     autoSyncEnabled: v.optional(v.boolean()),
     bypassAnthropicProxy: v.optional(v.boolean()),
     branchPrefix: v.optional(v.string()),
+    worktreeMode: v.optional(
+      v.union(v.literal("legacy"), v.literal("codex-style"))
+    ),
+    codexWorktreePathPattern: v.optional(v.string()),
     heatmapModel: v.optional(v.string()),
     heatmapThreshold: v.optional(v.number()),
     heatmapTooltipLanguage: v.optional(v.string()),
@@ -68,6 +72,8 @@ export const update = authMutation({
         autoSyncEnabled?: boolean;
         bypassAnthropicProxy?: boolean;
         branchPrefix?: string;
+        worktreeMode?: "legacy" | "codex-style";
+        codexWorktreePathPattern?: string;
         heatmapModel?: string;
         heatmapThreshold?: number;
         heatmapTooltipLanguage?: string;
@@ -93,6 +99,12 @@ export const update = authMutation({
       if (args.branchPrefix !== undefined) {
         updates.branchPrefix = sanitizeBranchPrefix(args.branchPrefix);
       }
+      if (args.worktreeMode !== undefined) {
+        updates.worktreeMode = args.worktreeMode;
+      }
+      if (args.codexWorktreePathPattern !== undefined) {
+        updates.codexWorktreePathPattern = args.codexWorktreePathPattern;
+      }
       if (args.heatmapModel !== undefined) {
         updates.heatmapModel = args.heatmapModel;
       }
@@ -114,6 +126,8 @@ export const update = authMutation({
         autoSyncEnabled: args.autoSyncEnabled,
         bypassAnthropicProxy: args.bypassAnthropicProxy,
         branchPrefix: args.branchPrefix !== undefined ? sanitizeBranchPrefix(args.branchPrefix) : undefined,
+        worktreeMode: args.worktreeMode,
+        codexWorktreePathPattern: args.codexWorktreePathPattern,
         heatmapModel: args.heatmapModel,
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,

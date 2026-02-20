@@ -975,6 +975,16 @@ export type TestAnthropicConnectionBody = {
     apiKey: string;
 };
 
+export type RemoveWorktreeResult = {
+    success: boolean;
+    message: string;
+};
+
+export type RemoveWorktreeBody = {
+    teamSlugOrId: string;
+    worktreePath: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -4016,6 +4026,29 @@ export type PostApiSettingsTestAnthropicConnectionResponses = {
 };
 
 export type PostApiSettingsTestAnthropicConnectionResponse = PostApiSettingsTestAnthropicConnectionResponses[keyof PostApiSettingsTestAnthropicConnectionResponses];
+
+export type PostApiWorktreesRemoveData = {
+    body: RemoveWorktreeBody;
+    path?: never;
+    query?: never;
+    url: '/api/worktrees/remove';
+};
+
+export type PostApiWorktreesRemoveErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiWorktreesRemoveResponses = {
+    /**
+     * Worktree removal result
+     */
+    200: RemoveWorktreeResult;
+};
+
+export type PostApiWorktreesRemoveResponse = PostApiWorktreesRemoveResponses[keyof PostApiWorktreesRemoveResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
