@@ -7,7 +7,6 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
-import { stackClientApp } from "@/lib/stack";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
 import {
   rewriteLocalWorkspaceUrlIfNeeded,
@@ -1417,10 +1416,13 @@ export function CommandBar({
         try {
           if (stackUser) {
             await stackUser.signOut({
-              redirectUrl: stackClientApp.urls.afterSignOut,
+              redirectUrl: "/sign-in?force=true",
             });
           } else {
-            await stackClientApp.redirectToSignOut({ replace: true });
+            await navigate({
+              to: "/sign-in",
+              search: { force: true },
+            });
           }
         } catch (error) {
           console.error("Sign out failed", error);
