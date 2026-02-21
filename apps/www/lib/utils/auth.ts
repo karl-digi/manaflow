@@ -35,8 +35,7 @@ export async function getAccessTokenFromRequest(
     }
   }
 
-  // Fallback: Check for x-stack-auth header (for apps/server internal calls)
-  // This is used when apps/server calls www API endpoints on behalf of CLI users
+  // Fallback: Check for x-stack-auth header (from client's getAuthHeaders())
   const stackAuthHeader = req.headers.get("x-stack-auth");
   if (stackAuthHeader) {
     try {
@@ -49,11 +48,13 @@ export async function getAccessTokenFromRequest(
         if (user) {
           return parsed.accessToken;
         }
-        console.error("[auth] x-stack-auth: getUser returned null");
+        // User not found with this token - likely expired
+        console.warn("[auth] x-stack-auth: getUser returned null (token may be expired)");
       }
     } catch (e) {
-      // x-stack-auth parsing or validation failed
-      console.error("[auth] x-stack-auth validation failed:", e);
+      // Token validation failed - log for debugging but return null to trigger 401
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.warn("[auth] x-stack-auth validation failed:", errMsg);
     }
   }
 
@@ -96,8 +97,7 @@ export async function getUserFromRequest(req: Request) {
     }
   }
 
-  // Fallback: Check for x-stack-auth header (for apps/server internal calls)
-  // This is used when apps/server calls www API endpoints on behalf of CLI users
+  // Fallback: Check for x-stack-auth header (from client's getAuthHeaders())
   const stackAuthHeader = req.headers.get("x-stack-auth");
   if (stackAuthHeader) {
     try {
@@ -110,9 +110,14 @@ export async function getUserFromRequest(req: Request) {
         if (user) {
           return user;
         }
+        // User not found with this token - likely expired, client should refresh
+        console.warn("[auth] x-stack-auth: getUser returned null (token may be expired)");
       }
-    } catch (_e) {
-      // x-stack-auth parsing or validation failed
+    } catch (e) {
+      // Token validation failed - log and return null to trigger 401
+      // Client will receive 401 and handle token refresh
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.warn("[auth] x-stack-auth validation failed:", errMsg);
     }
   }
 
