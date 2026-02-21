@@ -24,8 +24,10 @@ import { StackAdminApp } from "@stackframe/js";
 // Test configuration - use environment variable for Convex URL
 // HTTP actions are served from the .convex.site domain (not .convex.cloud)
 // No default - test requires CONVEX_SITE_URL or NEXT_PUBLIC_CONVEX_URL to be set
-const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL ??
-  process.env.NEXT_PUBLIC_CONVEX_URL?.replace(".convex.cloud", ".convex.site");
+const CONVEX_SITE_URL = (
+  process.env.CONVEX_SITE_URL ??
+  process.env.NEXT_PUBLIC_CONVEX_URL?.replace(".convex.cloud", ".convex.site")
+)?.replace(/\/+$/, "");
 const TEST_TEAM = process.env.CMUX_TEST_TEAM_SLUG ?? "dev";
 const TEST_TIMEOUT = 120_000; // 2 minutes for sandbox operations
 const TEST_USER_ID = process.env.STACK_TEST_USER_ID ?? "487b5ddc-0da0-4f12-8834-f452863a83f5";
@@ -79,6 +81,14 @@ async function getTestAuthTokens(): Promise<{
   return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken ?? undefined };
 }
 
+function buildCmuxApiUrl(path: string): URL {
+  if (!CONVEX_SITE_URL) {
+    throw new Error("CONVEX_SITE_URL or NEXT_PUBLIC_CONVEX_URL is required");
+  }
+  // Force exactly one slash between base URL and API path.
+  return new URL(path, `${CONVEX_SITE_URL}/`);
+}
+
 // Helper to make authenticated requests to Convex HTTP API
 async function cmuxApiFetch<T>(
   path: string,
@@ -90,7 +100,7 @@ async function cmuxApiFetch<T>(
 ): Promise<ApiResponse<T>> {
   const tokens = await getTestAuthTokens();
 
-  const url = new URL(`${CONVEX_SITE_URL}${path}`);
+  const url = buildCmuxApiUrl(path);
   if (options.query) {
     for (const [key, value] of Object.entries(options.query)) {
       url.searchParams.set(key, value);
@@ -152,8 +162,7 @@ describe(
     // ========================================================================
     describe("Authentication", () => {
       it("rejects unauthenticated requests", async () => {
-        const url = `${CONVEX_SITE_URL}/api/v1/cmux/me`;
-        const response = await fetch(url);
+        const response = await fetch(buildCmuxApiUrl("/api/v1/cmux/me"));
 
         expect(response.status).toBe(401);
       });

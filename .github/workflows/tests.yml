@@ -78,14 +78,23 @@ jobs:
           CMUX_TASK_RUN_JWT_SECRET: ${{ secrets.CMUX_TASK_RUN_JWT_SECRET }}
           # API Keys
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          # Next.js public env vars
+          # Convex - Cloud (use CONVEX_DEPLOY_KEY) or Self-hosted (use CONVEX_SELF_HOSTED_*)
+          # When CONVEX_SELF_HOSTED_ADMIN_KEY is set, CONVEX_DEPLOY_KEY is unset in the run script
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
           NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
           NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
           # Test user and team
           STACK_TEST_USER_ID: ${{ secrets.STACK_TEST_USER_ID }}
           CMUX_TEST_TEAM_SLUG: ${{ secrets.CMUX_TEST_TEAM_SLUG }}
-        run: bun run test
+        run: |
+          # Unset CONVEX_DEPLOY_KEY when using self-hosted Convex
+          if [ -n "$CONVEX_SELF_HOSTED_ADMIN_KEY" ]; then
+            unset CONVEX_DEPLOY_KEY
+          fi
+          bun run test

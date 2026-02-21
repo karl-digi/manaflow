@@ -356,12 +356,20 @@ function createIPCRealtimeServer(): RealtimeServer {
             };
             try {
               const fn = handler as (...fnArgs: unknown[]) => unknown;
+              // Socket handlers usually use ack callbacks. If such a handler is
+              // async, it returns Promise<void>; we must not treat that as the
+              // RPC result before ack is invoked.
+              const expectsAck = fn.length > args.length;
               const maybePromise: unknown =
                 args.length === 0 ? fn(ack) : fn(...args, ack);
-              // Support handlers that return a Promise instead of using ack
+
+              // Support handlers that return a Promise instead of using ack.
               if (isPromise(maybePromise)) {
                 (maybePromise as Promise<unknown>)
                   .then((val) => {
+                    if (expectsAck) {
+                      return;
+                    }
                     clearTimeout(timer);
                     finish(resolve, val);
                   })
@@ -369,6 +377,12 @@ function createIPCRealtimeServer(): RealtimeServer {
                     clearTimeout(timer);
                     rejectOnce(err);
                   });
+                return;
+              }
+
+              if (!expectsAck) {
+                clearTimeout(timer);
+                finish(resolve, maybePromise);
               }
             } catch (err) {
               clearTimeout(timer);

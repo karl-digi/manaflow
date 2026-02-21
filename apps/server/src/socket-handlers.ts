@@ -55,6 +55,7 @@ import {
   generatePRInfoAndBranchNames,
 } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
+import { editorExists, findEditorExecutable } from "./utils/editorDetection";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
@@ -640,9 +641,9 @@ export function setupSocketHandlers(
         alacrittyExists,
         xcodeExists,
       ] = await Promise.all([
-        commandExists("code"),
-        commandExists("cursor"),
-        commandExists("windsurf"),
+        editorExists("vscode"),
+        editorExists("cursor"),
+        editorExists("windsurf"),
         appExists("iTerm"),
         appExists("Terminal"),
         commandExists("ghostty"),
@@ -3036,7 +3037,7 @@ export function setupSocketHandlers(
       }
     );
 
-    socket.on("open-in-editor", (data, callback) => {
+    socket.on("open-in-editor", async (data, callback) => {
       // In web mode, opening local editors is not supported
       if (env.NEXT_PUBLIC_WEB_MODE) {
         callback?.({ success: false, error: "Opening local editors is not available in the web version." });
@@ -3044,47 +3045,62 @@ export function setupSocketHandlers(
       }
 
       try {
-        const { editor, path } = OpenInEditorSchema.parse(data);
+        const { editor, path: filePath } = OpenInEditorSchema.parse(data);
 
         let command: string[];
         switch (editor) {
-          case "vscode":
-            command = ["code", path];
+          case "vscode": {
+            const executable = await findEditorExecutable("vscode");
+            if (!executable) {
+              throw new Error("VS Code is not installed");
+            }
+            command = [executable, filePath];
             break;
-          case "cursor":
-            command = ["cursor", path];
+          }
+          case "cursor": {
+            const executable = await findEditorExecutable("cursor");
+            if (!executable) {
+              throw new Error("Cursor is not installed");
+            }
+            command = [executable, filePath];
             break;
-          case "windsurf":
-            command = ["windsurf", path];
+          }
+          case "windsurf": {
+            const executable = await findEditorExecutable("windsurf");
+            if (!executable) {
+              throw new Error("Windsurf is not installed");
+            }
+            command = [executable, filePath];
             break;
+          }
           case "finder": {
             if (process.platform !== "darwin") {
               throw new Error("Finder is only supported on macOS");
             }
             // Use macOS 'open' to open the folder in Finder
-            command = ["open", path];
+            command = ["open", filePath];
             break;
           }
           case "iterm":
-            command = ["open", "-a", "iTerm", path];
+            command = ["open", "-a", "iTerm", filePath];
             break;
           case "terminal":
-            command = ["open", "-a", "Terminal", path];
+            command = ["open", "-a", "Terminal", filePath];
             break;
           case "ghostty":
-            command = ["open", "-a", "Ghostty", path];
+            command = ["open", "-a", "Ghostty", filePath];
             break;
           case "alacritty":
-            command = ["alacritty", "--working-directory", path];
+            command = ["alacritty", "--working-directory", filePath];
             break;
           case "xcode":
-            command = ["open", "-a", "Xcode", path];
+            command = ["open", "-a", "Xcode", filePath];
             break;
           default:
             throw new Error(`Unknown editor: ${editor}`);
         }
 
-        serverLogger.info(`Opening ${path} in ${editor} with command:`, command);
+        serverLogger.info(`Opening ${filePath} in ${editor} with command:`, command);
 
         const childProcess = spawn(command[0], command.slice(1), {
           detached: true,
@@ -3112,7 +3128,7 @@ export function setupSocketHandlers(
         setTimeout(() => {
           if (!responded && callback) {
             responded = true;
-            serverLogger.info(`Successfully spawned ${editor} for ${path}`);
+            serverLogger.info(`Successfully spawned ${editor} for ${filePath}`);
             callback({ success: true });
           }
         }, 200);
