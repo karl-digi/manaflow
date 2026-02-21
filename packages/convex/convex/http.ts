@@ -7,6 +7,7 @@ import {
   crownWorkerComplete,
 } from "./crown_http";
 import { agentStopped } from "./notifications_http";
+import { syncMemory } from "./agentMemory_http";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./screenshots_http";
 import {
   codeReviewFileCallback,
@@ -115,6 +116,12 @@ http.route({
   path: "/api/notifications/agent-stopped",
   method: "POST",
   handler: agentStopped,
+});
+
+http.route({
+  path: "/api/memory/sync",
+  method: "POST",
+  handler: syncMemory,
 });
 
 http.route({

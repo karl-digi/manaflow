@@ -1370,6 +1370,29 @@ const convexSchema = defineSchema({
     .index("by_status", ["status", "createdAt"])
     .index("by_instanceId", ["instanceId"])
     .index("by_team_status", ["teamId", "status", "createdAt"]),
+
+  // Agent memory snapshots - synced from sandbox memory files on agent completion
+  // Stores knowledge, daily logs, tasks, and mailbox content for each task run
+  agentMemorySnapshots: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    userId: v.string(),
+    agentName: v.optional(v.string()),
+    memoryType: v.union(
+      v.literal("knowledge"),
+      v.literal("daily"),
+      v.literal("tasks"),
+      v.literal("mailbox")
+    ),
+    content: v.string(),
+    fileName: v.optional(v.string()),
+    date: v.optional(v.string()), // YYYY-MM-DD for daily logs
+    truncated: v.optional(v.boolean()),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId", "memoryType"])
+    .index("by_team_type", ["teamId", "memoryType", "createdAt"])
+    .index("by_team_created", ["teamId", "createdAt"]),
 });
 
 export default convexSchema;

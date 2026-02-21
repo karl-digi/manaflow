@@ -3,6 +3,11 @@ import type {
   EnvironmentResult,
 } from "../common/environment-result";
 import { getGeminiTelemetryPath } from "./telemetry";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+} from "../../agent-memory-protocol";
 
 type GeminiModelSettings = {
   skipNextSpeakerCheck?: boolean;
@@ -195,6 +200,21 @@ export async function getGeminiEnvironment(
   } catch {
     // Commands directory doesn't exist
   }
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge));
+
+  // Add GEMINI.md with memory protocol instructions for the project
+  const geminiMdContent = `# cmux Project Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "/root/workspace/GEMINI.md",
+    contentBase64: Buffer.from(geminiMdContent).toString("base64"),
+    mode: "644",
+  });
 
   return { files, env, startupCommands };
 }

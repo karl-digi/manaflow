@@ -6,6 +6,11 @@ import {
   CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY,
   normalizeAnthropicBaseUrl,
 } from "../../utils/anthropic";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+} from "../../agent-memory-protocol";
 
 export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "ANTHROPIC_API_KEY",
@@ -50,7 +55,13 @@ export async function getClaudeEnvironment(
           allowedTools: [],
           history: [],
           mcpContextUris: [],
-          mcpServers: {},
+          mcpServers: {
+            // Memory MCP server for programmatic access to agent memory (S6)
+            "cmux-memory": {
+              command: "node",
+              args: [`${claudeLifecycleDir}/memory/mcp-server.js`],
+            },
+          },
           enabledMcpjsonServers: [],
           disabledMcpjsonServers: [],
           hasTrustDialogAccepted: true,
@@ -143,6 +154,10 @@ echo "[CMUX Stop Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
 
 if [ -n "\${CMUX_TASK_RUN_JWT}" ] && [ -n "\${CMUX_TASK_RUN_ID}" ] && [ -n "\${CMUX_CALLBACK_URL}" ]; then
   (
+    # Sync memory files to Convex (best-effort, before completion callbacks)
+    echo "[CMUX Stop Hook] Syncing memory files..." >> "$LOG_FILE"
+    /root/lifecycle/memory/sync.sh >> "$LOG_FILE" 2>&1 || true
+
     # Call crown/complete for status updates
     echo "[CMUX Stop Hook] Calling crown/complete..." >> "$LOG_FILE"
     curl -s -X POST "\${CMUX_CALLBACK_URL}/api/crown/complete" \\
@@ -282,6 +297,21 @@ echo ${apiKeyToOutput}`;
   startupCommands.push(
     "echo '[CMUX] Settings directory in ~/.claude:' && ls -la /root/.claude/",
   );
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge));
+
+  // Add CLAUDE.md with memory protocol instructions for the project
+  const claudeMdContent = `# cmux Project Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "/root/workspace/CLAUDE.local.md",
+    contentBase64: Buffer.from(claudeMdContent).toString("base64"),
+    mode: "644",
+  });
 
   return {
     files,

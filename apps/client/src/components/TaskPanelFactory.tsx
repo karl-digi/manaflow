@@ -5,6 +5,7 @@ import {
   Globe2,
   TerminalSquare,
   GitCompare,
+  Brain,
   GripVertical,
   X,
   Maximize2,
@@ -21,6 +22,7 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
+import type { TaskRunMemoryPanelProps } from "./TaskRunMemoryPanel";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
@@ -185,6 +187,7 @@ interface PanelFactoryProps {
   WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
   TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
   TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
+  TaskRunMemoryPanel?: React.ComponentType<TaskRunMemoryPanelProps>;
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
@@ -646,6 +649,23 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       );
     }
 
+    case "memory": {
+      const { selectedRun, TaskRunMemoryPanel, teamSlugOrId } = props;
+      if (!TaskRunMemoryPanel || !teamSlugOrId) return null;
+
+      return panelWrapper(
+        <Brain className="size-3" aria-hidden />,
+        PANEL_LABELS.memory,
+        <div className="relative flex-1 min-h-0 overflow-auto">
+          <TaskRunMemoryPanel
+            key={selectedRun?._id}
+            teamSlugOrId={teamSlugOrId}
+            taskRunId={selectedRun?._id}
+          />
+        </div>
+      );
+    }
+
     case null:
       return null;
 
@@ -699,6 +719,14 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
       prevProps.teamSlugOrId !== nextProps.teamSlugOrId ||
       prevProps.taskId !== nextProps.taskId) {
+      return false;
+    }
+  }
+
+  // For memory panel, check selectedRun and teamSlugOrId changes
+  if (prevProps.type === "memory") {
+    if (prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+      prevProps.teamSlugOrId !== nextProps.teamSlugOrId) {
       return false;
     }
   }

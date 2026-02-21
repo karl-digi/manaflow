@@ -33,4 +33,6 @@ export type EnvironmentContext = {
   workspaceSettings?: {
     bypassAnthropicProxy?: boolean;
   };
+  /** Previous knowledge content from earlier runs (for cross-run memory seeding) */
+  previousKnowledge?: string;
 };

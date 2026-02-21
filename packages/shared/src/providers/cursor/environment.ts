@@ -2,9 +2,14 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+} from "../../agent-memory-protocol";
 
 export async function getCursorEnvironment(
-  _ctx: EnvironmentContext
+  ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {
   // These must be lazy since configs are imported into the browser
   const { existsSync } = await import("node:fs");
@@ -104,6 +109,22 @@ export async function getCursorEnvironment(
   // Ensure directories exist
   startupCommands.push("mkdir -p ~/.cursor");
   startupCommands.push("mkdir -p ~/.config/cursor");
+  startupCommands.push("mkdir -p /root/workspace/.cursor/rules");
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge));
+
+  // Add CURSOR.md with memory protocol instructions for the project
+  const cursorMdContent = `# cmux Project Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "/root/workspace/.cursor/rules/cmux-memory-protocol.mdc",
+    contentBase64: Buffer.from(cursorMdContent).toString("base64"),
+    mode: "644",
+  });
 
   return { files, env, startupCommands };
 }
