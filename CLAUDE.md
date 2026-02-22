@@ -50,11 +50,28 @@ app.openapi(
 
 ## Convex
 
+This project supports both **Convex Cloud** and **self-hosted Convex**. Mode is auto-detected by `scripts/setup-convex-env.sh`:
+
+- **Cloud mode**: `CONVEX_DEPLOY_KEY` is set -> uses `NEXT_PUBLIC_CONVEX_URL`
+- **Self-hosted mode**: `CONVEX_SELF_HOSTED_ADMIN_KEY` is set -> uses `CONVEX_SELF_HOSTED_URL`
+
 Schemas are defined in packages/convex/convex/schema.ts.
 If you're working in Convex dir, you cannot use node APIs/import from "node:\*"
 Use crypto.subtle instead of node:crypto
 Exception is if the file defines only actions and includes a "use node" directive at the top of the file
-To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
+
+### Querying Convex Data
+
+Always use `--env-file` to ensure correct backend connection:
+
+```bash
+cd packages/convex
+bunx convex data <table> --format jsonl --env-file ../../.env | rg "pattern"
+# Example:
+bunx convex data sessions --format jsonl --env-file ../../.env | rg "mn7abc123"
+```
+
+The `--env-file` flag is required - it reads either `CONVEX_SELF_HOSTED_URL` + `CONVEX_SELF_HOSTED_ADMIN_KEY` (for self-hosted) or `CONVEX_DEPLOY_KEY` (for cloud) from `.env`.
 
 ## Sandboxes
 
