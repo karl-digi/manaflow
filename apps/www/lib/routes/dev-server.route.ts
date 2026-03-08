@@ -208,8 +208,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     const vncSearchParams = new URLSearchParams();
     vncSearchParams.set("autoconnect", "1");
     vncSearchParams.set("resize", "scale");
-    vncSearchParams.set("reconnect", "1");
-    vncSearchParams.set("reconnect_delay", "1000");
+    vncSearchParams.set("reconnect", "0");
     vncUrl.search = `?${vncSearchParams.toString()}`;
     const vncUrlString = vncUrl.toString();
 

@@ -3,7 +3,7 @@ name: cloudrouter
 description: Manage cloud development sandboxes with cloudrouter. Create, sync, and access remote VMs with GPU support, Docker, and browser automation. Use when asked to create a sandbox, spin up a dev environment, run code in the cloud, use GPUs, automate a browser, or interact with remote VMs.
 license: MIT
 metadata:
-  author: manaflow-ai
+  author: karlorz
   version: "0.0.3"
 ---
 
@@ -45,7 +45,7 @@ cloudrouter - Cloud Development Sandboxes
 If cloudrouter is not installed, help the user install it:
 
 ```bash
-npm install -g @manaflow-ai/cloudrouter
+npm install -g @karlorz/cloudrouter
 ```
 
 This installs both `cloudrouter` and `cr` (shorthand) as CLI commands.
@@ -320,7 +320,7 @@ cloudrouter browser screenshot cr_abc123 # Visual capture
 
 ### Sandbox Lifecycle & Cleanup
 
-**Concurrency limit:** Users have a default limit of **10 concurrently running sandboxes**. Subscribed users may have higher limits (50, 100, or 500 depending on tier). If the user is approaching their limit, alert them and suggest cleaning up unused sandboxes. If they need a higher limit, they should contact **founders@manaflow.ai** (the CLI will also display this message when the limit is hit).
+**Concurrency limit:** Users can have a maximum of **10 concurrently running sandboxes**. If the user is approaching this limit, alert them and suggest cleaning up unused sandboxes. If they need a higher limit, they should contact **founders@manaflow.ai** (the CLI will also display this message when the limit is hit).
 
 **Cleanup rules — be careful and deliberate:**
 
@@ -330,13 +330,13 @@ cloudrouter browser screenshot cr_abc123 # Visual capture
    - Use `--seconds <N>` to set a custom duration (default is 3600 = 1 hour). **Do NOT use `--timeout`** — that flag does not exist.
    - Example: `cloudrouter extend cr_abc123 --seconds 1800` extends by 30 minutes.
 
-3. **Stop, don't delete, by default.** Prefer `cloudrouter stop <id>` over `cloudrouter delete <id>` unless the sandbox is clearly disposable (e.g., a quick test that produced no artifacts). Stopped sandboxes can be restarted; deleted ones are gone forever. **If `cloudrouter stop` fails, fall back to `cloudrouter delete <id>` to ensure cleanup.**
+3. **Stop, don't delete, by default.** Prefer `cloudrouter stop <id>` over `cloudrouter delete <id>` unless the sandbox is clearly disposable (e.g., a quick test that produced no artifacts). Stopped sandboxes can be restarted; deleted ones are gone forever.
 
 4. **Clean up when you're done.** When your task is complete and the user no longer needs the sandbox, stop it. Don't leave sandboxes running indefinitely — they count toward the concurrency limit.
 
-5. **Monitor concurrency.** Before creating a new sandbox, run `cloudrouter ls` to check how many are running. If approaching the limit, warn the user and ask if any can be stopped before creating another. Never silently hit the limit.
+5. **Monitor concurrency.** Before creating a new sandbox, run `cloudrouter ls` to check how many are running. If there are 8+ active sandboxes, warn the user and ask if any can be stopped before creating another. Never silently hit the limit.
 
-6. **If the limit is reached:** Tell the user they've hit their sandbox concurrency limit. Suggest stopping sandboxes they no longer need. If they need more capacity, direct them to contact **founders@manaflow.ai** to request a higher limit.
+6. **If the limit is reached:** Tell the user they've hit the 10-sandbox concurrency limit. Suggest stopping sandboxes they no longer need. If they need more capacity, direct them to contact **founders@manaflow.ai** to request a higher limit.
 
 **Cleanup workflow:**
 

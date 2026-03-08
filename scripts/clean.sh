@@ -17,10 +17,11 @@ CORES=1
 if command -v nproc >/dev/null 2>&1; then CORES="$(nproc)"; elif command -v sysctl >/dev/null 2>&1; then CORES="$(sysctl -n hw.ncpu)"; fi
 
 # Prefer fd (much faster); fall back to find. Both avoid descending into node_modules.
+# Exclude dev-docs/ which contains synced documentation snapshots.
 if command -v fd >/dev/null 2>&1; then
-  FIND_CMD=(fd -HI -t d -0 '^node_modules$' "$TARGET")
+  FIND_CMD=(fd -HI -t d -0 --exclude 'dev-docs' '^node_modules$' "$TARGET")
 else
-  FIND_CMD=(find "$TARGET" -type d -name node_modules -prune -print0)
+  FIND_CMD=(find "$TARGET" -path './dev-docs' -prune -o -type d -name node_modules -prune -print0)
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then

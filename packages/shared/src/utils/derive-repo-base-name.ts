@@ -1,3 +1,16 @@
+/**
+ * Extracts the repository base name from either a project full name or repository URL.
+ *
+ * @param options.projectFullName - Full name in "owner/repo" format (e.g., "anthropics/claude-code")
+ * @param options.repoUrl - Git repository URL (e.g., "https://github.com/owner/repo.git")
+ * @returns The repository name without owner prefix or .git suffix, or undefined if neither input is valid
+ *
+ * @example
+ * ```ts
+ * deriveRepoBaseName({ projectFullName: "anthropics/claude-code" }) // "claude-code"
+ * deriveRepoBaseName({ repoUrl: "https://github.com/owner/my-repo.git" }) // "my-repo"
+ * ```
+ */
 export function deriveRepoBaseName({
   projectFullName,
   repoUrl,

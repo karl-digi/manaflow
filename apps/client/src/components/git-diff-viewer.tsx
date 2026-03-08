@@ -1,9 +1,9 @@
 export {
-  MonacoGitDiffViewer as GitDiffViewer,
+  NewGitDiffViewer as GitDiffViewer,
   type GitDiffViewerProps,
-} from "./monaco/monaco-git-diff-viewer";
+} from "./git-diff-view";
 
-export { MonacoGitDiffViewerWithSidebar as GitDiffViewerWithSidebar } from "./monaco/monaco-git-diff-viewer-with-sidebar";
+export { NewGitDiffViewerWithSidebar as GitDiffViewerWithSidebar } from "./git-diff-view";
 
 export {
   GitDiffViewerWithHeatmap,

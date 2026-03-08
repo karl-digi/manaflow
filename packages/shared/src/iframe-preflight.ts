@@ -1,3 +1,14 @@
+/**
+ * Types and utilities for iframe preflight checks.
+ *
+ * Preflight checks verify that sandbox endpoints are reachable
+ * before attempting to render them in iframes.
+ */
+
+/**
+ * Server-side phases during preflight processing.
+ * Used to communicate progress to the client via SSE.
+ */
 const IFRAME_PREFLIGHT_SERVER_PHASES = [
   "resuming",
   "resume_retry",
@@ -13,30 +24,45 @@ const IFRAME_PREFLIGHT_SERVER_PHASES = [
 
 type KnownRecord = Record<string, unknown>;
 
+/** A phase in the iframe preflight process */
 export type IframePreflightServerPhase =
   (typeof IFRAME_PREFLIGHT_SERVER_PHASES)[number];
 
+/** Payload sent from server during preflight, includes phase and optional extra data */
 export type IframePreflightPhasePayload = {
   phase: IframePreflightServerPhase;
 } & KnownRecord;
 
+/** HTTP method used for the preflight check */
 export type IframePreflightMethod = "HEAD" | "GET";
 
+/** Result of an iframe preflight check */
 export interface IframePreflightResult {
+  /** Whether the preflight check succeeded */
   ok: boolean;
+  /** HTTP status code from the check, or null if request failed */
   status: number | null;
+  /** HTTP method used for the check */
   method: IframePreflightMethod | null;
+  /** Error message if the check failed */
   error?: string;
 }
 
+/** Function type for sending preflight phase updates to clients */
 export type SendPhaseFn = (
   phase: IframePreflightServerPhase,
   extra?: KnownRecord,
 ) => Promise<void>;
 
+/**
+ * Type guard to check if a value is a plain object.
+ */
 const isRecord = (value: unknown): value is KnownRecord =>
   typeof value === "object" && value !== null;
 
+/**
+ * Type guard to check if a value is a valid IframePreflightServerPhase.
+ */
 export const isIframePreflightServerPhase = (
   value: unknown,
 ): value is IframePreflightServerPhase => {
@@ -60,6 +86,9 @@ export const isIframePreflightServerPhase = (
   }
 };
 
+/**
+ * Type guard to check if a value is a valid IframePreflightPhasePayload.
+ */
 export const isIframePreflightPhasePayload = (
   value: unknown,
 ): value is IframePreflightPhasePayload => {
@@ -74,6 +103,9 @@ export const isIframePreflightPhasePayload = (
   return true;
 };
 
+/**
+ * Type guard to check if a value is a valid IframePreflightResult.
+ */
 export const isIframePreflightResult = (
   value: unknown,
 ): value is IframePreflightResult => {

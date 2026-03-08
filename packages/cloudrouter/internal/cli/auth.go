@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/manaflow-ai/cloudrouter/internal/auth"
+	"github.com/karlorz/cloudrouter/internal/auth"
 	"github.com/spf13/cobra"
 )
 

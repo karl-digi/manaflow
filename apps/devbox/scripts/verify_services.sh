@@ -1,7 +1,7 @@
 #!/bin/bash
 # scripts/verify_services.sh
 #
-# Verify all cmux devbox services are running correctly inside a Morph VM.
+# Verify all devsh services are running correctly inside a Morph VM.
 # Run this script inside the VM to check the health of all services.
 #
 # Usage:
@@ -171,7 +171,7 @@ check_snapshot_marker() {
     if [ -f /cmux_base_snapshot_valid ]; then
         add_result "marker" "Snapshot marker" "ok" "valid"
     else
-        add_result "marker" "Snapshot marker" "warn" "not found (may not be a cmux devbox snapshot)"
+        add_result "marker" "Snapshot marker" "warn" "not found (may not be a devsh snapshot)"
     fi
 }
 
@@ -190,7 +190,7 @@ check_docker() {
 # Main execution
 if [ "$JSON_MODE" = false ]; then
     echo "=============================================="
-    echo "    cmux devbox Service Verification         "
+    echo "         devsh Service Verification          "
     echo "=============================================="
     echo ""
     echo "Checking at: $(date)"

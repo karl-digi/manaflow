@@ -7,3 +7,4 @@ notify = [
   "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
   "--",
 ]
+sandbox_mode = "danger-full-access"

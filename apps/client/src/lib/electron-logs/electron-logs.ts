@@ -47,7 +47,8 @@ export async function copyAllElectronLogs(): Promise<boolean> {
       return response.ok;
     }
     return true;
-  } catch {
+  } catch (error) {
+    console.debug("[electron-logs] Failed to copy logs:", error);
     return false;
   }
 }

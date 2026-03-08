@@ -1,7 +1,7 @@
 #!/bin/bash
 # test/test_edge_cases.sh
 #
-# Edge case and error handling tests for cmux devbox + Morph Cloud
+# Edge case and error handling tests for devsh + Morph Cloud
 #
 # This script tests error conditions and edge cases:
 # - Invalid refs
@@ -13,7 +13,7 @@
 # - And more...
 #
 # Prerequisites:
-# - cmux devbox CLI installed and in PATH
+# - devsh CLI installed and in PATH
 # - MORPH_API_KEY environment variable set
 # - Base snapshot created
 #
@@ -188,7 +188,7 @@ trap cleanup EXIT
 # =============================================================================
 
 echo "=============================================="
-echo "       cmux devbox Edge Case Test Suite"
+echo "         devsh Edge Case Test Suite"
 echo "=============================================="
 echo ""
 echo "Workspace: $WS"

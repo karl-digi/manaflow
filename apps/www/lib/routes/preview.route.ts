@@ -154,7 +154,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
@@ -197,7 +197,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const body = c.req.valid("json");
@@ -254,7 +254,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
     const params = c.req.valid("param");
     const query = c.req.valid("query");
@@ -301,7 +301,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
     const params = c.req.valid("param");
     const query = c.req.valid("query");
@@ -417,7 +417,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const query = c.req.valid("query");
@@ -473,7 +473,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const body = c.req.valid("json");
@@ -574,7 +574,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const params = c.req.valid("param");
@@ -627,7 +627,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const query = c.req.valid("query");
@@ -671,7 +671,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const params = c.req.valid("param");
@@ -726,7 +726,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const params = c.req.valid("param");
@@ -778,7 +778,7 @@ previewRouter.openapi(
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
-      return c.text("Unauthorized", 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const params = c.req.valid("param");

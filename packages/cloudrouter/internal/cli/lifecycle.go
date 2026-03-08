@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/manaflow-ai/cloudrouter/internal/api"
+	"github.com/karlorz/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -103,7 +103,7 @@ var extendCmd = &cobra.Command{
 		}
 
 		client := api.NewClient()
-		if err := client.ExtendTimeout(teamSlug, args[0], extendFlagTimeout*1000); err != nil {
+		if err := client.ExtendTimeout(teamSlug, args[0], extendFlagTimeout); err != nil {
 			return err
 		}
 		fmt.Printf("Extended timeout by %d seconds: %s\n", extendFlagTimeout, args[0])

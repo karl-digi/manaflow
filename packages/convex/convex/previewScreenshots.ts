@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import {
   action,
@@ -56,10 +57,14 @@ export const createScreenshotSet = internalMutation({
       throw new Error("Task run not found for preview run");
     }
 
-    // Allow completed status with 0 images - this can happen when:
-    // 1. The PR has no UI changes (hasUiChanges=false)
-    // 2. Screenshot collection failed but we still want to record the attempt
-    // The hasUiChanges field indicates whether UI changes were detected
+    // Validate that completed status with UI changes requires at least one screenshot or video
+    // Allow completed status with 0 images only when hasUiChanges=false (no UI changes detected)
+    const hasMedia = args.images.length > 0 || (args.videos?.length ?? 0) > 0;
+    if (args.status === "completed" && args.hasUiChanges !== false && !hasMedia) {
+      throw new Error(
+        "Completed screenshot sets with UI changes must have at least one screenshot or video"
+      );
+    }
 
     const screenshots = args.images.map((image) => ({
       storageId: image.storageId,
@@ -138,6 +143,23 @@ export const getScreenshotSet = internalQuery({
   },
 });
 
+export const getScreenshotSetsBatch = internalQuery({
+  args: {
+    screenshotSetIds: v.array(v.id("taskRunScreenshotSets")),
+  },
+  handler: async (ctx, args) => {
+    const sets = await Promise.all(
+      args.screenshotSetIds.map((id) => ctx.db.get(id))
+    );
+    // Return as a map for easy lookup
+    const result: Record<string, typeof sets[0]> = {};
+    for (let i = 0; i < args.screenshotSetIds.length; i++) {
+      result[args.screenshotSetIds[i]] = sets[i];
+    }
+    return result;
+  },
+});
+
 export const getScreenshotSetByRun = internalQuery({
   args: {
     previewRunId: v.id("previewRuns"),
@@ -209,8 +231,9 @@ export const triggerGithubComment = internalAction({
           teamId: previewRun.teamId,
         });
         const teamSlug = team?.slug ?? previewRun.teamId;
-        workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
-        devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+        const baseAppUrl = (env.BASE_APP_URL || "https://www.manaflow.com").replace(/\/$/, "");
+        workspaceUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
 
         console.log("[previewScreenshots] Built workspace URLs", {
           previewRunId: args.previewRunId,

@@ -62,7 +62,16 @@ async function buildIgnoreMatcher(workspacePath: string): Promise<Ignore> {
     const contents = await fs.readFile(giPath, "utf8");
     ig.add(contents.split("\n"));
   } catch (error) {
-    console.error("[localCloudSync] Failed to read .gitignore", error);
+    // Only log if it's not a simple "file not found" error
+    const isEnoent =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT";
+    if (!isEnoent) {
+      console.error("[localCloudSync] Failed to read .gitignore", error);
+    }
+    // No .gitignore is fine, just use default ignores
   }
   ig.add(DEFAULT_IGNORES);
   return ig;
@@ -803,7 +812,8 @@ export class LocalCloudSyncManager {
     // Find the local path for this cloud task run
     const localPath = this.cloudToLocalMap.get(taskRunId);
     if (!localPath) {
-      serverLogger.warn(
+      // This is expected for cloud-only task runs without local workspaces
+      serverLogger.debug(
         `[localCloudSync] No local workspace found for cloud taskRun ${taskRunId}`
       );
       return;

@@ -377,7 +377,7 @@ class PtyClient {
   private _maxReconnectAttempts = 10;
   private _reconnectDelay = 1000;
 
-  constructor(private readonly serverUrl: string) {}
+  constructor(private readonly serverUrl: string) { }
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -436,7 +436,7 @@ class PtyClient {
       this._reconnectAttempts++;
       const delay = this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1);
       console.log(`Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts})`);
-      setTimeout(() => this.connect().catch(() => {}), delay);
+      setTimeout(() => this.connect().catch(() => { }), delay);
     }
   }
 
@@ -1146,11 +1146,40 @@ class CmuxTerminalManager {
    * Sets up tracking and close listener using the already-created pty.
    */
   handleTerminalOpened(terminal: vscode.Terminal): void {
-    const pending = this._pendingTerminalSetup.get(terminal.name);
+    // Prefer to match pending terminals by PTY instance to avoid name collisions
+    const creationOptions = terminal.creationOptions as vscode.ExtensionTerminalOptions | undefined;
+    const terminalPty = creationOptions?.pty;
+
+    let pendingKey: string | null = null;
+    let pending: { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean } | undefined;
+
+    if (terminalPty) {
+      for (const [name, entry] of this._pendingTerminalSetup) {
+        if (entry.pty === terminalPty) {
+          pending = entry;
+          pendingKey = name;
+          break;
+        }
+      }
+    }
+
+    if (!pending) {
+      pending = this._pendingTerminalSetup.get(terminal.name);
+      pendingKey = pending ? terminal.name : null;
+    }
+
     if (!pending) return;
 
+    // If VSCode created a terminal with the same name but a different PTY (e.g. grace placeholder), ignore it
+    if (terminalPty && terminalPty !== pending.pty) {
+      console.log(`[cmux] Terminal ${terminal.name} opened with non-cmux PTY, skipping pending setup`);
+      return;
+    }
+
     console.log(`[cmux] Setting up tracking for terminal ${terminal.name} (${pending.id})`);
-    this._pendingTerminalSetup.delete(terminal.name);
+    if (pendingKey) {
+      this._pendingTerminalSetup.delete(pendingKey);
+    }
     this._pendingCreations.delete(pending.id);
 
     // If this was the last restore and queue is empty, mark restore complete
@@ -1248,6 +1277,32 @@ class CmuxTerminalManager {
 let terminalManager: CmuxTerminalManager;
 let initializationPromise: Promise<void> | null = null;
 
+// Track when restore completes to implement grace period
+let restoreCompleteTime: number | null = null;
+const RESTORE_GRACE_PERIOD_MS = 2000; // 2 second grace period after restore
+const GRACE_SILENT_TERMINAL_NAME = '__cmux-grace__';
+
+/**
+ * A Pseudoterminal that immediately closes itself without output.
+ * Used to satisfy VSCode's expectation of a terminal profile without
+ * actually creating a persistent terminal (avoids "no profile provided" error).
+ */
+class SilentClosePseudoterminal implements vscode.Pseudoterminal {
+  private closeEmitter = new vscode.EventEmitter<number | void>();
+  onDidWrite = new vscode.EventEmitter<string>().event;
+  onDidClose = this.closeEmitter.event;
+
+  open(): void {
+    // Immediately signal close with exit code 0
+    // This causes VSCode to close the terminal tab right away
+    setTimeout(() => this.closeEmitter.fire(0), 0);
+  }
+
+  close(): void {
+    // No-op - already closed
+  }
+}
+
 class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
   async provideTerminalProfile(
     _token: vscode.CancellationToken
@@ -1296,20 +1351,36 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
     }
 
     // Queue is empty - check if restore is still in progress
-    if (terminalManager.isRestoreInProgress() && terminalManager.hasTerminals()) {
-      // Restore in progress but queue is empty - terminals were consumed by earlier calls
-      // VSCode is asking for an extra one during restore, skip it
-      console.log('[cmux] provideTerminalProfile: restore in progress, focusing existing');
-      const terminals = terminalManager.getTerminals();
-      if (terminals.length > 0) {
-        terminals[0].terminal.show();
-      }
-      // Mark restore complete
+    if (terminalManager.isRestoreInProgress()) {
+      // Mark restore complete and record the time
+      console.log('[cmux] provideTerminalProfile: restore queue empty, marking restore complete');
       terminalManager.drainRestoreQueue();
-      return undefined;
+      restoreCompleteTime = Date.now();
     }
 
-    // Fresh start with no existing PTYs - create a new terminal
+    // Check if we're within the grace period after restore
+    // During this period, VSCode may auto-request terminals (e.g., default profile behavior)
+    // We return a SilentClosePseudoterminal to avoid creating unwanted terminals
+    if (restoreCompleteTime !== null && terminalManager.hasTerminals()) {
+      const timeSinceRestore = Date.now() - restoreCompleteTime;
+      if (timeSinceRestore < RESTORE_GRACE_PERIOD_MS) {
+        console.log(`[cmux] provideTerminalProfile: within grace period (${timeSinceRestore}ms), skipping auto-create`);
+        // Focus an existing terminal so the user sees something useful
+        const terminals = terminalManager.getTerminals();
+        if (terminals.length > 0) {
+          terminals[0].terminal.show();
+        }
+        // Return a terminal that immediately closes itself
+        // This satisfies VSCode without creating a persistent terminal
+        // Use a distinct name so it cannot collide with pending restores tracked by name
+        return new vscode.TerminalProfile({
+          name: GRACE_SILENT_TERMINAL_NAME,
+          pty: new SilentClosePseudoterminal(),
+        });
+      }
+    }
+
+    // Create a new PTY - either fresh start or user explicitly requested new terminal
     console.log('[cmux] provideTerminalProfile: creating new PTY');
     const result = await terminalManager.createPtyAndGetTerminal();
     if (!result) {
@@ -1585,6 +1656,8 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
+  // Record restore complete time for grace period
+  restoreCompleteTime = Date.now();
 
   // Focus the "cmux" terminal (main agent terminal) after creation
   const shouldFocus = options?.focus ?? true;

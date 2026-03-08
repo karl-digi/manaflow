@@ -3,6 +3,7 @@ import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { GitDiffManager } from "./gitDiff";
+import { handleHttpRequest } from "./http-api";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
@@ -51,8 +52,13 @@ export async function startServer({
   // Git diff manager instance
   const gitDiffManager = new GitDiffManager();
 
-  // Create HTTP server for socket connections (no HTTP proxying)
-  const httpServer = createServer((_, res) => {
+  // Create HTTP server for socket connections and HTTP API
+  const httpServer = createServer((req, res) => {
+    // Try HTTP API handlers first
+    if (handleHttpRequest(req, res)) {
+      return;
+    }
+    // Not handled - return 404
     res.statusCode = 404;
     res.end("Not found");
   });

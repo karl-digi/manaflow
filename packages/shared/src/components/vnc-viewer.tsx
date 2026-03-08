@@ -194,7 +194,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       qualityLevel = 6,
       compressionLevel = 2,
       autoConnect = true,
-      autoReconnect = true,
+      autoReconnect = false,
       reconnectDelay = 1000,
       maxReconnectDelay = 30000,
       maxReconnectAttempts = 0,
@@ -220,6 +220,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const reconnectAttemptsRef = useRef(0);
     const currentReconnectDelayRef = useRef(reconnectDelay);
     const isUnmountedRef = useRef(false);
+    const focusWasOutsideVncRef = useRef(false);
     const urlRef = useRef(url);
     const shouldReconnectRef = useRef(autoReconnect);
     const connectInternalRef = useRef<(() => Promise<void>) | null>(null);
@@ -316,10 +317,26 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         if (isUnmountedRef.current) return;
 
         const wsUrl = urlRef.current;
-        const rfb = new RFB(containerRef.current, wsUrl, {
+        const previouslyFocused = document.activeElement;
+        const containerEl = containerRef.current;
+        if (!containerEl) return;
+        const focusWasOutsideVnc =
+          previouslyFocused &&
+          previouslyFocused !== containerEl &&
+          !containerEl.contains(previouslyFocused);
+        focusWasOutsideVncRef.current = !!focusWasOutsideVnc;
+
+        const rfb = new RFB(containerEl, wsUrl, {
           credentials: undefined,
           wsProtocols: ["binary"],
         });
+        if (focusWasOutsideVnc && previouslyFocused instanceof HTMLElement) {
+          try {
+            previouslyFocused.focus({ preventScroll: true });
+          } catch (e) {
+            console.error("[VncViewer] Failed to restore focus:", e);
+          }
+        }
 
         rfb.scaleViewport = scaleViewport;
         rfb.clipViewport = clipViewport;
@@ -334,6 +351,9 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
           if (isUnmountedRef.current) return;
           reconnectAttemptsRef.current = 0;
           currentReconnectDelayRef.current = reconnectDelay;
+          if (focusWasOutsideVncRef.current) {
+            rfb.blur();
+          }
           updateStatus("connected");
           onConnect?.(rfb);
         });
@@ -348,6 +368,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
           if (!isClean && shouldReconnectRef.current) {
             scheduleReconnect("Connection lost unexpectedly");
+          } else if (!isClean) {
+            updateStatus("error", "Connection lost unexpectedly");
           }
         });
 
@@ -431,7 +453,16 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     useEffect(() => {
       if (network.online && !prevOnlineRef.current) {
         if (status === "error" || status === "disconnected") {
+          const previousFocus = document.activeElement;
           connect();
+          requestAnimationFrame(() => {
+            if (
+              previousFocus instanceof HTMLElement &&
+              document.activeElement !== previousFocus
+            ) {
+              previousFocus.focus({ preventScroll: true });
+            }
+          });
         }
       }
       prevOnlineRef.current = network.online;
@@ -980,7 +1011,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
           ref={containerRef}
           className="absolute inset-0"
           style={{ background }}
-          tabIndex={0}
+          tabIndex={-1}
           data-drag-disable-pointer
         />
 

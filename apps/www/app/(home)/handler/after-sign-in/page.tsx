@@ -161,7 +161,8 @@ type AfterSignInPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-const CMUX_SCHEME = "manaflow://";
+const CMUX_PROTOCOL = env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
+const CMUX_SCHEME = `${CMUX_PROTOCOL}://`;
 
 function getSingleValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -214,7 +215,8 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
     url.searchParams.set("stack_refresh", stackRefreshToken);
     url.searchParams.set("stack_access", stackAccessCookie);
     return url.toString();
-  } catch {
+  } catch (error) {
+    console.error("[After Sign In] Failed to build deep link", error);
     return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessCookie)}`;
   }
 }
@@ -239,7 +241,7 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
 
   // ALWAYS create a fresh session and get new tokens for Electron deeplinks.
   // This is critical because:
-  // 1. When a user is already logged in on manaflow.com and initiates sign-in from Electron,
+  // 1. When a user is already logged in on cmux.dev and initiates sign-in from Electron,
   //    the existing session's refresh token may have been rotated/invalidated
   // 2. getAuthJson() returns the current session's tokens which may be stale
   // 3. Creating a new session via createSession() generates fresh, valid tokens

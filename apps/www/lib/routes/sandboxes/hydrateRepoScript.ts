@@ -16,6 +16,60 @@ interface HydrateConfig {
   newBranch?: string;
 }
 
+/**
+ * Remove embedded credentials from a git URL.
+ * @example
+ * sanitizeGitUrl("https://x-access-token:TOKEN@github.com/user/repo.git")
+ * // Returns: "https://github.com/user/repo.git"
+ */
+function sanitizeGitUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return url;
+    if (!parsed.username && !parsed.password) return url;
+
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Git branch name validation regex.
+ * Matches valid git ref names: alphanumeric, hyphens, underscores, periods, slashes.
+ * Disallows: shell metacharacters, spaces, double dots, leading/trailing slashes.
+ */
+const GIT_BRANCH_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+
+/**
+ * Validate a git branch name to prevent shell injection.
+ * Throws if the branch name contains potentially dangerous characters.
+ */
+function validateBranchName(branch: string): void {
+  if (!branch || branch.length === 0) {
+    throw new Error("Branch name cannot be empty");
+  }
+  if (branch.length > 255) {
+    throw new Error("Branch name too long (max 255 characters)");
+  }
+  if (branch.includes("..")) {
+    throw new Error("Branch name cannot contain '..'");
+  }
+  if (branch.startsWith(".") || branch.endsWith(".")) {
+    throw new Error("Branch name cannot start or end with '.'");
+  }
+  if (branch.startsWith("/") || branch.endsWith("/")) {
+    throw new Error("Branch name cannot start or end with '/'");
+  }
+  if (!GIT_BRANCH_PATTERN.test(branch)) {
+    throw new Error(
+      `Invalid branch name '${branch}': must contain only alphanumeric characters, hyphens, underscores, periods, and forward slashes`
+    );
+  }
+}
+
 function log(message: string, level: "info" | "error" | "debug" = "info") {
   const prefix = `[hydrate-repo]`;
   const timestamp = new Date().toISOString();
@@ -137,14 +191,39 @@ function clearWorkspace(workspacePath: string) {
 }
 
 function cloneRepository(config: HydrateConfig) {
-  const { workspacePath, cloneUrl, maskedCloneUrl, depth } = config;
+  const { workspacePath, cloneUrl, maskedCloneUrl, depth, baseBranch } = config;
 
-  log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth}`);
+  if (baseBranch) {
+    // Validate branch name before using it in shell commands
+    validateBranchName(baseBranch);
+    log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth} on branch=${baseBranch}`);
+  } else {
+    log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth}`);
+  }
 
-  const { exitCode, stderr } = exec(
-    `git clone --depth ${depth} "${cloneUrl}" "${workspacePath}"`,
-    { throwOnError: false }
-  );
+  let cloneCommand = `git clone --depth ${depth}`;
+  if (baseBranch) {
+    cloneCommand += ` --branch "${baseBranch}"`;
+  }
+  cloneCommand += ` "${cloneUrl}" "${workspacePath}"`;
+
+  let { exitCode, stderr } = exec(cloneCommand, { throwOnError: false });
+
+  // If target branch does not exist remotely, retry with default branch
+  if (exitCode !== 0 && baseBranch) {
+    const missingBranchError =
+      stderr.includes(`Remote branch ${baseBranch} not found`) ||
+      stderr.includes(`Could not find remote branch ${baseBranch}`);
+
+    if (missingBranchError) {
+      log(`Clone with branch '${baseBranch}' failed, falling back to default branch`, "debug");
+      clearWorkspace(workspacePath);
+      ({ exitCode, stderr } = exec(
+        `git clone --depth ${depth} "${cloneUrl}" "${workspacePath}"`,
+        { throwOnError: false }
+      ));
+    }
+  }
 
   if (exitCode !== 0) {
     log(`Clone failed: ${stderr}`, "error");
@@ -152,9 +231,43 @@ function cloneRepository(config: HydrateConfig) {
   }
 
   log("Repository cloned successfully");
+
+  // SECURITY: Reset the remote URL to remove embedded credentials
+  // This prevents tokens from persisting in .git/config
+  const cleanUrl = sanitizeGitUrl(cloneUrl || "");
+  if (cleanUrl && cleanUrl !== cloneUrl) {
+    log("Removing embedded credentials from remote URL");
+    const { exitCode: setUrlExitCode } = exec(
+      `git remote set-url origin "${cleanUrl}"`,
+      { cwd: workspacePath, throwOnError: false }
+    );
+    if (setUrlExitCode === 0) {
+      log("Remote URL sanitized successfully");
+    } else {
+      log("Failed to sanitize remote URL", "error");
+    }
+  }
 }
 
 function fetchUpdates(workspacePath: string) {
+  // Unshallow if this is a shallow clone (needed to get full history)
+  const { stdout: isShallow } = exec(
+    `git rev-parse --is-shallow-repository`,
+    { cwd: workspacePath, throwOnError: false }
+  );
+  if (isShallow.trim() === "true") {
+    log("Unshallowing repository to get full history");
+    const { exitCode: unshallowExitCode, stderr: unshallowStderr } = exec(
+      `git fetch --unshallow`,
+      { cwd: workspacePath, throwOnError: false }
+    );
+    if (unshallowExitCode !== 0) {
+      log(`Unshallow warning: ${unshallowStderr}`, "debug");
+    } else {
+      log("Repository unshallowed successfully");
+    }
+  }
+
   log("Fetching updates from remote");
 
   const { exitCode, stderr } = exec(
@@ -170,6 +283,12 @@ function fetchUpdates(workspacePath: string) {
 }
 
 function checkoutBranch(workspacePath: string, baseBranch: string, newBranch?: string) {
+  // Validate branch names to prevent shell injection
+  validateBranchName(baseBranch);
+  if (newBranch) {
+    validateBranchName(newBranch);
+  }
+
   log(`Checking out base branch: ${baseBranch}`);
 
   // Try to checkout the base branch
@@ -233,9 +352,22 @@ function checkoutBranch(workspacePath: string, baseBranch: string, newBranch?: s
 }
 
 function hydrateSubdirectories(workspacePath: string) {
-  log("Checking for subdirectory git repositories");
+  log("Checking for git repositories in workspace");
 
   try {
+    // First check if workspace root itself is a git repo
+    const rootGitPath = join(workspacePath, ".git");
+    if (existsSync(rootGitPath)) {
+      log(`Found git repo at workspace root, updating to latest...`);
+      fetchUpdates(workspacePath);  // This unshallows and fetches
+      // Force reset to latest origin
+      const { stdout: rootBranch } = exec(`git rev-parse --abbrev-ref HEAD`, { cwd: workspacePath, throwOnError: false });
+      const rootBranchName = rootBranch.trim() || "main";
+      log(`Resetting workspace root to origin/${rootBranchName}`);
+      exec(`git reset --hard "origin/${rootBranchName}"`, { cwd: workspacePath, throwOnError: false });
+    }
+
+    // Then check subdirectories
     const dirs = execSync(`find "${workspacePath}" -maxdepth 1 -type d ! -path "${workspacePath}"`, {
       encoding: "utf-8"
     }).trim().split('\n').filter(Boolean);
@@ -243,21 +375,17 @@ function hydrateSubdirectories(workspacePath: string) {
     for (const dir of dirs) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
-        log(`Pulling updates in ${dir}`);
-        const { exitCode, stderr } = exec(`git pull --ff-only`, { cwd: dir, throwOnError: false });
-        if (exitCode !== 0 && (stderr.includes("divergent") || stderr.includes("Not possible to fast-forward"))) {
-          // Get current branch and reset to remote
-          const { stdout: branch } = exec(`git rev-parse --abbrev-ref HEAD`, { cwd: dir, throwOnError: false });
-          const branchName = branch.trim();
-          if (branchName) {
-            log(`Divergent branches in ${dir}, resetting to origin/${branchName}`, "debug");
-            exec(`git reset --hard "origin/${branchName}"`, { cwd: dir, throwOnError: false });
-          }
-        }
+        log(`Updating git repo in ${dir}`);
+        fetchUpdates(dir);  // Unshallow and fetch
+        // Force reset to latest origin
+        const { stdout: branch } = exec(`git rev-parse --abbrev-ref HEAD`, { cwd: dir, throwOnError: false });
+        const branchName = branch.trim() || "main";
+        log(`Resetting ${dir} to origin/${branchName}`);
+        exec(`git reset --hard "origin/${branchName}"`, { cwd: dir, throwOnError: false });
       }
     }
   } catch (error) {
-    log(`Error checking subdirectories: ${error}`, "debug");
+    log(`Error checking repositories: ${error}`, "debug");
   }
 }
 
@@ -288,8 +416,25 @@ async function main() {
         // Clone repository
         cloneRepository(config);
       } else {
-        // Fetch updates
+        // Existing repo - fetch and reset to latest origin
         fetchUpdates(config.workspacePath);
+
+        // Force update to latest origin commit (ensures we have latest code)
+        const { stdout: branchOutput } = exec(
+          `git rev-parse --abbrev-ref HEAD`,
+          { cwd: config.workspacePath, throwOnError: false }
+        );
+        const currentBranch = branchOutput.trim() || "main";
+        log(`Resetting to origin/${currentBranch} to get latest code`);
+        const { exitCode: resetExitCode } = exec(
+          `git reset --hard "origin/${currentBranch}"`,
+          { cwd: config.workspacePath, throwOnError: false }
+        );
+        if (resetExitCode === 0) {
+          log(`Reset to origin/${currentBranch} successfully`);
+        } else {
+          log(`Could not reset to origin/${currentBranch}`, "debug");
+        }
       }
 
       // Checkout branch

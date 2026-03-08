@@ -24,14 +24,15 @@ pub async fn get_time() -> String {
 pub async fn git_diff(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
     #[cfg(debug_assertions)]
     println!(
-    "[cmux_native_git] git_diff headRef={} baseRef={:?} originPathOverride={:?} repoUrl={:?} repoFullName={:?} includeContents={:?} maxBytes={:?}",
+    "[cmux_native_git] git_diff headRef={} baseRef={:?} originPathOverride={:?} repoUrl={:?} repoFullName={:?} includeContents={:?} maxBytes={:?} forceRefresh={:?}",
     opts.headRef,
     opts.baseRef,
     opts.originPathOverride,
     opts.repoUrl,
     opts.repoFullName,
     opts.includeContents,
-    opts.maxBytes
+    opts.maxBytes,
+    opts.forceRefresh
   );
     tokio::task::spawn_blocking(move || diff::refs::diff_refs(opts))
         .await

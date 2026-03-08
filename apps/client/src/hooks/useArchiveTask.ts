@@ -115,6 +115,31 @@ export function useArchiveTask(teamSlugOrId: string) {
     }
   });
 
+  const unarchive = useCallback(
+    async (id: string) => {
+      const taskId = id as Doc<"tasks">["_id"];
+
+      await unarchiveMutation({
+        teamSlugOrId,
+        id: taskId,
+      });
+
+      // Emit socket event to resume containers
+      if (socket) {
+        socket.emit(
+          "unarchive-task",
+          { taskId },
+          (response: { success: boolean; error?: string }) => {
+            if (!response.success) {
+              console.error("Failed to resume containers:", response.error);
+            }
+          }
+        );
+      }
+    },
+    [unarchiveMutation, socket, teamSlugOrId]
+  );
+
   const archiveWithUndo = useCallback(
     async (task: Doc<"tasks">) => {
       const taskId = task._id;
@@ -139,7 +164,7 @@ export function useArchiveTask(teamSlugOrId: string) {
         toast("Task archived", {
           action: {
             label: "Undo",
-            onClick: () => unarchiveMutation({ teamSlugOrId, id: taskId }),
+            onClick: () => unarchive(taskId),
           },
         });
       } finally {
@@ -150,7 +175,7 @@ export function useArchiveTask(teamSlugOrId: string) {
         });
       }
     },
-    [archiveMutation, socket, teamSlugOrId, unarchiveMutation]
+    [archiveMutation, socket, teamSlugOrId, unarchive]
   );
 
   const archive = useCallback(
@@ -194,11 +219,7 @@ export function useArchiveTask(teamSlugOrId: string) {
 
   return {
     archive,
-    unarchive: (id: string) =>
-      unarchiveMutation({
-        teamSlugOrId,
-        id: id as Doc<"tasks">["_id"],
-      }),
+    unarchive,
     archiveWithUndo,
     isArchiving,
   };

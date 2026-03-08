@@ -4,7 +4,8 @@ import { StackAdminApp } from "@stackframe/js";
 export type Tokens = { accessToken: string; refreshToken?: string };
 
 // Default test user for local/CI integration tests
-const DEFAULT_TEST_USER_ID = "487b5ddc-0da0-4f12-8834-f452863a83f5";
+const DEFAULT_TEST_USER_ID =
+  process.env.STACK_TEST_USER_ID || "487b5ddc-0da0-4f12-8834-f452863a83f5";
 
 let adminApp: StackAdminApp | null = null;
 

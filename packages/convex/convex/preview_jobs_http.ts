@@ -1,17 +1,11 @@
 import { env } from "../_shared/convex-env";
+import { jsonResponse } from "../_shared/http-utils";
 import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { runPreviewJob } from "./preview_jobs_worker";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 async function markPreviewTaskCompleted(
   ctx: ActionCtx,
@@ -67,6 +61,22 @@ export const dispatchPreviewJob = httpAction(async (ctx, req) => {
   }
 
   const previewRunId = body.previewRunId as Id<"previewRuns">;
+
+  // Check if screenshot workflow is enabled
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
+  if (!screenshotWorkflowEnabled) {
+    console.log("[preview-jobs-http] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      previewRunId,
+    });
+    return jsonResponse({
+      success: false,
+      error: "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+    }, 400);
+  }
+
   console.log("[preview-jobs-http] Dispatching preview job", {
     previewRunId,
   });
@@ -342,8 +352,9 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         teamId: taskRun.teamId,
       });
       const teamSlug = team?.slug ?? taskRun.teamId;
-      const workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
-      const devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
+      const baseAppUrl = (env.BASE_APP_URL || "https://www.manaflow.com").replace(/\/$/, "");
+      const workspaceUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}`;
+      const devServerUrl = `${baseAppUrl}/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
       // Determine which comment to update:
       // 1. Use stored githubCommentId if available - update it
@@ -605,6 +616,23 @@ export const createTestPreviewTask = httpAction(async (ctx, req) => {
   }
 
   const repoFullName = `${prInfo.owner}/${prInfo.repo}`.toLowerCase();
+
+  // Check if screenshot workflow is enabled
+  const screenshotWorkflowEnabled =
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+    env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1";
+
+  if (!screenshotWorkflowEnabled) {
+    console.log("[preview-jobs-http] Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)", {
+      teamId,
+      userId,
+      prUrl,
+    });
+    return jsonResponse({
+      success: false,
+      error: "Screenshot workflow disabled (CMUX_ENABLE_SCREENSHOT_WORKFLOW not set to true/1)",
+    }, 400);
+  }
 
   console.log("[preview-jobs-http] Creating test preview task", {
     teamId,

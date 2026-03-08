@@ -225,6 +225,8 @@ fn compute_diff_for_pr(pr: &PullRequestRecord) -> CachedDiff {
         maxBytes: Some(LARGE_MAX_BYTES),
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
+        authToken: None,
+        forceRefresh: None,
     })
     .unwrap_or_else(|err| panic!("diff_refs failed for {}#{}: {err}", pr.repo, pr.number));
 
@@ -610,6 +612,8 @@ fn refs_diff_basic_on_local_repo() {
         maxBytes: Some(1024 * 1024),
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
+        authToken: None,
+        forceRefresh: None,
     })
     .unwrap();
 
@@ -666,6 +670,8 @@ fn refs_merge_base_after_merge_is_branch_tip() {
         maxBytes: Some(1024 * 1024),
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
+        authToken: None,
+        forceRefresh: None,
     })
     .unwrap();
     assert_eq!(
@@ -682,7 +688,8 @@ fn refs_diff_numstat_matches_known_pairs() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = find_git_root(manifest_dir);
     // Proactively fetch to make sure remote-only commits are present locally
-    run(&repo_root, "git fetch --all --tags --prune");
+    // Use --force to handle tag conflicts between remotes (e.g., fork vs upstream)
+    run(&repo_root, "git fetch --all --tags --prune --force");
 
     let cases = vec![
         (
@@ -723,6 +730,8 @@ fn refs_diff_numstat_matches_known_pairs() {
             maxBytes: Some(10 * 1024 * 1024),
             lastKnownBaseSha: None,
             lastKnownMergeCommitSha: None,
+            authToken: None,
+            forceRefresh: None,
         })
         .expect("diff refs");
         let adds: i32 = out.iter().map(|e| e.additions).sum();
@@ -817,6 +826,8 @@ fn refs_diff_handles_binary_files() {
         maxBytes: Some(1024 * 1024),
         lastKnownBaseSha: None,
         lastKnownMergeCommitSha: None,
+        authToken: None,
+        forceRefresh: None,
     })
     .expect("diff refs binary");
 

@@ -12,7 +12,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { ArrowLeftRight, GitBranch } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/diff")({
@@ -81,6 +81,29 @@ function DashboardDiffPage() {
     staleTime: 10_000,
     enabled: !!selectedProject && !isEnvironmentProject,
   });
+
+  useEffect(() => {
+    if (branchesQuery.isError) {
+      const err = branchesQuery.error;
+      const message = err instanceof Error ? err.message : "Failed to load branches";
+      toast.error("Failed to load branches", { description: message });
+    }
+  }, [branchesQuery.isError, branchesQuery.error]);
+
+  const lastBranchesResponseErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    const apiError = branchesQuery.data?.error;
+    if (!apiError) {
+      lastBranchesResponseErrorRef.current = null;
+      return;
+    }
+
+    const key = `${selectedProject || ""}:${apiError}`;
+    if (lastBranchesResponseErrorRef.current === key) return;
+    lastBranchesResponseErrorRef.current = key;
+
+    toast.error("Unable to load branches", { description: apiError });
+  }, [branchesQuery.data?.error, selectedProject]);
 
   const projectOptions: SelectOption[] = useMemo(() => {
     const byOrg =

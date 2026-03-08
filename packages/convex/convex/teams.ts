@@ -155,3 +155,32 @@ export const getMembershipsByUserIdInternal = internalQuery({
     }));
   },
 });
+
+// Internal helper to fetch a team by slug or ID (used by HTTP handlers)
+export const getBySlugOrIdInternal = internalQuery({
+  args: { slugOrId: v.string() },
+  handler: async (ctx, { slugOrId }) => {
+    // First try by slug
+    let team = await ctx.db
+      .query("teams")
+      .withIndex("by_slug", (q) => q.eq("slug", slugOrId))
+      .first();
+
+    // Fall back to teamId
+    if (!team) {
+      team = await ctx.db
+        .query("teams")
+        .withIndex("by_teamId", (q) => q.eq("teamId", slugOrId))
+        .first();
+    }
+
+    if (!team) return null;
+    return {
+      teamId: team.teamId,
+      slug: team.slug ?? null,
+      displayName: team.displayName ?? null,
+      name: team.name ?? null,
+      profileImageUrl: team.profileImageUrl ?? null,
+    };
+  },
+});

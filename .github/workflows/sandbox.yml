@@ -69,6 +69,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Free disk space
+        run: |
+          set -eux
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache
+          sudo apt-get clean
+          sudo docker system prune -af || true
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

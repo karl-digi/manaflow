@@ -7,6 +7,7 @@ Provides streaming command execution over HTTP as an alternative to SSH.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import shlex
 import ssl
@@ -97,14 +98,35 @@ class HttpExecClient:
         command: Command,
         *,
         timeout: float | None,
+        max_retries: int = 3,
     ) -> InstanceExecResponse:
-        """Execute a command via the HTTP exec service."""
-        return await asyncio.to_thread(
-            self._run_sync,
-            label,
-            command,
-            timeout,
-        )
+        """Execute a command via the HTTP exec service with retry on transient errors."""
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    self._run_sync,
+                    label,
+                    command,
+                    timeout,
+                )
+            except RuntimeError as exc:
+                # Check if this is a transient gateway error (502, 503, 504)
+                exc_str = str(exc)
+                if any(f"HTTP Error {code}" in exc_str for code in (502, 503, 504)):
+                    last_exc = exc
+                    if attempt < max_retries:
+                        delay = min(2**attempt, 8)
+                        self._console.info(
+                            f"[{label}] transient HTTP error, retrying in {delay}s (attempt {attempt}/{max_retries}): {exc}"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                raise
+        # Should not reach here, but satisfy type checker
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("unexpected retry exhaustion")
 
     def _run_sync(
         self,
@@ -152,6 +174,29 @@ class HttpExecClient:
                     continue
                 raise RuntimeError(f"exec service request failed: {exc}") from exc
             except urllib.error.URLError as exc:
+                # URLError wraps connection errors like ConnectionResetError
+                reason = getattr(exc, "reason", exc)
+                if isinstance(reason, (ConnectionResetError, BrokenPipeError, OSError)) and attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    self._console.info(
+                        f"[{label}] connection error, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries}): {reason}"
+                    )
+                    time.sleep(delay)
+                    last_error = exc
+                    continue
+                raise RuntimeError(f"exec service request failed: {exc}") from exc
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                # Direct connection errors (not wrapped in URLError)
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    self._console.info(
+                        f"[{label}] connection error, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries}): {exc}"
+                    )
+                    time.sleep(delay)
+                    last_error = exc
+                    continue
                 raise RuntimeError(f"exec service request failed: {exc}") from exc
         else:
             raise RuntimeError(
@@ -203,6 +248,11 @@ class HttpExecClient:
                 else:
                     stderr_parts.append(f"unknown event type: {line}")
                     self._console.info(f"[{label}][stderr] unknown event: {line}")
+        except (ConnectionResetError, BrokenPipeError, http.client.IncompleteRead) as exc:
+            # Connection dropped during streaming response
+            stderr_parts.append(f"connection error during exec: {exc}")
+            self._console.info(f"[{label}][stderr] connection error: {exc}")
+            exit_code = 125
         finally:
             response.close()
 

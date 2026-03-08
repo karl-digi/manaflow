@@ -87,8 +87,8 @@ export class IPCSocketClient {
     if (this.eventCleanup) {
       try {
         this.eventCleanup();
-      } catch {
-        // Ignore cleanup errors
+      } catch (error) {
+        console.debug("[IPCSocket] Cleanup error (expected during shutdown):", error);
       }
       this.eventCleanup = undefined;
     }

@@ -29,18 +29,12 @@ convexQueryClient.convexClient.setAuth(
 );
 
 /**
- * Checks if a response indicates an expired/invalid auth token.
- * Only matches specific token expiration errors, not general auth failures.
+ * Checks if a response indicates an auth error that should trigger token refresh.
+ * We refresh on ANY 401 because the server returns 401 for all auth failures
+ * including expired tokens that fail Stack SDK validation.
  */
-function isTokenExpiredResponse(status: number, bodyText: string): boolean {
-  if (status !== 401) return false;
-  const lowerBody = bodyText.toLowerCase();
-  return (
-    lowerBody.includes("token expired") ||
-    lowerBody.includes("invalid auth header expired") ||
-    lowerBody.includes("jwt expired") ||
-    lowerBody.includes("token has expired")
-  );
+function shouldRefreshOnAuthError(status: number): boolean {
+  return status === 401;
 }
 
 /**
@@ -110,34 +104,22 @@ const fetchWithAuth = (async (request: Request) => {
   // First attempt
   let response = await makeRequest(request);
 
-  // Check if it's an auth error that warrants a retry
-  if (response.status === 401) {
-    const clone = response.clone();
-    let bodyText = "";
+  // Check if it's an auth error that warrants a retry with refreshed token
+  if (shouldRefreshOnAuthError(response.status)) {
+    console.warn("[Auth] Got 401, refreshing token and retrying...");
+
+    // Refresh the token (debounced to prevent race conditions)
     try {
-      bodyText = await clone.text();
-    } catch (e) {
-      console.error("[APIError] Failed to read error body for retry check", e);
-    }
+      await refreshAuthToken();
 
-    if (isTokenExpiredResponse(response.status, bodyText)) {
-      console.warn(
-        "[Auth] Token expired, refreshing and retrying with fresh token..."
-      );
-
-      // Refresh the token (debounced to prevent race conditions)
-      try {
-        await refreshAuthToken();
-
-        // Retry the request with fresh auth headers using the cloned request
-        response = await makeRequest(requestForRetry);
-        if (response.ok) {
-          console.log("[Auth] Retry succeeded with refreshed token");
-        }
-      } catch (retryError) {
-        console.error("[Auth] Retry failed after token refresh:", retryError);
-        // Return the original 401 response if retry fails
+      // Retry the request with fresh auth headers using the cloned request
+      response = await makeRequest(requestForRetry);
+      if (response.ok) {
+        console.log("[Auth] Retry succeeded with refreshed token");
       }
+    } catch (retryError) {
+      console.error("[Auth] Retry failed after token refresh:", retryError);
+      // Return the original 401 response if retry fails
     }
   }
 

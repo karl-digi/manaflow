@@ -1,0 +1,17 @@
+[Unit]
+Description=CMUX Worker Daemon (SSH:10000, HTTP:39377)
+After=network-online.target cmux-token-generator.service
+Wants=network-online.target
+Requires=cmux-token-generator.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/bin/worker-daemon
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-worker-daemon.log
+StandardError=append:/var/log/cmux/cmux-worker-daemon.log
+
+[Install]
+WantedBy=cmux.target multi-user.target

@@ -140,6 +140,7 @@ export async function computeEntriesNodeGit(
                 );
                 timeReadNew += Date.now() - tRn0;
               } catch {
+                // File may have been deleted between listing and read; use empty string
                 newContent = "";
               }
             }
@@ -298,6 +299,7 @@ export async function computeEntriesNodeGit(
         newContent = await fs.readFile(path.join(worktreePath, fp), "utf8");
         timeReadUntracked += Date.now() - tRn0;
       } catch {
+        // File may have been deleted between listing and read; use empty string
         newContent = "";
       }
       const additions = newContent ? newContent.split("\n").length : 0;
@@ -461,6 +463,7 @@ export async function computeEntriesBetweenRefs(opts: {
               );
               oldContent = stdout;
             } catch {
+              // File may not exist at ref1 (e.g., binary, submodule, or missing); use empty string
               oldContent = "";
             }
           } else {
@@ -474,6 +477,7 @@ export async function computeEntriesBetweenRefs(opts: {
               );
               newContent = stdout;
             } catch {
+              // File may not exist at ref2 (e.g., binary, submodule, or missing); use empty string
               newContent = "";
             }
           } else {
@@ -487,7 +491,7 @@ export async function computeEntriesBetweenRefs(opts: {
           patchText = pOut || undefined;
         }
       } catch {
-        // fallthrough
+        // Non-critical: numstat/patch extraction may fail for binary or submodule files; continue with defaults
       }
 
       const patchSize =
@@ -592,6 +596,7 @@ async function resolveMergeBaseWithDeepen(
       const mb = stdout.trim();
       return mb || null;
     } catch {
+      // merge-base fails when commits are unrelated (shallow clone or disconnected history)
       return null;
     }
   };
@@ -612,6 +617,7 @@ async function resolveMergeBaseWithDeepen(
       remoteBranch = baseRef; // likely origin/<branch>
     }
   } catch {
+    // No tracking branch configured; use baseRef directly
     remoteBranch = baseRef;
   }
 
@@ -630,7 +636,7 @@ async function resolveMergeBaseWithDeepen(
         await execAsync(`git fetch --deepen=${depth} origin`, { cwd });
       }
     } catch {
-      // ignore fetch errors; attempt merge-base anyway
+      // Fetch may fail (no network, invalid remote); continue trying merge-base anyway
     }
     mb = await tryMergeBase();
     if (mb) return mb;
@@ -687,6 +693,7 @@ async function getUntrackedFiles(cwd: string): Promise<string[]> {
     );
     return stdout.split("\0").filter(Boolean);
   } catch {
+    // Not a git repo or git command failed; return empty list to skip untracked files
     return [];
   }
 }
@@ -739,7 +746,7 @@ async function getPatchMap(
     }
     flush();
   } catch {
-    // ignore; return empty map
+    // git diff may fail for invalid refs or empty repos; return empty map to skip patches
   }
   return map;
 }
@@ -833,7 +840,7 @@ async function getNumstatMap(
       out.set(fp, { additions, deletions, isBinary });
     }
   } catch {
-    // fall back to empty map; per-file lookups may default to zeros
+    // git diff --numstat may fail for invalid refs; return empty map so per-file lookups default to zeros
   }
   return out;
 }

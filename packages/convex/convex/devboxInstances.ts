@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authQuery, authMutation } from "./users/utils";
 import { getTeamId } from "../_shared/team";
+import { devboxProviderValidator } from "../_shared/provider-validators";
 
 const instanceStatusValidator = v.union(
   v.literal("running"),
@@ -31,7 +32,7 @@ export const list = authQuery({
   args: {
     teamSlugOrId: v.string(),
     includeStoppedAfter: v.optional(v.number()),
-    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"))),
+    provider: v.optional(devboxProviderValidator),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -135,6 +136,31 @@ export const getInfo = internalQuery({
 });
 
 /**
+ * Get provider info for multiple devbox instances.
+ * Uses batched parallel queries to avoid N+1 pattern.
+ */
+export const getInfoBatch = internalQuery({
+  args: {
+    devboxIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    // Batch fetch all devbox info records in parallel
+    const infos = await Promise.all(
+      args.devboxIds.map((devboxId) =>
+        ctx.db
+          .query("devboxInfo")
+          .withIndex("by_devboxId", (q) => q.eq("devboxId", devboxId))
+          .first()
+      )
+    );
+
+    return infos
+      .filter((info): info is NonNullable<typeof info> => info != null)
+      .map((info) => ({ devboxId: info.devboxId, provider: info.provider }));
+  },
+});
+
+/**
  * Get devbox ID from provider instance ID.
  */
 export const getDevboxIdFromProvider = internalQuery({
@@ -153,13 +179,30 @@ export const getDevboxIdFromProvider = internalQuery({
 });
 
 /**
+ * Internal query to get devbox provider record by provider instance ID.
+ */
+export const getByProviderInstanceIdInternal = internalQuery({
+  args: {
+    providerInstanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("devboxInfo")
+      .withIndex("by_providerInstanceId", (q) =>
+        q.eq("providerInstanceId", args.providerInstanceId)
+      )
+      .first();
+  },
+});
+
+/**
  * Get devbox instance by provider instance ID.
  */
 export const getByProviderInstanceId = authQuery({
   args: {
     teamSlugOrId: v.string(),
     providerInstanceId: v.string(),
-    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"))),
+    provider: v.optional(devboxProviderValidator),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -203,7 +246,7 @@ export const create = authMutation({
   args: {
     teamSlugOrId: v.string(),
     providerInstanceId: v.string(), // e.g., morphvm_xxx or E2B sandbox ID
-    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"))),
+    provider: v.optional(devboxProviderValidator),
     name: v.optional(v.string()),
     snapshotId: v.optional(v.string()),
     templateId: v.optional(v.string()), // For E2B templates
@@ -294,7 +337,7 @@ export const updateStatus = authMutation({
     teamSlugOrId: v.string(),
     id: v.optional(v.string()), // The devboxId
     providerInstanceId: v.optional(v.string()), // Or provider instance ID
-    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"))),
+    provider: v.optional(devboxProviderValidator),
     status: instanceStatusValidator,
   },
   handler: async (ctx, args) => {
@@ -361,7 +404,7 @@ export const recordAccess = authMutation({
     teamSlugOrId: v.string(),
     id: v.optional(v.string()), // The devboxId
     providerInstanceId: v.optional(v.string()), // Or provider instance ID
-    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"))),
+    provider: v.optional(devboxProviderValidator),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;

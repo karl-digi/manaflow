@@ -1,0 +1,56 @@
+name: Sync dev-docs
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [dev-docs-updated]
+
+concurrency:
+  group: sync-dev-docs
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout cmux
+        uses: actions/checkout@v4
+
+      - name: Sync from dev-docs-cmux
+        run: |
+          rm -rf dev-docs
+          git clone --depth 1 https://github.com/karlorz/dev-docs-cmux.git dev-docs
+          rm -rf dev-docs/.git dev-docs/.github
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR if changes
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH="dev-docs-sync-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git add dev-docs
+          git commit -m "chore: sync dev-docs from dev-docs-cmux"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "chore: sync dev-docs from dev-docs-cmux" \
+            --body "Automated sync from karlorz/dev-docs-cmux repository." \
+            --head "$BRANCH" \
+            --base main

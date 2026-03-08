@@ -4,6 +4,76 @@ import { useLocalStorage } from "@mantine/hooks";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import clsx from "clsx";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+// Custom hook for infinite scroll that only triggers after user has scrolled
+function useInfiniteScroll(
+  triggerRef: React.RefObject<HTMLElement | null>,
+  onLoadMore: () => void,
+  canLoadMore: boolean,
+  enabled: boolean
+) {
+  const hasScrolledRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || !canLoadMore) return;
+
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      return;
+    }
+
+    const findScrollParent = (element: HTMLElement | null): HTMLElement | null => {
+      let current: HTMLElement | null = element;
+      while (current) {
+        const style = window.getComputedStyle(current);
+        const overflowY = style.overflowY;
+        const hasOverflowStyle =
+          overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+        // Must have overflow style AND actually be scrollable (content exceeds viewport)
+        if (hasOverflowStyle && current.scrollHeight > current.clientHeight) {
+          return current;
+        }
+        current = current.parentElement;
+      }
+      return null;
+    };
+
+    // FloatingPane (and other routes) use an internal overflow container, not window scroll.
+    // If we only listen to window scroll, this will never fire and we'll stay stuck on page 1.
+    const scrollParent = findScrollParent(trigger.parentElement);
+
+    const handleScroll = () => {
+      hasScrolledRef.current = true;
+    };
+
+    if (scrollParent) {
+      scrollParent.addEventListener("scroll", handleScroll, { passive: true });
+    } else {
+      window.addEventListener("scroll", handleScroll, { passive: true });
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Only trigger if user has scrolled at least once
+        if (entries[0].isIntersecting && hasScrolledRef.current) {
+          onLoadMore();
+        }
+      },
+      { threshold: 0.1, root: scrollParent ?? null }
+    );
+
+    observer.observe(trigger);
+
+    return () => {
+      if (scrollParent) {
+        scrollParent.removeEventListener("scroll", handleScroll);
+      } else {
+        window.removeEventListener("scroll", handleScroll);
+      }
+      observer.unobserve(trigger);
+    };
+  }, [triggerRef, onLoadMore, canLoadMore, enabled]);
+}
 import { TaskItem } from "./TaskItem";
 import { PreviewItem } from "./PreviewItem";
 import { ChevronRight, Loader2 } from "lucide-react";
@@ -179,8 +249,9 @@ const createCollapsedPreviewCategoryState = (
   completed: defaultValue,
 });
 
-const ARCHIVED_PAGE_SIZE = 20;
 const PREVIEW_PAGE_SIZE = 20;
+const TASKS_PAGE_SIZE = 10;
+const CATEGORY_INITIAL_DISPLAY_COUNT = 5;
 
 export const TaskList = memo(function TaskList({
   teamSlugOrId,
@@ -190,15 +261,15 @@ export const TaskList = memo(function TaskList({
   // In web mode, exclude local workspaces from the task list
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
 
-  const allTasks = useQuery(api.tasks.get, { teamSlugOrId, excludeLocalWorkspaces });
+  // Paginated query for main tasks (replaces non-paginated api.tasks.get)
   const {
-    results: archivedTasks,
-    status: archivedStatus,
-    loadMore: loadMoreArchived,
+    results: allTasks,
+    status: allTasksStatus,
+    loadMore: loadMoreTasks,
   } = usePaginatedQuery(
-    api.tasks.getArchivedPaginated,
+    api.tasks.getPaginated,
     { teamSlugOrId, excludeLocalWorkspaces },
-    { initialNumItems: ARCHIVED_PAGE_SIZE },
+    { initialNumItems: TASKS_PAGE_SIZE },
   );
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
   const {
@@ -210,38 +281,11 @@ export const TaskList = memo(function TaskList({
     { teamSlugOrId },
     { initialNumItems: PREVIEW_PAGE_SIZE },
   );
-  const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
+  const [tab, setTab] = useState<"all" | "previews">("all");
 
-  // Infinite scroll for archived tasks
-  const archivedScrollRef = useRef<HTMLDivElement>(null);
-  const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
   // Infinite scroll for preview runs
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const previewLoadMoreTriggerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (tab !== "archived" || archivedStatus !== "CanLoadMore") return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          loadMoreArchived(ARCHIVED_PAGE_SIZE);
-        }
-      },
-      { threshold: 0.1 },
-    );
-
-    const trigger = loadMoreTriggerRef.current;
-    if (trigger) {
-      observer.observe(trigger);
-    }
-
-    return () => {
-      if (trigger) {
-        observer.unobserve(trigger);
-      }
-    };
-  }, [tab, archivedStatus, loadMoreArchived]);
 
   useEffect(() => {
     if (tab !== "previews" || previewRunsStatus !== "CanLoadMore") return;
@@ -267,8 +311,18 @@ export const TaskList = memo(function TaskList({
     };
   }, [tab, previewRunsStatus, loadMorePreviewRuns]);
 
+  // Infinite scroll for all tasks - only triggers after user has scrolled
+  const tasksLoadMoreTriggerRef = useRef<HTMLDivElement>(null);
+  useInfiniteScroll(
+    tasksLoadMoreTriggerRef,
+    () => loadMoreTasks(TASKS_PAGE_SIZE),
+    allTasksStatus === "CanLoadMore",
+    tab === "all"
+  );
+
   const categorizedTasks = useMemo(() => {
-    const categorized = categorizeTasks(allTasks);
+    // allTasks is always defined with usePaginatedQuery (empty array during loading)
+    const categorized = categorizeTasks(allTasks.length > 0 ? allTasks : undefined);
     if (categorized && pinnedData) {
       // Filter pinned tasks out from other categories
       const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
@@ -308,6 +362,30 @@ export const TaskList = memo(function TaskList({
     }));
   }, [setCollapsedCategories]);
 
+  // Expanded state for "show more/show less" per category
+  const expandedStorageKey = useMemo(
+    () => `dashboard-expanded-categories-${teamSlugOrId}`,
+    [teamSlugOrId]
+  );
+  const defaultExpandedState = useMemo(
+    () => createCollapsedCategoryState(false), // reuse helper, all false = not expanded
+    []
+  );
+  const [expandedCategories, setExpandedCategories] = useLocalStorage<
+    Record<TaskCategoryKey, boolean>
+  >({
+    key: expandedStorageKey,
+    defaultValue: defaultExpandedState,
+    getInitialValueInEffect: true,
+  });
+
+  const toggleCategoryExpanded = useCallback((categoryKey: TaskCategoryKey) => {
+    setExpandedCategories((prev) => ({
+      ...prev,
+      [categoryKey]: !prev[categoryKey],
+    }));
+  }, [setExpandedCategories]);
+
   // Preview runs categorization
   const categorizedPreviewRuns = useMemo(
     () => categorizePreviewRuns(previewRuns),
@@ -338,6 +416,30 @@ export const TaskList = memo(function TaskList({
     }));
   }, [setCollapsedPreviewCategories]);
 
+  // Expanded state for "show more/show less" per preview category
+  const expandedPreviewStorageKey = useMemo(
+    () => `dashboard-expanded-preview-categories-${teamSlugOrId}`,
+    [teamSlugOrId]
+  );
+  const defaultExpandedPreviewState = useMemo(
+    () => createCollapsedPreviewCategoryState(false),
+    []
+  );
+  const [expandedPreviewCategories, setExpandedPreviewCategories] = useLocalStorage<
+    Record<PreviewCategoryKey, boolean>
+  >({
+    key: expandedPreviewStorageKey,
+    defaultValue: defaultExpandedPreviewState,
+    getInitialValueInEffect: true,
+  });
+
+  const togglePreviewCategoryExpanded = useCallback((categoryKey: PreviewCategoryKey) => {
+    setExpandedPreviewCategories((prev) => ({
+      ...prev,
+      [categoryKey]: !prev[categoryKey],
+    }));
+  }, [setExpandedPreviewCategories]);
+
   return (
     <div className="mt-6 w-full">
       <div className="mb-3 px-4">
@@ -366,54 +468,10 @@ export const TaskList = memo(function TaskList({
           >
             Previews
           </button>
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
-              (tab === "archived"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("archived")}
-            onClick={() => setTab("archived")}
-          >
-            Archived
-          </button>
         </div>
       </div>
       <div className="flex flex-col gap-1 w-full">
-        {tab === "archived" ? (
-          archivedStatus === "LoadingFirstPage" ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
-              Loading...
-            </div>
-          ) : archivedTasks.length === 0 ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
-              No archived tasks
-            </div>
-          ) : (
-            <div ref={archivedScrollRef} className="flex flex-col w-full">
-              {archivedTasks.map((task) => (
-                <TaskItem
-                  key={task._id}
-                  task={task}
-                  teamSlugOrId={teamSlugOrId}
-                />
-              ))}
-              {/* Infinite scroll trigger */}
-              <div ref={loadMoreTriggerRef} className="w-full py-2">
-                {archivedStatus === "LoadingMore" && (
-                  <div className="flex items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Loading more...</span>
-                  </div>
-                )}
-                {archivedStatus === "CanLoadMore" && (
-                  <div className="h-1" />
-                )}
-              </div>
-            </div>
-          )
-        ) : tab === "previews" ? (
+        {tab === "previews" ? (
           previewRunsStatus === "LoadingFirstPage" ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               Loading...
@@ -433,6 +491,9 @@ export const TaskList = memo(function TaskList({
                     teamSlugOrId={teamSlugOrId}
                     collapsed={Boolean(collapsedPreviewCategories[categoryKey])}
                     onToggle={togglePreviewCategoryCollapse}
+                    expanded={Boolean(expandedPreviewCategories[categoryKey])}
+                    onToggleExpanded={togglePreviewCategoryExpanded}
+                    initialDisplayCount={CATEGORY_INITIAL_DISPLAY_COUNT}
                   />
                 ))}
               </div>
@@ -450,28 +511,45 @@ export const TaskList = memo(function TaskList({
               </div>
             </div>
           )
-        ) : allTasks === undefined ? (
+        ) : allTasksStatus === "LoadingFirstPage" ? (
           <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
             Loading...
           </div>
         ) : (
-          <div className="mt-1 w-full flex flex-col space-y-[-1px] transform -translate-y-px">
-            {CATEGORY_ORDER.map((categoryKey) => {
-              // Don't render the pinned category if it's empty
-              if (categoryKey === 'pinned' && categoryBuckets[categoryKey].length === 0) {
-                return null;
-              }
-              return (
-                <TaskCategorySection
-                  key={categoryKey}
-                  categoryKey={categoryKey}
-                  tasks={categoryBuckets[categoryKey]}
-                  teamSlugOrId={teamSlugOrId}
-                  collapsed={Boolean(collapsedCategories[categoryKey])}
-                  onToggle={toggleCategoryCollapse}
-                />
-              );
-            })}
+          <div className="flex flex-col w-full">
+            <div className="mt-1 w-full flex flex-col space-y-[-1px] transform -translate-y-px">
+              {CATEGORY_ORDER.map((categoryKey) => {
+                // Don't render the pinned category if it's empty
+                if (categoryKey === 'pinned' && categoryBuckets[categoryKey].length === 0) {
+                  return null;
+                }
+                return (
+                  <TaskCategorySection
+                    key={categoryKey}
+                    categoryKey={categoryKey}
+                    tasks={categoryBuckets[categoryKey]}
+                    teamSlugOrId={teamSlugOrId}
+                    collapsed={Boolean(collapsedCategories[categoryKey])}
+                    onToggle={toggleCategoryCollapse}
+                    expanded={Boolean(expandedCategories[categoryKey])}
+                    onToggleExpanded={toggleCategoryExpanded}
+                    initialDisplayCount={CATEGORY_INITIAL_DISPLAY_COUNT}
+                  />
+                );
+              })}
+            </div>
+            {/* Infinite scroll trigger - only fires after user has scrolled */}
+            <div ref={tasksLoadMoreTriggerRef} className="w-full py-2">
+              {allTasksStatus === "LoadingMore" && (
+                <div className="flex items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Loading more...</span>
+                </div>
+              )}
+              {allTasksStatus === "CanLoadMore" && (
+                <div className="h-1" />
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -485,22 +563,38 @@ function TaskCategorySection({
   teamSlugOrId,
   collapsed,
   onToggle,
+  expanded,
+  onToggleExpanded,
+  initialDisplayCount,
 }: {
   categoryKey: TaskCategoryKey;
   tasks: Doc<"tasks">[];
   teamSlugOrId: string;
   collapsed: boolean;
   onToggle: (key: TaskCategoryKey) => void;
+  expanded: boolean;
+  onToggleExpanded: (key: TaskCategoryKey) => void;
+  initialDisplayCount: number;
 }) {
   const meta = CATEGORY_META[categoryKey];
   const handleToggle = useCallback(
     () => onToggle(categoryKey),
     [categoryKey, onToggle]
   );
+  const handleToggleExpanded = useCallback(
+    () => onToggleExpanded(categoryKey),
+    [categoryKey, onToggleExpanded]
+  );
   const contentId = `task-category-${categoryKey}`;
   const toggleLabel = collapsed
     ? `Expand ${meta.title}`
     : `Collapse ${meta.title}`;
+
+  // Show more/show less logic
+  const hasOverflow = tasks.length > initialDisplayCount;
+  const visibleTasks = hasOverflow && !expanded ? tasks.slice(0, initialDisplayCount) : tasks;
+  const remainingCount = Math.max(0, tasks.length - visibleTasks.length);
+
   return (
     <div className="w-full">
       <div
@@ -534,9 +628,18 @@ function TaskCategorySection({
       </div>
       {collapsed ? null : tasks.length > 0 ? (
         <div id={contentId} className="flex flex-col w-full">
-          {tasks.map((task) => (
+          {visibleTasks.map((task) => (
             <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
           ))}
+          {hasOverflow && (
+            <button
+              type="button"
+              onClick={handleToggleExpanded}
+              className="w-full px-4 py-1.5 text-left text-[11px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+            >
+              {expanded ? "Show less" : `Show more (${remainingCount})`}
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex w-full items-center px-4 py-3">
@@ -555,22 +658,38 @@ function PreviewCategorySection({
   teamSlugOrId,
   collapsed,
   onToggle,
+  expanded,
+  onToggleExpanded,
+  initialDisplayCount,
 }: {
   categoryKey: PreviewCategoryKey;
   previewRuns: PreviewRunWithConfig[];
   teamSlugOrId: string;
   collapsed: boolean;
   onToggle: (key: PreviewCategoryKey) => void;
+  expanded: boolean;
+  onToggleExpanded: (key: PreviewCategoryKey) => void;
+  initialDisplayCount: number;
 }) {
   const meta = PREVIEW_CATEGORY_META[categoryKey];
   const handleToggle = useCallback(
     () => onToggle(categoryKey),
     [categoryKey, onToggle]
   );
+  const handleToggleExpanded = useCallback(
+    () => onToggleExpanded(categoryKey),
+    [categoryKey, onToggleExpanded]
+  );
   const contentId = `preview-category-${categoryKey}`;
   const toggleLabel = collapsed
     ? `Expand ${meta.title}`
     : `Collapse ${meta.title}`;
+
+  // Show more/show less logic
+  const hasOverflow = previewRuns.length > initialDisplayCount;
+  const visibleRuns = hasOverflow && !expanded ? previewRuns.slice(0, initialDisplayCount) : previewRuns;
+  const remainingCount = Math.max(0, previewRuns.length - visibleRuns.length);
+
   return (
     <div className="w-full">
       <div
@@ -604,9 +723,18 @@ function PreviewCategorySection({
       </div>
       {collapsed ? null : previewRuns.length > 0 ? (
         <div id={contentId} className="flex flex-col w-full">
-          {previewRuns.map((run) => (
+          {visibleRuns.map((run) => (
             <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
           ))}
+          {hasOverflow && (
+            <button
+              type="button"
+              onClick={handleToggleExpanded}
+              className="w-full px-4 py-1.5 text-left text-[11px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+            >
+              {expanded ? "Show less" : `Show more (${remainingCount})`}
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex w-full items-center px-4 py-3">

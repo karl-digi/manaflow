@@ -6,6 +6,12 @@ import {
   DEFAULT_AMP_PROXY_PORT,
   DEFAULT_AMP_PROXY_URL,
 } from "./constants";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+  getProjectContextFile,
+} from "../../agent-memory-protocol";
 
 export async function getAmpEnvironment(
   ctx: EnvironmentContext
@@ -78,6 +84,32 @@ export async function getAmpEnvironment(
   // Use the taskRunId directly so the AMP proxy can extract it.
   // Prefix with taskRunId: to be explicit, though the proxy accepts bare IDs too.
   env.AMP_API_KEY = `taskRunId:${ctx.taskRunId}`;
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+
+  // Inject GitHub Projects context if task is linked to a project item (Phase 5)
+  if (ctx.githubProjectContext) {
+    files.push(
+      getProjectContextFile({
+        ...ctx.githubProjectContext,
+        taskRunJwt: ctx.taskRunJwt,
+        callbackUrl: ctx.callbackUrl,
+      }),
+    );
+  }
+
+  // Add AMP.md with memory protocol instructions for the project
+  const ampMdContent = `# cmux Project Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "/root/workspace/AMP.md",
+    contentBase64: Buffer.from(ampMdContent).toString("base64"),
+    mode: "644",
+  });
 
   return { files, env, startupCommands };
 }

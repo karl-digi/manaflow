@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { authQuery } from "./users/utils";
 
 // Internal helper to fetch a user by Stack Auth userId (used by HTTP handlers)
@@ -57,5 +57,34 @@ export const getCurrentBasic = authQuery({
       primaryEmail,
       githubAccountId,
     };
+  },
+});
+
+// Internal mutation to update user's selected team
+export const updateSelectedTeamInternal = internalMutation({
+  args: {
+    userId: v.string(),
+    selectedTeamId: v.string(),
+    selectedTeamDisplayName: v.optional(v.string()),
+    selectedTeamProfileImageUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .first();
+
+    if (!user) {
+      throw new Error(`User not found: ${args.userId}`);
+    }
+
+    await ctx.db.patch(user._id, {
+      selectedTeamId: args.selectedTeamId,
+      selectedTeamDisplayName: args.selectedTeamDisplayName,
+      selectedTeamProfileImageUrl: args.selectedTeamProfileImageUrl,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
   },
 });

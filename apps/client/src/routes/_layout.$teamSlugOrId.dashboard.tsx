@@ -1,9 +1,5 @@
 import { env } from "@/client-env";
-import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
-import {
-  DashboardInput,
-  type EditorApi,
-} from "@/components/dashboard/DashboardInput";
+import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
@@ -13,6 +9,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
+import { TitleBar } from "@/components/TitleBar";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -38,7 +35,6 @@ import type {
   TaskError,
   TaskStarted,
 } from "@cmux/shared";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
 import { convexQuery } from "@convex-dev/react-query";
 import {
@@ -50,53 +46,68 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+// Lazy load DashboardInput (contains heavy Lexical editor)
+const DashboardInput = lazy(() =>
+  import("@/components/dashboard/DashboardInput").then((m) => ({
+    default: m.DashboardInput,
+  }))
+);
+
+// Skeleton fallback for DashboardInput while loading
+function DashboardInputSkeleton() {
+  return (
+    <div className="p-4 min-h-[120px] animate-pulse">
+      <div className="h-4 bg-neutral-200 dark:bg-neutral-600 rounded w-3/4 mb-3" />
+      <div className="h-4 bg-neutral-200 dark:bg-neutral-600 rounded w-1/2" />
+    </div>
+  );
+}
+
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
-  loader: async (opts) => {
+  loader: (opts) => {
     const { teamSlugOrId } = opts.params;
-    // Prewarm queries used in the dashboard
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github.getReposByOrg,
-      args: { teamSlugOrId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.environments.list,
-      args: { teamSlugOrId },
-    });
-    // Prewarm queries used in TaskList
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.get,
-      args: { teamSlugOrId },
-    });
-    // Prewarm analytics query
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.analytics.getDashboardStats,
-      args: { teamSlugOrId },
+    // In web mode, exclude local workspaces (must match TaskList query args)
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+    // Defer prewarm queries to next tick - don't block route transition
+    // Convex will handle loading states via Suspense
+    queueMicrotask(() => {
+      // Prewarm queries used in the dashboard
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.github.getReposByOrg,
+        args: { teamSlugOrId },
+      });
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.environments.list,
+        args: { teamSlugOrId },
+      });
+      // Prewarm pinned tasks query (paginated queries don't support prewarm)
+      convexQueryClient.convexClient.prewarmQuery({
+        query: api.tasks.getPinned,
+        args: { teamSlugOrId, excludeLocalWorkspaces },
+      });
     });
   },
 });
 
 // Default agents (not persisted to localStorage)
 const DEFAULT_AGENTS = ["claude/opus-4.6", "codex/gpt-5.3-codex-xhigh"];
-const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
-const DISABLED_AGENT_NAMES = new Set(
-  AGENT_CONFIGS.filter((agent) => agent.disabled).map((agent) => agent.name)
-);
-const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter(
-  (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
-);
-
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
 
-// Filter to known agents and exclude disabled ones
-const filterKnownAgents = (agents: string[]): string[] =>
-  agents.filter(
-    (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
-  );
+const areAgentSelectionsEqual = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((agent, index) => agent === b[index]);
 
 const parseStoredAgentSelection = (stored: string | null): string[] => {
   if (!stored) {
@@ -111,7 +122,7 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
       return [];
     }
 
-    return filterKnownAgents(result.data);
+    return result.data;
   } catch (error) {
     console.warn("Failed to parse stored agent selection", error);
     return [];
@@ -198,27 +209,15 @@ function DashboardComponent() {
     };
   }, [renderDockerPullToast, socket]);
 
-  // Query tasks to check if user is new (has no tasks)
-  const tasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId })
-  );
-  const archivedTasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
+  // Lightweight query to check if user is new (has no real tasks) - for onboarding
+  // Uses hasRealTasks query which returns early after finding first match
+  const hasRealTasksQuery = useQuery(
+    convexQuery(api.tasks.hasRealTasks, { teamSlugOrId })
   );
 
-  const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
-  const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
-    const activeTasks = tasksQuery.data ?? [];
-    const archivedTasks = archivedTasksQuery.data ?? [];
-    const allTasks = [...activeTasks, ...archivedTasks];
-    const realTasks = allTasks.filter(
-      (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
-    );
-    return {
-      hasRealTasks: realTasks.length > 0,
-      hasCompletedRealTasks: realTasks.some((task) => task.isCompleted),
-    };
-  }, [tasksQuery.data, archivedTasksQuery.data]);
+  const tasksReady = hasRealTasksQuery.isSuccess;
+  const hasRealTasks = hasRealTasksQuery.data?.hasRealTasks ?? false;
+  const hasCompletedRealTasks = hasRealTasksQuery.data?.hasCompletedRealTasks ?? false;
 
   // Auto-start onboarding for new users on the dashboard
   useEffect(() => {
@@ -264,9 +263,7 @@ function DashboardComponent() {
       return storedAgents;
     }
 
-    return DEFAULT_AGENT_SELECTION.length > 0
-      ? [...DEFAULT_AGENT_SELECTION]
-      : [];
+    return [...DEFAULT_AGENTS];
   });
   const selectedAgentsRef = useRef<string[]>(selectedAgents);
 
@@ -297,25 +294,6 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
-
-  const persistAgentSelection = useCallback((agents: string[]) => {
-    try {
-      const isDefaultSelection =
-        DEFAULT_AGENT_SELECTION.length > 0 &&
-        agents.length === DEFAULT_AGENT_SELECTION.length &&
-        agents.every(
-          (agent, index) => agent === DEFAULT_AGENT_SELECTION[index]
-        );
-
-      if (agents.length === 0 || isDefaultSelection) {
-        localStorage.removeItem("selectedAgents");
-      } else {
-        localStorage.setItem("selectedAgents", JSON.stringify(agents));
-      }
-    } catch (error) {
-      console.warn("Failed to persist agent selection", error);
-    }
-  }, []);
 
   // Preselect environment if provided in URL search params
   useEffect(() => {
@@ -437,6 +415,15 @@ function DashboardComponent() {
     return null;
   }, [branchPages]);
 
+  const branchesResponseError = useMemo(() => {
+    for (const page of branchPages) {
+      if (page.error) {
+        return page.error;
+      }
+    }
+    return null;
+  }, [branchPages]);
+
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
@@ -451,6 +438,22 @@ function DashboardComponent() {
       toast.error("Failed to load branches", { description: message });
     }
   }, [branchesQuery.isError, branchesQuery.error]);
+
+  const lastBranchesResponseErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!branchesResponseError) {
+      lastBranchesResponseErrorRef.current = null;
+      return;
+    }
+
+    const key = `${currentRepo}:${branchesResponseError}`;
+    if (lastBranchesResponseErrorRef.current === key) return;
+    lastBranchesResponseErrorRef.current = key;
+
+    toast.error("Unable to load branches", {
+      description: branchesResponseError,
+    });
+  }, [branchesResponseError, currentRepo]);
 
   // Callback for project selection changes
   const handleProjectChange = useCallback(
@@ -477,25 +480,128 @@ function DashboardComponent() {
     setSelectedBranch(newBranches);
   }, []);
 
-  // Callback for agent selection changes
-  const handleAgentChange = useCallback(
-    (newAgents: string[]) => {
-      const normalizedAgents = filterKnownAgents(newAgents);
-      setSelectedAgents(normalizedAgents);
-      persistAgentSelection(normalizedAgents);
-    },
-    [persistAgentSelection, setSelectedAgents]
-  );
-
-  // Fetch repos from Convex
+  // Fetch repos from Convex - use prewarmed cache from route loader
   const reposByOrgQuery = useQuery({
     ...convexQuery(api.github.getReposByOrg, { teamSlugOrId }),
-    refetchOnMount: "always",
     refetchOnWindowFocus: false,
+    staleTime: 30_000, // Cache for 30s to use prewarmed data
   });
   const reposByOrg = useMemo(
     () => reposByOrgQuery.data || {},
     [reposByOrgQuery.data]
+  );
+
+  // Team/user visibility is not managed here. Model filtering is done by:
+  // 1. models.listAvailable - applies global models.enabled, teamModelVisibility, and API key checks
+  // 2. entry.disabled - catalog-level disabled flag for deprecated models
+  const disabledByUserModels = undefined;
+
+  // Fetch available models from Convex (filtered by API keys, includes runtime-discovered models)
+  const convexModelsQuery = useQuery(
+    convexQuery(api.models.listAvailable, { teamSlugOrId })
+  );
+  const convexModels = convexModelsQuery.data ?? null;
+
+  // Auto-seed models if none exist (self-healing mechanism)
+  const ensureModelsSeeded = useAction(api.modelDiscovery.ensureModelsSeeded);
+  const hasTriedSeeding = useRef(false);
+  useEffect(() => {
+    // Only try seeding once per component mount
+    if (hasTriedSeeding.current) return;
+    // Wait for query to complete
+    if (convexModelsQuery.isLoading) return;
+    // If we have models, no need to seed
+    if (convexModels && convexModels.length > 0) return;
+
+    // No models found - trigger seeding
+    hasTriedSeeding.current = true;
+    console.log("[Dashboard] No models found, triggering auto-seed...");
+    ensureModelsSeeded({ teamSlugOrId })
+      .then((result) => {
+        if (result.seeded) {
+          console.log(`[Dashboard] Auto-seeded ${result.count} models`);
+          // Refetch models list to update UI after seeding
+          convexModelsQuery.refetch();
+        }
+      })
+      .catch((error) => {
+        console.error("[Dashboard] Auto-seed failed:", error);
+      });
+  }, [
+    convexModels,
+    convexModelsQuery,
+    ensureModelsSeeded,
+    teamSlugOrId,
+  ]);
+
+  const availableAgentNames = useMemo(() => {
+    if (!convexModels) {
+      return null;
+    }
+
+    return new Set(
+      convexModels
+        .filter((entry) => entry.disabled !== true)
+        .map((entry) => entry.name)
+    );
+  }, [convexModels]);
+
+  const defaultAgentSelection = useMemo(() => {
+    if (!availableAgentNames) {
+      return [...DEFAULT_AGENTS];
+    }
+
+    return DEFAULT_AGENTS.filter((agent) => availableAgentNames.has(agent));
+  }, [availableAgentNames]);
+
+  const normalizeAgentSelection = useCallback(
+    (agents: string[]): string[] => {
+      if (!availableAgentNames) {
+        return agents;
+      }
+
+      return agents.filter((agent) => availableAgentNames.has(agent));
+    },
+    [availableAgentNames]
+  );
+
+  const persistAgentSelection = useCallback(
+    (agents: string[]) => {
+      try {
+        const isDefaultSelection =
+          defaultAgentSelection.length > 0 &&
+          areAgentSelectionsEqual(agents, defaultAgentSelection);
+
+        if (agents.length === 0 || isDefaultSelection) {
+          localStorage.removeItem("selectedAgents");
+        } else {
+          localStorage.setItem("selectedAgents", JSON.stringify(agents));
+        }
+      } catch (error) {
+        console.warn("Failed to persist agent selection", error);
+      }
+    },
+    [defaultAgentSelection]
+  );
+
+  // Keep selected agents aligned with Convex models and user model preferences.
+  useEffect(() => {
+    const currentAgents = selectedAgentsRef.current;
+    const normalizedAgents = normalizeAgentSelection(currentAgents);
+    if (!areAgentSelectionsEqual(normalizedAgents, currentAgents)) {
+      setSelectedAgents(normalizedAgents);
+      persistAgentSelection(normalizedAgents);
+    }
+  }, [normalizeAgentSelection, persistAgentSelection, setSelectedAgents]);
+
+  // Callback for agent selection changes
+  const handleAgentChange = useCallback(
+    (newAgents: string[]) => {
+      const normalizedAgents = normalizeAgentSelection(newAgents);
+      setSelectedAgents(normalizedAgents);
+      persistAgentSelection(normalizedAgents);
+    },
+    [normalizeAgentSelection, persistAgentSelection, setSelectedAgents]
   );
 
   // Socket-based functions to fetch data from GitHub
@@ -520,55 +626,21 @@ function DashboardComponent() {
         return;
       }
 
-      const providers = response.providers;
-      if (!providers || providers.length === 0) {
-        const normalizedOnly = filterKnownAgents(currentAgents);
-        if (normalizedOnly.length !== currentAgents.length) {
-          setSelectedAgents(normalizedOnly);
-          persistAgentSelection(normalizedOnly);
-        }
+      const normalizedAgents = normalizeAgentSelection(currentAgents);
+      if (areAgentSelectionsEqual(normalizedAgents, currentAgents)) {
         return;
       }
 
-      const availableAgents = new Set(
-        providers
-          .filter((provider) => provider.isAvailable)
-          .map((provider) => provider.name)
-      );
-
-      const normalizedAgents = filterKnownAgents(currentAgents);
-      const removedUnknown = normalizedAgents.length !== currentAgents.length;
-
-      const filteredAgents = normalizedAgents.filter((agent) =>
-        availableAgents.has(agent)
-      );
-      const removedUnavailable = normalizedAgents.filter(
-        (agent) => !availableAgents.has(agent)
-      );
-
-      if (!removedUnknown && removedUnavailable.length === 0) {
-        return;
-      }
-
-      setSelectedAgents(filteredAgents);
-      persistAgentSelection(filteredAgents);
-
-      if (removedUnavailable.length > 0) {
-        const uniqueMissing = Array.from(new Set(removedUnavailable));
-        if (uniqueMissing.length > 0) {
-          const label = uniqueMissing.length === 1 ? "model" : "models";
-          const verb = uniqueMissing.length === 1 ? "is" : "are";
-          const thisThese = uniqueMissing.length === 1 ? "this" : "these";
-          const actionMessage = env.NEXT_PUBLIC_WEB_MODE
-            ? `Add your API keys in Settings to use ${thisThese} ${label}.`
-            : `Update credentials in Settings to use ${thisThese} ${label}.`;
-          toast.warning(
-            `${uniqueMissing.join(", ")} ${verb} not configured and was removed from the selection. ${actionMessage}`
-          );
-        }
-      }
+      setSelectedAgents(normalizedAgents);
+      persistAgentSelection(normalizedAgents);
     });
-  }, [persistAgentSelection, setDockerReady, setSelectedAgents, socket]);
+  }, [
+    normalizeAgentSelection,
+    persistAgentSelection,
+    setDockerReady,
+    setSelectedAgents,
+    socket,
+  ]);
 
   // Mutation to create tasks with optimistic update
   const createTask = useMutation(api.tasks.create).withOptimisticUpdate(
@@ -584,18 +656,29 @@ function DashboardComponent() {
           _id: fakeTaskId,
           _creationTime: now,
           text: args.text,
-          description: args.description,
           projectFullName: args.projectFullName,
           baseBranch: args.baseBranch,
           worktreePath: args.worktreePath,
+          generatedBranchName: undefined,
           isCompleted: false,
           isArchived: false,
+          pinned: undefined,
+          isPreview: undefined,
+          isLocalWorkspace: undefined,
+          isCloudWorkspace: args.isCloudWorkspace,
+          linkedFromCloudTaskRunId: undefined,
           createdAt: now,
           updatedAt: now,
-          images: args.images,
+          lastActivityAt: now,
           userId: "optimistic",
           teamId: teamSlugOrId,
           environmentId: args.environmentId,
+          crownEvaluationStatus: undefined,
+          crownEvaluationError: undefined,
+          mergeStatus: undefined,
+          screenshotStatus: undefined,
+          selectedTaskRunId: undefined,
+          pullRequestTitle: undefined,
           hasUnread: false,
         };
 
@@ -690,7 +773,7 @@ function DashboardComponent() {
         const user = await stackClientApp.getUser();
         if (!user) return;
         const authHeaders = await user.getAuthHeaders();
-        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+        const response = await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
           method: "POST",
           headers: { ...authHeaders, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -699,8 +782,11 @@ function DashboardComponent() {
             branch: branch || undefined,
           }),
         });
+        if (!response.ok) {
+          console.error("[prewarm] Failed:", response.status, response.statusText);
+        }
       } catch (error) {
-        console.error("[prewarm] Failed to trigger prewarm:", error);
+        console.error("[prewarm] Network error:", error);
       }
     })();
   }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
@@ -831,7 +917,13 @@ function DashboardComponent() {
 
       // Determine which agents to spawn
       const agentsToSpawn =
-        selectedAgents.length > 0 ? selectedAgents : DEFAULT_AGENTS;
+        selectedAgents.length > 0 ? selectedAgents : defaultAgentSelection;
+
+      // Guard against creating tasks with no agents
+      if (agentsToSpawn.length === 0) {
+        toast.error("No agents available. Configure API keys in Settings.");
+        return;
+      }
 
       // Create task in Convex with storage IDs and task runs atomically
       // Note: isCloudWorkspace is NOT set here - that's only for standalone workspaces without agents.
@@ -912,6 +1004,7 @@ function DashboardComponent() {
     createTask,
     teamSlugOrId,
     addTaskToExpand,
+    defaultAgentSelection,
     selectedAgents,
     isCloudMode,
     isEnvSelected,
@@ -1031,7 +1124,23 @@ function DashboardComponent() {
     return selectedProject[0];
   }, [selectedProject, isEnvSelected]);
 
-  const shouldShowWorkspaceSetup = !!selectedRepoFullName && !isEnvSelected;
+  const selectedEnvironmentRepos = useMemo(() => {
+    if (!isEnvSelected || !selectedProject[0]) return [];
+    const envId = selectedProject[0].replace(/^env:/, "") as Id<"environments">;
+    const selectedEnvironment = environmentsQuery.data?.find(
+      (environment) => environment._id === envId
+    );
+    return Array.from(new Set(selectedEnvironment?.selectedRepos ?? []));
+  }, [environmentsQuery.data, isEnvSelected, selectedProject]);
+
+  const workspaceSetupProjects = useMemo(() => {
+    if (selectedRepoFullName && !isEnvSelected) {
+      return [selectedRepoFullName];
+    }
+    return selectedEnvironmentRepos;
+  }, [isEnvSelected, selectedEnvironmentRepos, selectedRepoFullName]);
+
+  const shouldShowWorkspaceSetup = workspaceSetupProjects.length > 0;
 
   // const shouldShowCloudRepoOnboarding =
   //   !!selectedRepoFullName && isCloudMode && !isEnvSelected && !hasDismissedCloudRepoOnboarding;
@@ -1276,7 +1385,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane>
+    <FloatingPane header={<TitleBar title="cmux-next" />}>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">
@@ -1317,18 +1426,23 @@ function DashboardComponent() {
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
               providerStatus={providerStatus}
+              disabledByUserModels={disabledByUserModels}
+              convexModels={convexModels}
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
             />
             {shouldShowWorkspaceSetup ? (
-              <WorkspaceSetupPanel
-                teamSlugOrId={teamSlugOrId}
-                projectFullName={selectedRepoFullName}
-              />
+              <div className="space-y-1">
+                {workspaceSetupProjects.map((projectFullName) => (
+                  <WorkspaceSetupPanel
+                    key={projectFullName}
+                    teamSlugOrId={teamSlugOrId}
+                    projectFullName={projectFullName}
+                  />
+                ))}
+              </div>
             ) : null}
-
-            <AnalyticsCards teamSlugOrId={teamSlugOrId} />
 
             {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
               <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">
@@ -1402,9 +1516,25 @@ type DashboardMainCardProps = {
   cloudToggleDisabled: boolean;
   branchDisabled: boolean;
   providerStatus: ProviderStatusResponse | null;
+  disabledByUserModels?: Set<string>;
+  convexModels: ConvexModelEntry[] | null;
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
+};
+
+// Type for models from Convex listAvailable
+type ConvexModelEntry = {
+  _id: string;
+  name: string;
+  displayName: string;
+  vendor: string;
+  tier: "free" | "paid";
+  enabled: boolean;
+  tags?: string[];
+  requiredApiKeys: string[];
+  disabled?: boolean;
+  sortOrder: number;
 };
 
 function DashboardMainCard({
@@ -1436,6 +1566,8 @@ function DashboardMainCard({
   cloudToggleDisabled,
   branchDisabled,
   providerStatus,
+  disabledByUserModels,
+  convexModels,
   canSubmit,
   onStartTask,
   isStartingTask,
@@ -1445,16 +1577,18 @@ function DashboardMainCard({
       className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all"
       data-onboarding="dashboard-input"
     >
-      <DashboardInput
-        ref={editorApiRef}
-        onTaskDescriptionChange={onTaskDescriptionChange}
-        onSubmit={onSubmit}
-        repoUrl={lexicalRepoUrl}
-        environmentId={lexicalEnvironmentId}
-        branch={lexicalBranch}
-        persistenceKey="dashboard-task-description"
-        maxHeight="300px"
-      />
+      <Suspense fallback={<DashboardInputSkeleton />}>
+        <DashboardInput
+          ref={editorApiRef}
+          onTaskDescriptionChange={onTaskDescriptionChange}
+          onSubmit={onSubmit}
+          repoUrl={lexicalRepoUrl}
+          environmentId={lexicalEnvironmentId}
+          branch={lexicalBranch}
+          persistenceKey="dashboard-task-description"
+          maxHeight="300px"
+        />
+      </Suspense>
 
       <DashboardInputFooter>
         <DashboardInputControls
@@ -1480,6 +1614,8 @@ function DashboardMainCard({
           cloudToggleDisabled={cloudToggleDisabled}
           branchDisabled={branchDisabled}
           providerStatus={providerStatus}
+          disabledByUserModels={disabledByUserModels}
+          convexModels={convexModels}
         />
         <DashboardStartTaskButton
           canSubmit={canSubmit}

@@ -1,12 +1,45 @@
 import { z } from "zod";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { log } from "../logger";
 import { execAsync, WORKSPACE_ROOT } from "./utils";
+import { getDefaultBaseBranch } from "./git";
 import type {
   CandidateData,
   CrownWorkerCheckResponse,
   PullRequestMetadata,
   WorkerRunContext,
 } from "./types";
+
+const MEMORY_DAILY_DIR = "/root/lifecycle/memory/daily";
+
+/**
+ * Extract execution summary from agent daily logs.
+ * Reads all daily/*.md files and returns the content under "## Execution Summary".
+ */
+export function extractExecutionSummary(): string | undefined {
+  if (!existsSync(MEMORY_DAILY_DIR)) {
+    return undefined;
+  }
+
+  const files = readdirSync(MEMORY_DAILY_DIR)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .reverse(); // newest first
+
+  for (const file of files) {
+    const content = readFileSync(join(MEMORY_DAILY_DIR, file), "utf-8");
+    const matches = [...content.matchAll(
+      /## Execution Summary\n([\s\S]*?)(?=\n## |\n---\s*$|$)/g
+    )];
+    const lastMatch = matches[matches.length - 1];
+    if (lastMatch?.[1]?.trim()) {
+      return lastMatch[1].trim();
+    }
+  }
+
+  return undefined;
+}
 
 export function buildPullRequestTitle(prompt: string): string {
   const base = prompt.trim() || "manaflow changes";
@@ -16,6 +49,7 @@ export function buildPullRequestTitle(prompt: string): string {
 
 export function buildPullRequestBody({
   summary,
+  executionSummary,
   prompt,
   agentName,
   branch,
@@ -23,6 +57,7 @@ export function buildPullRequestBody({
   runId,
 }: {
   summary?: string;
+  executionSummary?: string;
   prompt: string;
   agentName: string;
   branch: string;
@@ -30,13 +65,16 @@ export function buildPullRequestBody({
   runId: string;
 }): string {
   const bodySummary = summary?.trim() || "Summary not available.";
+  const execSummarySection = executionSummary?.trim()
+    ? `\n\n### Execution Summary\n${executionSummary.trim()}`
+    : "";
   return `## 🏆 Crown Winner: ${agentName}
 
 ### Task Description
 ${prompt}
 
 ### Summary
-${bodySummary}
+${bodySummary}${execSummarySection}
 
 ### Implementation Details
 - **Agent**: ${agentName}
@@ -107,10 +145,13 @@ export async function createPullRequest(options: {
     return null;
   }
 
-  const baseBranch = check.task.baseBranch || "main";
+  // Auto-detect base branch if not set (for repos using master instead of main)
+  const baseBranch = check.task.baseBranch || await getDefaultBaseBranch();
   const prTitle = buildPullRequestTitle(check.task.text);
+  const executionSummary = extractExecutionSummary();
   const prBody = buildPullRequestBody({
     summary,
+    executionSummary,
     prompt: check.task.text,
     agentName: winner.agentName,
     branch,
@@ -123,7 +164,7 @@ BODY_FILE=$(mktemp /tmp/cmux-pr-XXXXXX.md)
 cat <<'CMUX_EOF' > "$BODY_FILE"
 ${prBody}
 CMUX_EOF
-gh pr create --base "$PR_BASE" --head "$PR_HEAD" --title "$PR_TITLE" --body-file "$BODY_FILE" --json url,number,state,isDraft
+gh pr create --base "$PR_BASE" --head "$PR_HEAD" --title "$PR_TITLE" --body-file "$BODY_FILE"
 rm -f "$BODY_FILE"
 `;
 
@@ -132,6 +173,8 @@ rm -f "$BODY_FILE"
       cwd: WORKSPACE_ROOT,
       env: {
         ...process.env,
+        // Ensure HOME is set for gh CLI to find its config
+        HOME: process.env.HOME || "/root",
         PR_TITLE: prTitle,
         PR_BASE: baseBranch,
         PR_HEAD: branch,
@@ -148,20 +191,32 @@ rm -f "$BODY_FILE"
       return null;
     }
 
-    const parsed = parseGhPrCreateResponse(JSON.parse(trimmed));
-    if (!parsed) {
-      log("ERROR", "Failed to parse gh pr create output", {
+    // gh pr create outputs just the PR URL on success (e.g., https://github.com/owner/repo/pull/123)
+    const prUrlMatch = trimmed.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/);
+    if (!prUrlMatch) {
+      log("ERROR", "Failed to parse PR URL from gh pr create output", {
         stdout: trimmed,
       });
       return null;
     }
 
+    const prUrl = prUrlMatch[0];
+    const prNumberStr = prUrlMatch[1];
+    if (!prNumberStr) {
+      log("ERROR", "Failed to extract PR number from URL", {
+        stdout: trimmed,
+        prUrl,
+      });
+      return null;
+    }
+    const prNumber = parseInt(prNumberStr, 10);
+
     const metadata: PullRequestMetadata = {
       pullRequest: {
-        url: parsed.url,
-        number: parsed.number,
-        state: mapGhState(parsed.state),
-        isDraft: parsed.isDraft,
+        url: prUrl,
+        number: prNumber,
+        state: "open",
+        isDraft: false,
       },
       title: prTitle,
       description: prBody,
@@ -170,7 +225,7 @@ rm -f "$BODY_FILE"
     log("INFO", "Created pull request", {
       taskId: check.taskId,
       runId: winner.runId,
-      url: parsed.url,
+      url: prUrl,
     });
 
     return metadata;

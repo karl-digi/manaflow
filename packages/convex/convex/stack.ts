@@ -207,7 +207,8 @@ async function generateSlugFromName(
     const candidate = await buildSlugCandidate(teamId, name, attempt, suffix);
     try {
       validateSlug(candidate);
-    } catch (_error) {
+    } catch (validationError) {
+      console.warn("[stack] Slug validation failed for candidate:", { candidate, error: validationError });
       continue;
     }
     const taken = await isSlugTaken(ctx, candidate, teamId);

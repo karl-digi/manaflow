@@ -15,10 +15,13 @@ import (
 // E2E tests for cmux CLI
 // These tests require:
 // - Valid authentication (cmux login)
-// - E2B API access
+// - E2B API access (or other provider)
 // - Network connectivity
 //
 // Run with: go test -v -timeout 10m ./...
+//
+// Note: These tests use the default sandbox provider configured in the environment.
+// Set SANDBOX_PROVIDER=e2b for E2B, SANDBOX_PROVIDER=pve-lxc for PVE-LXC, etc.
 
 var (
 	// Sandbox ID created during tests - cleaned up at the end
@@ -93,8 +96,8 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("version command failed: %v", err)
 	}
 
-	if !strings.Contains(stdout, "cmux") {
-		t.Errorf("version output should contain 'cmux', got: %s", stdout)
+	if !strings.Contains(stdout, "cloudrouter") {
+		t.Errorf("version output should contain 'cloudrouter', got: %s", stdout)
 	}
 }
 
@@ -129,7 +132,7 @@ func TestHelp(t *testing.T) {
 		t.Fatalf("help command failed: %v", err)
 	}
 
-	expectedCommands := []string{"start", "stop", "delete", "exec", "status", "sync", "upload"}
+	expectedCommands := []string{"start", "stop", "delete", "ssh", "status", "sync", "upload"}
 	for _, cmd := range expectedCommands {
 		if !strings.Contains(stdout, cmd) {
 			t.Errorf("help output should contain '%s', got: %s", cmd, stdout)
@@ -144,6 +147,12 @@ func TestHelp(t *testing.T) {
 func TestSandboxLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping sandbox lifecycle test in short mode")
+	}
+
+	// Skip if using PVE-LXC provider (requires different template format)
+	provider := os.Getenv("SANDBOX_PROVIDER")
+	if provider == "pve-lxc" {
+		t.Skip("skipping sandbox lifecycle test for pve-lxc provider (use snapshot_* templates)")
 	}
 
 	// Test: Create sandbox

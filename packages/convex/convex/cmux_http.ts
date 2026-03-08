@@ -7,27 +7,67 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { env } from "../_shared/convex-env";
+import { jsonResponse } from "../_shared/http-utils";
+import type { DevboxProvider } from "@cmux/shared/provider-types";
 import type { FunctionReference } from "convex/server";
+import type { Doc, Id } from "./_generated/dataModel";
+
+type SandboxProvider = DevboxProvider;
+
+// Provider action APIs - cast from internal to access provider-specific actions
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const e2bActionsApi = (internal as any).e2b_actions as {
+  getInstance: FunctionReference<"action", "internal">;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const modalActionsApi = (internal as any).modal_actions as {
+  getInstance: FunctionReference<"action", "internal">;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pveLxcActionsApi = (internal as any).pve_lxc_actions as {
+  getInstance: FunctionReference<"action", "internal">;
+};
+
+function getActionsApiForProvider(provider: SandboxProvider) {
+  switch (provider) {
+    case "modal":
+      return modalActionsApi;
+    case "pve-lxc":
+      return pveLxcActionsApi;
+    default:
+      return e2bActionsApi;
+  }
+}
+
+async function getProviderInfo(
+  ctx: ActionCtx,
+  devboxId: string
+): Promise<{ provider: SandboxProvider; providerInstanceId: string } | null> {
+  const info = (await ctx.runQuery(internal.devboxInstances.getInfo, {
+    devboxId,
+  })) as { provider: string; providerInstanceId: string } | null;
+  if (!info) return null;
+  return {
+    provider: info.provider as SandboxProvider,
+    providerInstanceId: info.providerInstanceId,
+  };
+}
 
 const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
 
 // Default snapshot ID for manaflow devbox CLI instances
 const DEFAULT_CMUX_SNAPSHOT_ID = "snapshot_b74x626y";
 
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
 // Security: Validate instance ID format to prevent injection attacks
-// IDs should be manaflow_ or cmux_ followed by 8+ alphanumeric characters
-const INSTANCE_ID_REGEX = /^(?:manaflow|cmux)_[a-zA-Z0-9]{8,}$/;
+// IDs should be manaflow_, cmux_, or cr_ followed by 8+ alphanumeric characters
+// - manaflow_/cmux_: Morph provider instances
+// - cr_: PVE-LXC provider instances (cloudrouter)
+const INSTANCE_ID_REGEX = /^(?:manaflow|cmux|cr)_[a-zA-Z0-9]{8,}$/;
 
 function isValidInstanceId(id: string): boolean {
   return INSTANCE_ID_REGEX.test(id);
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
 /**
@@ -130,29 +170,6 @@ function buildDbaProxyUrls(workerUrl?: string) {
   };
 }
 
-// Type-safe references to devboxInstances functions (used by cmux devbox CLI)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const devboxApi = (api as any).devboxInstances as {
-  create: FunctionReference<"mutation", "public">;
-  list: FunctionReference<"query", "public">;
-  getById: FunctionReference<"query", "public">;
-  updateStatus: FunctionReference<"mutation", "public">;
-  recordAccess: FunctionReference<"mutation", "public">;
-  remove: FunctionReference<"mutation", "public">;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const devboxInternalApi = (internal as any).devboxInstances as {
-  getInfo: FunctionReference<"query", "internal">;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const morphInstancesApi = (internal as any).morphInstances as {
-  recordResumeInternal: FunctionReference<"mutation", "internal">;
-  recordPauseInternal: FunctionReference<"mutation", "internal">;
-  recordStopInternal: FunctionReference<"mutation", "internal">;
-};
-
 /**
  * Record activity for a Morph instance (creates entry in morphInstanceActivity table)
  */
@@ -163,15 +180,15 @@ async function recordMorphActivity(
 ): Promise<void> {
   try {
     if (action === "resume") {
-      await ctx.runMutation(morphInstancesApi.recordResumeInternal, {
+      await ctx.runMutation(internal.morphInstances.recordResumeInternal, {
         instanceId: providerInstanceId,
       });
     } else if (action === "pause") {
-      await ctx.runMutation(morphInstancesApi.recordPauseInternal, {
+      await ctx.runMutation(internal.morphInstances.recordPauseInternal, {
         instanceId: providerInstanceId,
       });
     } else if (action === "stop") {
-      await ctx.runMutation(morphInstancesApi.recordStopInternal, {
+      await ctx.runMutation(internal.morphInstances.recordStopInternal, {
         instanceId: providerInstanceId,
       });
     }
@@ -188,7 +205,7 @@ async function getProviderInstanceId(
   ctx: ActionCtx,
   devboxId: string
 ): Promise<string | null> {
-  const info = await ctx.runQuery(devboxInternalApi.getInfo, {
+  const info = await ctx.runQuery(internal.devboxInstances.getInfo, {
     devboxId,
   }) as { providerInstanceId: string } | null;
   return info?.providerInstanceId ?? null;
@@ -255,7 +272,14 @@ export const createInstance = httpAction(async (ctx, req) => {
         metadata: {
           app: "cmux-devbox",
           userId: identity!.subject,
-          ...(body.metadata || {}),
+          // Validate metadata: only allow string key-value pairs, filter out non-strings
+          ...(body.metadata
+            ? Object.fromEntries(
+                Object.entries(body.metadata).filter(
+                  ([, v]) => typeof v === "string"
+                )
+              )
+            : {}),
         },
       }),
     });
@@ -408,7 +432,7 @@ export const createInstance = httpAction(async (ctx, req) => {
     const convexStart = Date.now();
     let result: { id: string; isExisting: boolean };
     try {
-      result = await ctx.runMutation(devboxApi.create, {
+      result = await ctx.runMutation(api.devboxInstances.create, {
         teamSlugOrId: body.teamSlugOrId,
         providerInstanceId: morphData.id,
         provider: "morph",
@@ -465,7 +489,7 @@ export const listInstances = httpAction(async (ctx, req) => {
   }
 
   try {
-    const rawInstances = await ctx.runQuery(devboxApi.list, {
+    const rawInstances = await ctx.runQuery(api.devboxInstances.list, {
       teamSlugOrId,
     }) as Array<{
       devboxId: string;
@@ -504,7 +528,7 @@ async function handleGetInstance(
 ): Promise<Response> {
   try {
     // Get instance from Convex by ID
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     }) as { id: string; status: string; name?: string } | null;
@@ -513,84 +537,112 @@ async function handleGetInstance(
       return jsonResponse({ code: 404, message: "Instance not found" }, 404);
     }
 
-    // Get provider instance ID from mapping
-    const providerInstanceId = await getProviderInstanceId(ctx, id);
-    if (!providerInstanceId) {
+    // Get provider info from devboxInfo table
+    const providerInfo = await getProviderInfo(ctx, id);
+    if (!providerInfo) {
       return jsonResponse({ id, status: instance.status, name: instance.name });
     }
 
-    // Get fresh status and URLs from Morph
-    const morphResponse = await morphFetch(`/instance/${providerInstanceId}`);
+    const { provider, providerInstanceId } = providerInfo;
 
-    if (!morphResponse.ok) {
-      // Instance may have been deleted
-      if (morphResponse.status === 404) {
-        await ctx.runMutation(devboxApi.updateStatus, {
-          teamSlugOrId,
-          id,
-          status: "stopped",
-        });
-        return jsonResponse({
-          id,
-          status: "stopped",
-          name: instance.name,
-        });
-      }
-      // Return basic data on other errors
-      return jsonResponse({ id, status: instance.status, name: instance.name });
+    // For Morph provider, use direct Morph API
+    if (provider === "morph" || provider === "e2b") {
+      return handleGetInstanceMorph(ctx, id, providerInstanceId, instance, teamSlugOrId);
     }
 
-    const morphData = (await morphResponse.json()) as {
-      id: string;
+    // For other providers (pve-lxc, modal), use the provider actions API
+    const actionsApi = getActionsApiForProvider(provider);
+    const providerResult = (await ctx.runAction(actionsApi.getInstance, {
+      instanceId: providerInstanceId,
+    })) as {
+      instanceId: string;
       status: string;
-      networking?: {
-        http_services?: Array<{ port: number; url: string; name?: string }> | Record<string, string>;
-      };
-      spec?: {
-        vcpus?: number;
-        memory?: number;
-        disk_size?: number;
-      };
+      vscodeUrl?: string | null;
+      workerUrl?: string | null;
+      vncUrl?: string | null;
     };
 
-    // Map Morph status to our status
-    // Note: Morph uses "ready" for a running instance, not "running"
-    const status =
-      morphData.status === "running" || morphData.status === "ready"
-        ? "running"
-        : morphData.status === "paused"
-          ? "paused"
-          : morphData.status === "stopped"
-            ? "stopped"
-            : "unknown";
+    const status = providerResult.status as "running" | "stopped" | "paused";
 
     // Update status in Convex if changed
     if (status !== instance.status) {
-      await ctx.runMutation(devboxApi.updateStatus, {
+      await ctx.runMutation(api.devboxInstances.updateStatus, {
         teamSlugOrId,
         id,
         status,
       });
     }
 
-    // Get URLs directly from Morph (not cached)
-    const httpServices = morphData.networking?.http_services ?? [];
-    const { workerUrl } = extractNetworkingUrls(httpServices);
-    const proxyUrls = buildDbaProxyUrls(workerUrl);
-
     return jsonResponse({
       id,
       status,
       name: instance.name,
-      vscodeUrl: proxyUrls.vscodeUrl,
-      workerUrl,
-      vncUrl: proxyUrls.vncUrl,
-      spec: morphData.spec,
+      vscodeUrl: providerResult.vscodeUrl ?? undefined,
+      workerUrl: providerResult.workerUrl ?? undefined,
+      vncUrl: providerResult.vncUrl ?? undefined,
     });
   } catch (error) {
     console.error("[cmux.get] Error:", error);
     return jsonResponse({ code: 500, message: "Failed to get instance" }, 500);
   }
+}
+
+// Helper for Morph/E2B provider (legacy direct API call)
+async function handleGetInstanceMorph(
+  ctx: ActionCtx,
+  id: string,
+  providerInstanceId: string,
+  instance: { id: string; status: string; name?: string },
+  teamSlugOrId: string
+): Promise<Response> {
+  // Get fresh status and URLs from Morph
+  const morphResponse = await morphFetch(`/instance/${providerInstanceId}`);
+
+  if (!morphResponse.ok) {
+    // Instance may have been deleted
+    if (morphResponse.status === 404) {
+      await ctx.runMutation(api.devboxInstances.updateStatus, {
+        teamSlugOrId,
+        id,
+        status: "stopped",
+      });
+      return jsonResponse({
+        id,
+        status: "stopped",
+        name: instance.name,
+      });
+    }
+    // Return basic data on other errors
+    return jsonResponse({ id, status: instance.status, name: instance.name });
+  }
+
+  const morphData = (await morphResponse.json()) as {
+    id: string;
+    status: string;
+    networking?: {
+      http_services?: Array<{ port: number; url: string; name?: string }> | Record<string, string>;
+    };
+    spec?: {
+      vcpus?: number;
+      memory?: number;
+      disk_size?: number;
+    };
+  };
+
+  // Get URLs directly from Morph (not cached)
+  const httpServices = morphData.networking?.http_services ?? [];
+  const { workerUrl } = extractNetworkingUrls(httpServices);
+  const proxyUrls = buildDbaProxyUrls(workerUrl);
+
+  return jsonResponse({
+    id,
+    status: morphData.status,
+    name: instance.name,
+    vscodeUrl: proxyUrls.vscodeUrl,
+    workerUrl,
+    vncUrl: proxyUrls.vncUrl,
+    spec: morphData.spec,
+  });
 }
 
 // ============================================================================
@@ -605,7 +657,7 @@ async function handleExecCommand(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -654,7 +706,7 @@ async function handleExecCommand(
     const result = await morphResponse.json();
 
     // Record access
-    await ctx.runMutation(devboxApi.recordAccess, {
+    await ctx.runMutation(api.devboxInstances.recordAccess, {
       teamSlugOrId,
       id,
     });
@@ -679,7 +731,7 @@ async function handlePauseInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -715,7 +767,7 @@ async function handlePauseInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "paused",
@@ -744,7 +796,7 @@ async function handleResumeInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -780,7 +832,7 @@ async function handleResumeInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "running",
@@ -809,7 +861,7 @@ async function handleStopInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -845,7 +897,7 @@ async function handleStopInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "stopped",
@@ -871,7 +923,7 @@ async function handleGetInstanceSsh(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -923,7 +975,7 @@ async function handleGetInstanceSsh(
     };
 
     // Record access
-    await ctx.runMutation(devboxApi.recordAccess, {
+    await ctx.runMutation(api.devboxInstances.recordAccess, {
       teamSlugOrId,
       id,
     });
@@ -957,7 +1009,7 @@ async function handleUpdateTtl(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -1010,7 +1062,7 @@ async function handleRebootInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -1063,7 +1115,7 @@ async function handleSnapshotInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -1124,7 +1176,7 @@ async function handleExposeHttpService(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -1179,7 +1231,7 @@ async function handleHideHttpService(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -1372,6 +1424,124 @@ export const getMe = httpAction(async (ctx) => {
     console.error("[cmux.me] Error:", err);
     return jsonResponse(
       { code: 500, message: "Failed to get user profile" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// GET /api/v1/cmux/me/teams - List all teams the user is a member of
+// ============================================================================
+export const listMyTeams = httpAction(async (ctx) => {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  try {
+    const userId = identity!.subject;
+
+    // Get user's selected team
+    const user = await ctx.runQuery(internal.users.getByUserIdInternal, {
+      userId,
+    });
+
+    // Get all team memberships
+    const memberships = await ctx.runQuery(internal.teams.getMembershipsByUserIdInternal, {
+      userId,
+    });
+
+    // Fetch team details for each membership
+    const teams = await Promise.all(
+      memberships.map(async (m) => {
+        const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+          teamId: m.teamId,
+        });
+        return {
+          teamId: m.teamId,
+          slug: team?.slug ?? m.teamId,
+          displayName: team?.displayName ?? team?.name ?? null,
+          role: m.role,
+          selected: m.teamId === user?.selectedTeamId,
+        };
+      })
+    );
+
+    return jsonResponse({
+      teams,
+      selectedTeamId: user?.selectedTeamId ?? null,
+    });
+  } catch (err) {
+    console.error("[cmux.listMyTeams] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to list teams" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// POST /api/v1/cmux/me/team - Switch current user's selected team
+// ============================================================================
+export const switchTeam = httpAction(async (ctx, req) => {
+  const contentTypeError = verifyContentType(req);
+  if (contentTypeError) return contentTypeError;
+
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  try {
+    const userId = identity!.subject;
+    const body = await req.json() as { teamSlugOrId: string };
+
+    if (!body.teamSlugOrId) {
+      return jsonResponse(
+        { code: 400, message: "teamSlugOrId is required" },
+        400
+      );
+    }
+
+    // Resolve team slug/id to canonical teamId
+    const team = await ctx.runQuery(internal.teams.getBySlugOrIdInternal, {
+      slugOrId: body.teamSlugOrId,
+    });
+
+    if (!team) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${body.teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Check user has membership in this team
+    const memberships = await ctx.runQuery(internal.teams.getMembershipsByUserIdInternal, {
+      userId,
+    });
+
+    const hasMembership = memberships.some(m => m.teamId === team.teamId);
+    if (!hasMembership) {
+      return jsonResponse(
+        { code: 403, message: `You are not a member of team: ${body.teamSlugOrId}` },
+        403
+      );
+    }
+
+    // Update user's selected team in Convex
+    await ctx.runMutation(internal.users.updateSelectedTeamInternal, {
+      userId,
+      selectedTeamId: team.teamId,
+      selectedTeamDisplayName: team.displayName ?? team.name ?? undefined,
+      selectedTeamProfileImageUrl: team.profileImageUrl ?? undefined,
+    });
+
+    return jsonResponse({
+      success: true,
+      teamId: team.teamId,
+      teamSlug: team.slug ?? team.teamId,
+      teamDisplayName: team.displayName ?? team.name ?? null,
+    });
+  } catch (err) {
+    console.error("[cmux.switchTeam] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to switch team" },
       500
     );
   }
@@ -1582,3 +1752,1428 @@ export const instanceDeleteRouter = httpAction(async (ctx, req) => {
 
   return jsonResponse({ code: 404, message: "Not found" }, 404);
 });
+
+// ============================================================================
+// TASK ENDPOINTS - CLI/Web App sync for task management
+// ============================================================================
+
+/**
+ * Resolve team ID from slug or ID (for internal use in httpActions).
+ */
+async function resolveTeamIdForHttp(
+  ctx: ActionCtx,
+  slugOrId: string
+): Promise<string | null> {
+  const team = await ctx.runQuery(internal.teams.getBySlugOrIdInternal, {
+    slugOrId,
+  }) as { teamId: string } | null;
+  return team?.teamId ?? null;
+}
+
+// ============================================================================
+// POST /api/v1/cmux/storage/upload-url - Generate a one-time upload URL
+// ============================================================================
+export const createStorageUploadUrl = httpAction(async (ctx, req) => {
+  const contentTypeError = verifyContentType(req);
+  if (contentTypeError) return contentTypeError;
+
+  const { error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  let body: { teamSlugOrId: string };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ code: 400, message: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId is required" },
+      400
+    );
+  }
+
+  try {
+    const uploadUrl = await ctx.runMutation(api.storage.generateUploadUrl, {
+      teamSlugOrId: body.teamSlugOrId,
+    });
+    return jsonResponse({ uploadUrl });
+  } catch (err) {
+    console.error("[cmux.storage.upload-url] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to create upload URL" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// GET /api/v1/cmux/tasks - List tasks
+// ============================================================================
+export const listTasks = httpAction(async (ctx, req) => {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+  const archived = url.searchParams.get("archived") === "true";
+  const limitParam = url.searchParams.get("limit");
+  // Validate limit: must be positive integer, capped at 100 to prevent resource exhaustion
+  const parsedLimit = limitParam ? parseInt(limitParam, 10) : undefined;
+  const limit = parsedLimit !== undefined && !isNaN(parsedLimit) && parsedLimit > 0
+    ? Math.min(parsedLimit, 100)
+    : undefined;
+
+  if (!teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId query parameter is required" },
+      400
+    );
+  }
+
+  try {
+    const userId = identity!.subject;
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Get tasks
+    const tasks = await ctx.runQuery(internal.tasks.listInternal, {
+      teamId,
+      userId,
+      archived,
+      limit,
+    });
+
+    // For each task, get the selected run info to show status
+    const tasksWithRuns = await Promise.all(
+      tasks.map(async (task) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let selectedRun: any = null;
+
+        if (task.selectedTaskRunId) {
+          selectedRun = await ctx.runQuery(internal.taskRuns.getById, {
+            id: task.selectedTaskRunId as Id<"taskRuns">,
+          });
+        }
+
+        // If no selected run, get runs for this task and prefer the crowned one
+        if (!selectedRun) {
+          const runs = await ctx.runQuery(internal.taskRuns.listByTaskAndTeamInternal, {
+            taskId: task._id as Id<"tasks">,
+            teamId,
+            userId,
+          });
+          // Prefer crowned run (it has the PR), fallback to first run
+          selectedRun = runs.find((r) => r.isCrowned) ?? runs[0] ?? null;
+        }
+
+        // Extract vscode URL from vscode object or networking array
+        let vscodeUrl: string | undefined;
+        if (selectedRun?.vscode?.workspaceUrl) {
+          vscodeUrl = selectedRun.vscode.workspaceUrl;
+        } else if (selectedRun?.networking) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const vscodeSvc = selectedRun.networking.find((n: any) => n.port === 39378);
+          vscodeUrl = vscodeSvc?.url;
+        }
+
+        return {
+          id: task._id,
+          prompt: task.text,
+          repository: task.projectFullName,
+          baseBranch: task.baseBranch,
+          status: selectedRun?.status ?? "pending",
+          agent: selectedRun?.agentName,
+          vscodeUrl,
+          isCompleted: task.isCompleted,
+          isArchived: task.isArchived,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+          taskRunId: selectedRun?._id,
+          exitCode: selectedRun?.exitCode,
+          pullRequestUrl: selectedRun?.pullRequestUrl,
+          mergeStatus: task.mergeStatus,
+          githubProjectItemId: task.githubProjectItemId,
+        };
+      })
+    );
+
+    return jsonResponse({ tasks: tasksWithRuns });
+  } catch (err) {
+    console.error("[cmux.tasks.list] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to list tasks" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// POST /api/v1/cmux/tasks - Create task with prompt
+// ============================================================================
+export const createTask = httpAction(async (ctx, req) => {
+  const contentTypeError = verifyContentType(req);
+  if (contentTypeError) return contentTypeError;
+
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  let body: {
+    teamSlugOrId: string;
+    prompt: string;
+    repository?: string;
+    baseBranch?: string;
+    agents?: string[];
+    prTitle?: string;
+    environmentId?: string;
+    isCloudWorkspace?: boolean;
+    images?: Array<{
+      storageId: string;
+      fileName?: string;
+      altText: string;
+    }>;
+    // GitHub Projects v2 linkage (Phase 2)
+    githubProjectId?: string;
+    githubProjectItemId?: string;
+    githubProjectInstallationId?: number;
+    githubProjectOwner?: string;
+    githubProjectOwnerType?: string;
+    // Agent Teams (D4) - parent-child task relationships
+    parentTaskRunId?: string;
+  };
+
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ code: 400, message: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId is required" },
+      400
+    );
+  }
+
+  // Prompt is required unless isCloudWorkspace is true (allows interactive TUI session)
+  if (!body.prompt && !body.isCloudWorkspace) {
+    return jsonResponse(
+      { code: 400, message: "prompt is required (or use isCloudWorkspace for interactive session)" },
+      400
+    );
+  }
+
+  try {
+    const userId = identity!.subject;
+    const teamId = await resolveTeamIdForHttp(ctx, body.teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${body.teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Validate environmentId and get environment name if provided
+    let environmentId: Id<"environments"> | undefined;
+    let environmentName: string | undefined;
+    if (body.environmentId) {
+      try {
+        environmentId = body.environmentId as Id<"environments">;
+        // Verify environment exists and belongs to this team
+        const environment = await ctx.runQuery(api.environments.get, {
+          teamSlugOrId: body.teamSlugOrId,
+          id: environmentId,
+        });
+        if (!environment) {
+          return jsonResponse(
+            { code: 404, message: `Environment not found: ${body.environmentId}` },
+            404
+          );
+        }
+        environmentName = environment.name;
+      } catch (err) {
+        return jsonResponse(
+          { code: 400, message: `Invalid environment ID: ${body.environmentId}` },
+          400
+        );
+      }
+    }
+
+    // For cloud workspaces with empty prompt, use environment name as task text
+    const taskText = body.prompt || (body.isCloudWorkspace && environmentName ? environmentName : "");
+
+    // Create task
+    const taskResult = await ctx.runMutation(api.tasks.create, {
+      teamSlugOrId: body.teamSlugOrId,
+      text: taskText,
+      projectFullName: body.repository,
+      baseBranch: body.baseBranch ?? "main",
+      isCloudWorkspace: body.isCloudWorkspace,
+      images: body.images as
+        | Array<{
+            storageId: Id<"_storage">;
+            fileName?: string;
+            altText: string;
+          }>
+        | undefined,
+      // GitHub Projects v2 linkage
+      githubProjectId: body.githubProjectId,
+      githubProjectItemId: body.githubProjectItemId,
+      githubProjectInstallationId: body.githubProjectInstallationId,
+      githubProjectOwner: body.githubProjectOwner,
+      githubProjectOwnerType: body.githubProjectOwnerType,
+    });
+
+    // Save PR title when provided (helps auto-PR later)
+    if (body.prTitle && body.prTitle.trim().length > 0) {
+      await ctx.runMutation(api.tasks.setPullRequestTitle, {
+        teamSlugOrId: body.teamSlugOrId,
+        id: taskResult.taskId,
+        pullRequestTitle: body.prTitle,
+      });
+    }
+
+    // Create task runs for each agent (with JWTs for sandbox auth)
+    const taskRuns: Array<{ taskRunId: string; jwt: string; agentName: string }> = [];
+    // Validate parent task run ID if provided
+    let parentRunId: Id<"taskRuns"> | undefined;
+    if (body.parentTaskRunId) {
+      parentRunId = body.parentTaskRunId as Id<"taskRuns">;
+    }
+    if (body.agents && body.agents.length > 0) {
+      for (const agentName of body.agents) {
+        const runResult = await ctx.runMutation(internal.taskRuns.createInternal, {
+          teamId,
+          userId,
+          taskId: taskResult.taskId,
+          prompt: body.prompt,
+          agentName,
+          environmentId,
+          parentRunId,
+        }) as { taskRunId: Id<"taskRuns">; jwt: string };
+
+        taskRuns.push({
+          taskRunId: runResult.taskRunId,
+          jwt: runResult.jwt,
+          agentName,
+        });
+      }
+    }
+
+    return jsonResponse({
+      taskId: taskResult.taskId,
+      taskRuns,
+      status: "pending",
+    });
+  } catch (err) {
+    console.error("[cmux.tasks.create] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to create task" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// GET /api/v1/cmux/tasks/{id} - Get task details
+// ============================================================================
+async function handleGetTask(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string
+): Promise<Response> {
+  try {
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Get task
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskId as Id<"tasks">,
+    });
+
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    // Get all runs for this task
+    const runs = await ctx.runQuery(internal.taskRuns.listByTaskAndTeamInternal, {
+      taskId: task._id,
+      teamId,
+      userId,
+    });
+
+    // Format runs
+    const taskRuns = runs.map(run => {
+      // Extract vscode URL
+      let vscodeUrl: string | undefined;
+      if (run.vscode?.workspaceUrl) {
+        vscodeUrl = run.vscode.workspaceUrl;
+      } else if (run.networking) {
+        const vscodeSvc = run.networking.find(n => n.port === 39378);
+        vscodeUrl = vscodeSvc?.url;
+      }
+
+      return {
+        id: run._id,
+        agent: run.agentName,
+        status: run.status,
+        vscodeUrl,
+        pullRequestUrl: run.pullRequestUrl,
+        createdAt: run.createdAt,
+        completedAt: run.completedAt,
+        exitCode: run.exitCode,
+      };
+    });
+
+    return jsonResponse({
+      id: task._id,
+      prompt: task.text,
+      repository: task.projectFullName,
+      baseBranch: task.baseBranch,
+      isCompleted: task.isCompleted,
+      isArchived: task.isArchived,
+      pinned: task.pinned ?? false,
+      mergeStatus: task.mergeStatus ?? "none",
+      pullRequestTitle: task.pullRequestTitle,
+      crownEvaluationStatus: task.crownEvaluationStatus,
+      crownEvaluationError: task.crownEvaluationError,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      taskRuns,
+      images: task.images,
+    });
+  } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+    console.error("[cmux.tasks.get] Error:", err);
+    return jsonResponse({ code: 500, message: "Failed to get task" }, 500);
+  }
+}
+
+// ============================================================================
+// GET /api/v1/cmux/tasks/{id}/quality-gate - Get quality gate status + retry context
+// ============================================================================
+
+type QualityGateCheckType = "workflow" | "check" | "deployment" | "status";
+
+type QualityGateCheck = {
+  type: QualityGateCheckType;
+  name: string;
+  status?: string;
+  conclusion?: string;
+  url?: string;
+};
+
+type QualityGateStatus = "unknown" | "running" | "pass" | "fail";
+
+const HEAD_AGENT_RETRY_MARKER = "cmux-head-agent-retry";
+
+function truncateString(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value;
+  return value.slice(0, Math.max(0, maxLen - 1)) + "…";
+}
+
+function isQualityGateRunningStatus(status: string | undefined): boolean {
+  if (!status) return false;
+  const s = status.toLowerCase();
+  return s === "in_progress" || s === "queued" || s === "waiting" || s === "pending";
+}
+
+function isQualityGateFailureConclusion(conclusion: string | undefined): boolean {
+  if (!conclusion) return false;
+  const c = conclusion.toLowerCase();
+  return c === "failure" || c === "timed_out" || c === "action_required";
+}
+
+function isQualityGatePassing(check: QualityGateCheck): boolean {
+  const conclusion = check.conclusion?.toLowerCase();
+  if (conclusion === "success" || conclusion === "neutral" || conclusion === "skipped") {
+    return true;
+  }
+  // Completed runs without explicit conclusion are treated as passing
+  if (check.status?.toLowerCase() === "completed" && !check.conclusion) {
+    return true;
+  }
+  return false;
+}
+
+function parsePullRequestFromUrl(url: string): { repoFullName: string; number: number } | null {
+  const match = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  if (!match) return null;
+  const repoFullName = match[1];
+  const number = Number(match[2]);
+  if (!repoFullName || !Number.isFinite(number) || number <= 0) return null;
+  return { repoFullName, number };
+}
+
+async function handleGetTaskQualityGate(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string,
+  maxRetries: number,
+  limit: number,
+): Promise<Response> {
+  try {
+    // Validate taskId format - Convex IDs are alphanumeric without underscores
+    const isValidConvexIdFormat = /^[a-z][a-z0-9]*$/i.test(taskId);
+    if (!isValidConvexIdFormat) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskId as Id<"tasks">,
+    });
+
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    const runs = await ctx.runQuery(internal.taskRuns.listByTaskAndTeamInternal, {
+      taskId: task._id,
+      teamId,
+      userId,
+    }) as Doc<"taskRuns">[];
+
+    const crownedRun = runs.find((r) => r.isCrowned === true && r.isArchived !== true) ?? null;
+    const selectedRun = task.selectedTaskRunId
+      ? runs.find((r) => r._id === task.selectedTaskRunId) ?? null
+      : null;
+
+    // Fallback: pick the newest by createdAt
+    let newestRun: Doc<"taskRuns"> | null = null;
+    for (const run of runs) {
+      if (!newestRun || (run.createdAt ?? 0) > (newestRun.createdAt ?? 0)) {
+        newestRun = run;
+      }
+    }
+
+    const primaryRun = crownedRun ?? selectedRun ?? newestRun;
+
+    // Retry attempt count derived from persisted run prompts (no schema changes)
+    const retryAttemptCount = runs.filter((r) => (r.prompt ?? "").includes(HEAD_AGENT_RETRY_MARKER)).length;
+
+    const hasInFlightRun = runs.some((r) => r.status === "pending" || r.status === "running");
+
+    // Determine PR coordinates (prefer structured pullRequests array)
+    let repoFullName: string | null = null;
+    let prNumber: number | null = null;
+    let prUrl: string | undefined;
+    if (primaryRun?.pullRequests && primaryRun.pullRequests.length > 0) {
+      const pr = primaryRun.pullRequests.find((p) => p.repoFullName && typeof p.number === "number" && p.number > 0)
+        ?? primaryRun.pullRequests[0];
+      if (pr.repoFullName) repoFullName = pr.repoFullName;
+      if (typeof pr.number === "number" && pr.number > 0) prNumber = pr.number;
+      if (typeof pr.url === "string" && pr.url.trim().length > 0) prUrl = pr.url;
+    }
+    if ((!repoFullName || !prNumber) && typeof primaryRun?.pullRequestUrl === "string" && primaryRun.pullRequestUrl) {
+      const parsed = parsePullRequestFromUrl(primaryRun.pullRequestUrl);
+      if (parsed) {
+        repoFullName = repoFullName ?? parsed.repoFullName;
+        prNumber = prNumber ?? parsed.number;
+      }
+      prUrl = prUrl ?? primaryRun.pullRequestUrl;
+    }
+    if ((!repoFullName || !prNumber) && task.projectFullName && typeof primaryRun?.pullRequestNumber === "number") {
+      repoFullName = repoFullName ?? task.projectFullName;
+      prNumber = prNumber ?? primaryRun.pullRequestNumber;
+    }
+
+    const prCoordinates = repoFullName && prNumber ? { repoFullName, prNumber } : null;
+
+    let prRecord: Doc<"pullRequests"> | null = null;
+    if (prCoordinates) {
+      prRecord = await ctx.runQuery(api.github_prs.getPullRequest, {
+        teamSlugOrId,
+        repoFullName: prCoordinates.repoFullName,
+        number: prCoordinates.prNumber,
+      }) as Doc<"pullRequests"> | null;
+    }
+
+    const headSha = prRecord?.headSha;
+    const headRef = prRecord?.headRef ?? primaryRun?.newBranch;
+
+    // Fetch check / workflow status for the PR (best-effort)
+    const [workflowRuns, checkRuns, deployments, commitStatuses] = prCoordinates
+      ? await Promise.all([
+          ctx.runQuery(api.github_workflows.getWorkflowRunsForPr, {
+            teamSlugOrId,
+            repoFullName: prCoordinates.repoFullName,
+            prNumber: prCoordinates.prNumber,
+            headSha,
+            limit,
+          }) as Promise<Doc<"githubWorkflowRuns">[]>,
+          ctx.runQuery(api.github_check_runs.getCheckRunsForPr, {
+            teamSlugOrId,
+            repoFullName: prCoordinates.repoFullName,
+            prNumber: prCoordinates.prNumber,
+            headSha,
+            limit,
+          }) as Promise<Doc<"githubCheckRuns">[]>,
+          ctx.runQuery(api.github_deployments.getDeploymentsForPr, {
+            teamSlugOrId,
+            repoFullName: prCoordinates.repoFullName,
+            prNumber: prCoordinates.prNumber,
+            headSha,
+            limit,
+          }) as Promise<Doc<"githubDeployments">[]>,
+          ctx.runQuery(api.github_commit_statuses.getCommitStatusesForPr, {
+            teamSlugOrId,
+            repoFullName: prCoordinates.repoFullName,
+            prNumber: prCoordinates.prNumber,
+            headSha,
+            limit,
+          }) as Promise<Doc<"githubCommitStatuses">[]>,
+        ])
+      : [[], [], [], []];
+
+    const checks: QualityGateCheck[] = [];
+
+    for (const run of workflowRuns) {
+      checks.push({
+        type: "workflow",
+        name: run.workflowName,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.htmlUrl,
+      });
+    }
+
+    for (const run of checkRuns) {
+      const app = run.appSlug ?? run.appName ?? undefined;
+      const name = app ? `${app}: ${run.name}` : run.name;
+      const url = run.htmlUrl || (prCoordinates
+        ? `https://github.com/${prCoordinates.repoFullName}/pull/${prCoordinates.prNumber}/checks?check_run_id=${run.checkRunId}`
+        : undefined);
+      checks.push({
+        type: "check",
+        name,
+        status: run.status,
+        conclusion: run.conclusion,
+        url,
+      });
+    }
+
+    for (const dep of deployments) {
+      // Match UI logic: ignore "Preview" environment deployments
+      if (dep.environment === "Preview") continue;
+      const mappedStatus =
+        dep.state === "pending" || dep.state === "queued" || dep.state === "in_progress"
+          ? "in_progress"
+          : "completed";
+      const mappedConclusion =
+        dep.state === "success"
+          ? "success"
+          : dep.state === "failure" || dep.state === "error"
+            ? "failure"
+            : undefined;
+      checks.push({
+        type: "deployment",
+        name: dep.description || dep.environment || "Deployment",
+        status: mappedStatus,
+        conclusion: mappedConclusion,
+        url: dep.targetUrl,
+      });
+    }
+
+    for (const status of commitStatuses) {
+      const mappedStatus = status.state === "pending" ? "in_progress" : "completed";
+      const mappedConclusion =
+        status.state === "success"
+          ? "success"
+          : status.state === "failure" || status.state === "error"
+            ? "failure"
+            : undefined;
+      checks.push({
+        type: "status",
+        name: status.context,
+        status: mappedStatus,
+        conclusion: mappedConclusion,
+        url: status.targetUrl,
+      });
+    }
+
+    const hasAnyRunning = checks.some((c) => isQualityGateRunningStatus(c.status));
+    const failures = checks.filter((c) => isQualityGateFailureConclusion(c.conclusion));
+    const hasAnyFailure = failures.length > 0;
+    const allPassed = checks.length > 0 && checks.every((c) => isQualityGatePassing(c));
+
+    let qualityGateStatus: QualityGateStatus = "unknown";
+    if (checks.length === 0) {
+      qualityGateStatus = "unknown";
+    } else if (hasAnyRunning) {
+      qualityGateStatus = "running";
+    } else if (hasAnyFailure) {
+      qualityGateStatus = "fail";
+    } else if (allPassed) {
+      qualityGateStatus = "pass";
+    }
+
+    const mergeStatus = task.mergeStatus ?? "none";
+    const isFinalizedMergeStatus = mergeStatus === "pr_merged" || mergeStatus === "pr_closed";
+
+    const retryBranch = headRef ?? null;
+    const shouldRetry =
+      task.isCompleted === true &&
+      qualityGateStatus === "fail" &&
+      !hasAnyRunning &&
+      !hasInFlightRun &&
+      !isFinalizedMergeStatus &&
+      retryAttemptCount < maxRetries &&
+      typeof retryBranch === "string" &&
+      retryBranch.trim().length > 0;
+
+    const crownReason = primaryRun?.crownReason ? truncateString(primaryRun.crownReason, 2000) : null;
+    const crownError = task.crownEvaluationError ? truncateString(task.crownEvaluationError, 1000) : null;
+
+    const contextLines: string[] = [];
+    contextLines.push("## Quality Gate Failure Context");
+    contextLines.push("");
+    contextLines.push(`Task: ${String(task._id)}`);
+    if (primaryRun) {
+      const exitCode = typeof primaryRun.exitCode === "number" ? primaryRun.exitCode : null;
+      contextLines.push(
+        `Previous run: ${String(primaryRun._id)} (agent: ${primaryRun.agentName ?? "unknown"}, status: ${primaryRun.status}${exitCode !== null ? `, exit: ${exitCode}` : ""})`,
+      );
+    }
+    if (prUrl) {
+      contextLines.push(`PR: ${prUrl}`);
+    } else if (prCoordinates) {
+      contextLines.push(`PR: https://github.com/${prCoordinates.repoFullName}/pull/${prCoordinates.prNumber}`);
+    }
+    if (retryBranch) {
+      contextLines.push(`Target branch: \`${retryBranch}\``);
+    }
+    contextLines.push("");
+    contextLines.push("### Crown feedback");
+    contextLines.push(`- crownEvaluationStatus: ${task.crownEvaluationStatus ?? "(none)"}`);
+    if (crownError) {
+      contextLines.push(`- crownEvaluationError: ${crownError}`);
+    }
+    if (crownReason) {
+      contextLines.push(`- crownedRunReason: ${crownReason}`);
+    }
+    contextLines.push("");
+    contextLines.push("### Failing checks");
+    if (failures.length === 0) {
+      contextLines.push("- (none detected)");
+    } else {
+      for (const failure of failures.slice(0, 15)) {
+        const label = `[${failure.type}] ${failure.name}`;
+        const statusSuffix = failure.conclusion ? ` (${failure.conclusion})` : "";
+        const urlSuffix = failure.url ? ` - ${failure.url}` : "";
+        contextLines.push(`- ${label}${statusSuffix}${urlSuffix}`);
+      }
+      if (failures.length > 15) {
+        contextLines.push(`- …and ${failures.length - 15} more`);
+      }
+    }
+    contextLines.push("");
+    contextLines.push("### Instructions");
+    contextLines.push("- Fix the failing checks above.");
+    contextLines.push("- Keep scope focused on making CI pass.");
+    if (retryBranch) {
+      contextLines.push(`- Push commits to branch \`${retryBranch}\` so the existing PR updates (do not create a new PR).`);
+    }
+
+    return jsonResponse({
+      ok: true,
+      taskId: task._id,
+      taskRunId: primaryRun?._id ?? null,
+      repository: task.projectFullName ?? null,
+      baseBranch: task.baseBranch ?? null,
+      mergeStatus,
+      pullRequest: prCoordinates
+        ? {
+            repoFullName: prCoordinates.repoFullName,
+            number: prCoordinates.prNumber,
+            url: prUrl ?? undefined,
+            headRef: prRecord?.headRef ?? undefined,
+            headSha: prRecord?.headSha ?? undefined,
+          }
+        : null,
+      crown: {
+        evaluationStatus: task.crownEvaluationStatus ?? null,
+        evaluationError: crownError,
+        crownedRunReason: crownReason,
+      },
+      qualityGate: {
+        status: qualityGateStatus,
+        hasAnyRunning,
+        hasAnyFailure,
+        allPassed,
+        total: checks.length,
+        failures,
+      },
+      retry: {
+        maxRetries,
+        attempted: retryAttemptCount,
+        shouldRetry,
+        retryBranch,
+        hasInFlightRun,
+        context: contextLines.join("\n"),
+      },
+    });
+  } catch (err) {
+    console.error("[cmux.tasks.quality-gate] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to get task quality gate status" },
+      500
+    );
+  }
+}
+
+// ============================================================================
+// POST /api/v1/cmux/tasks/{id}/pin - Toggle pinned state
+// ============================================================================
+async function handleTogglePinTask(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string
+): Promise<Response> {
+  try {
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskId as Id<"tasks">,
+    });
+
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    const currentlyPinned = task.pinned === true;
+    if (currentlyPinned) {
+      await ctx.runMutation(api.tasks.unpin, {
+        teamSlugOrId,
+        id: taskId as Id<"tasks">,
+      });
+    } else {
+      await ctx.runMutation(api.tasks.pin, {
+        teamSlugOrId,
+        id: taskId as Id<"tasks">,
+      });
+    }
+
+    return jsonResponse({ pinned: !currentlyPinned });
+  } catch (err) {
+    console.error("[cmux.tasks.pin] Error:", err);
+    return jsonResponse({ code: 500, message: "Failed to toggle pin" }, 500);
+  }
+}
+
+// ============================================================================
+// POST /api/v1/cmux/tasks/{id}/archive - Archive task
+// ============================================================================
+async function handleArchiveTask(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string
+): Promise<Response> {
+  try {
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskId as Id<"tasks">,
+    });
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    await ctx.runMutation(api.tasks.archive, {
+      teamSlugOrId,
+      id: taskId as Id<"tasks">,
+    });
+
+    return jsonResponse({ archived: true });
+  } catch (err) {
+    console.error("[cmux.tasks.archive] Error:", err);
+    return jsonResponse({ code: 500, message: "Failed to archive task" }, 500);
+  }
+}
+
+// ============================================================================
+// POST /api/v1/cmux/tasks/{id}/unarchive - Unarchive task
+// ============================================================================
+async function handleUnarchiveTask(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string
+): Promise<Response> {
+  try {
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskId as Id<"tasks">,
+    });
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+
+    await ctx.runMutation(api.tasks.unarchive, {
+      teamSlugOrId,
+      id: taskId as Id<"tasks">,
+    });
+
+    return jsonResponse({ archived: false });
+  } catch (err) {
+    console.error("[cmux.tasks.unarchive] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to unarchive task" },
+      500
+    );
+  }
+}
+
+// ============================================================================
+// POST /api/v1/cmux/tasks/{id}/stop - Stop/archive task
+// ============================================================================
+async function handleStopTask(
+  ctx: ActionCtx,
+  taskId: string,
+  teamSlugOrId: string,
+  userId: string
+): Promise<Response> {
+  try {
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Archive the task
+    await ctx.runMutation(internal.tasks.archiveInternal, {
+      taskId: taskId as Id<"tasks">,
+      teamId,
+      userId,
+    });
+
+    return jsonResponse({ stopped: true });
+  } catch (err) {
+    console.error("[cmux.tasks.stop] Error:", err);
+    const message = err instanceof Error ? err.message : "Failed to stop task";
+    if (message.includes("not found") || message.includes("unauthorized")) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
+    return jsonResponse({ code: 500, message }, 500);
+  }
+}
+
+// ============================================================================
+// Route handler for task GET requests
+// ============================================================================
+export const taskGetRouter = httpAction(async (ctx, req) => {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+  const maxRetriesParam = url.searchParams.get("maxRetries");
+  const limitParam = url.searchParams.get("limit");
+
+  if (!teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId query parameter is required" },
+      400
+    );
+  }
+
+  // Parse path: /api/v1/cmux/tasks/{id}
+  const pathParts = path.split("/").filter(Boolean);
+  // pathParts: ["api", "v1", "cmux", "tasks", "{id}"]
+  const taskId = pathParts[4];
+  const action = pathParts[5];
+
+  if (!taskId) {
+    return jsonResponse({ code: 400, message: "Task ID is required" }, 400);
+  }
+
+  if (action === "quality-gate") {
+    const parsedMaxRetries = maxRetriesParam ? parseInt(maxRetriesParam, 10) : undefined;
+    const maxRetries = parsedMaxRetries !== undefined && Number.isFinite(parsedMaxRetries) && parsedMaxRetries >= 0
+      ? Math.min(parsedMaxRetries, 10)
+      : 2;
+
+    const parsedLimit = limitParam ? parseInt(limitParam, 10) : undefined;
+    const limit = parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, 100)
+      : 50;
+
+    return handleGetTaskQualityGate(ctx, taskId, teamSlugOrId, identity!.subject, maxRetries, limit);
+  }
+
+  if (action) {
+    return jsonResponse({ code: 404, message: "Not found" }, 404);
+  }
+
+  return handleGetTask(ctx, taskId, teamSlugOrId, identity!.subject);
+});
+
+// ============================================================================
+// Route handler for task POST actions
+// ============================================================================
+export const taskActionRouter = httpAction(async (ctx, req) => {
+  const contentTypeError = verifyContentType(req);
+  if (contentTypeError) return contentTypeError;
+
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  // Parse path: /api/v1/cmux/tasks/{id}/{action}
+  const pathParts = path.split("/").filter(Boolean);
+  const taskId = pathParts[4];
+  const action = pathParts[5];
+
+  if (!taskId) {
+    return jsonResponse({ code: 400, message: "Task ID is required" }, 400);
+  }
+
+  let body: { teamSlugOrId: string };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ code: 400, message: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId is required" },
+      400
+    );
+  }
+
+  const userId = identity!.subject;
+
+  switch (action) {
+    case "stop":
+      return handleStopTask(ctx, taskId, body.teamSlugOrId, userId);
+    case "pin":
+      return handleTogglePinTask(ctx, taskId, body.teamSlugOrId, userId);
+    case "archive":
+      return handleArchiveTask(ctx, taskId, body.teamSlugOrId, userId);
+    case "unarchive":
+      return handleUnarchiveTask(ctx, taskId, body.teamSlugOrId, userId);
+    default:
+      return jsonResponse({ code: 404, message: "Not found" }, 404);
+  }
+});
+
+// ============================================================================
+// GET /api/v1/cmux/task-runs/{id}/* - Unified task run GET router
+// Handles: base (task run details), /memory, /children, /parent, /children/status
+// ============================================================================
+export const taskRunGetRouter = httpAction(async (ctx, req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  // pathParts: ["api", "v1", "cmux", "task-runs", "{id}", "{action}", ...]
+
+  if (pathParts.length < 5) {
+    return jsonResponse({ code: 400, message: "Invalid path" }, 400);
+  }
+
+  // Base path: GET /api/v1/cmux/task-runs/{id} - returns task run details
+  if (pathParts.length === 5) {
+    return handleGetTaskRun(ctx, req);
+  }
+
+  const action = pathParts[5]; // memory, children, parent
+  const subAction = pathParts[6]; // status (for children/status)
+
+  // Route to appropriate handler
+  if (action === "memory") {
+    return handleGetTaskRunMemory(ctx, req);
+  } else if (action === "children" && subAction === "status") {
+    return handleGetChildRunsStatus(ctx, req);
+  } else if (action === "children") {
+    return handleListChildRuns(ctx, req);
+  } else if (action === "parent") {
+    return handleGetParentRun(ctx, req);
+  }
+
+  return jsonResponse({ code: 404, message: "Unknown action" }, 404);
+});
+
+// GET /api/v1/cmux/task-runs/{taskRunId} - Get task run details with PTY info
+async function handleGetTaskRun(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  if (!teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId query parameter is required" },
+      400
+    );
+  }
+
+  // Parse path: /api/v1/cmux/task-runs/{taskRunId}
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  // pathParts: ["api", "v1", "cmux", "task-runs", "{taskRunId}"]
+  const taskRunId = pathParts[4];
+
+  if (!taskRunId) {
+    return jsonResponse({ code: 400, message: "Task run ID is required" }, 400);
+  }
+
+  // Validate taskRunId format - Convex IDs are alphanumeric without underscores
+  const isValidConvexIdFormat = /^[a-z][a-z0-9]*$/i.test(taskRunId);
+  if (!isValidConvexIdFormat) {
+    return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+  }
+
+  try {
+    const userId = identity!.subject;
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Verify the task run belongs to this user/team
+    const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+      id: taskRunId as Id<"taskRuns">,
+    });
+
+    if (!taskRun || taskRun.teamId !== teamId || taskRun.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
+    // Extract sandbox ID from vscode container info
+    const sandboxId = taskRun.vscode?.containerName ?? undefined;
+
+    // Return task run details with PTY session info
+    return jsonResponse({
+      id: taskRun._id,
+      taskId: taskRun.taskId,
+      status: taskRun.status,
+      agentName: taskRun.agentName,
+      prompt: taskRun.prompt,
+      summary: taskRun.summary,
+      createdAt: taskRun.createdAt,
+      updatedAt: taskRun.updatedAt,
+      completedAt: taskRun.completedAt,
+      exitCode: taskRun.exitCode,
+      errorMessage: taskRun.errorMessage,
+      // PTY session info for terminal attachment
+      ptySessionId: taskRun.ptySessionId,
+      ptyBackend: taskRun.ptyBackend,
+      // Sandbox info
+      sandboxId,
+      vscode: taskRun.vscode
+        ? {
+            provider: taskRun.vscode.provider,
+            status: taskRun.vscode.status,
+            url: taskRun.vscode.url,
+            vncUrl: taskRun.vscode.vncUrl,
+            xtermUrl: taskRun.vscode.xtermUrl,
+          }
+        : undefined,
+    });
+  } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+    console.error("[cmux.getTaskRun] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to get task run" },
+      500
+    );
+  }
+}
+
+// GET /api/v1/cmux/task-runs/{taskRunId}/memory - Get memory for a task run
+async function handleGetTaskRunMemory(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+  const memoryType = url.searchParams.get("type") as
+    | "knowledge"
+    | "daily"
+    | "tasks"
+    | "mailbox"
+    | null;
+
+  if (!teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId query parameter is required" },
+      400
+    );
+  }
+
+  // Parse path: /api/v1/cmux/task-runs/{taskRunId}/memory
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  // pathParts: ["api", "v1", "cmux", "task-runs", "{taskRunId}", "memory"]
+  const taskRunId = pathParts[4];
+
+  if (!taskRunId) {
+    return jsonResponse({ code: 400, message: "Task run ID is required" }, 400);
+  }
+
+  // Validate taskRunId format - Convex IDs are alphanumeric without underscores
+  const isValidConvexIdFormat = /^[a-z][a-z0-9]*$/i.test(taskRunId);
+  if (!isValidConvexIdFormat) {
+    return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+  }
+
+  try {
+    const userId = identity!.subject;
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Verify the task run belongs to this user/team
+    const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+      id: taskRunId as Id<"taskRuns">,
+    });
+
+    if (!taskRun || taskRun.teamId !== teamId || taskRun.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
+    // Query memory snapshots for this task run
+    const snapshots = await ctx.runQuery(api.agentMemoryQueries.getByTaskRun, {
+      teamSlugOrId,
+      taskRunId: taskRunId as Id<"taskRuns">,
+    });
+
+    // Filter by type if specified
+    let filteredSnapshots = snapshots;
+    if (memoryType) {
+      filteredSnapshots = snapshots.filter(
+        (s: { memoryType: string }) => s.memoryType === memoryType
+      );
+    }
+
+    // Format response
+    const memory = filteredSnapshots.map(
+      (s: {
+        _id: string;
+        memoryType: string;
+        content: string;
+        fileName?: string;
+        date?: string;
+        truncated?: boolean;
+        agentName?: string;
+        createdAt?: number;
+      }) => ({
+        id: s._id,
+        memoryType: s.memoryType,
+        content: s.content,
+        fileName: s.fileName,
+        date: s.date,
+        truncated: s.truncated ?? false,
+        agentName: s.agentName,
+        createdAt: s.createdAt,
+      })
+    );
+
+    return jsonResponse({ memory });
+  } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+    console.error("[cmux.taskRunMemory] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to get task run memory" },
+      500
+    );
+  }
+}
+
+// ============================================================================
+// D4.2: Agent Teams - Parent-Child Task Relationship Handlers
+// ============================================================================
+
+// GET /api/v1/cmux/task-runs/{id}/children - List child task runs
+async function handleListChildRuns(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  const runId = pathParts[4]; // ["api", "v1", "cmux", "task-runs", "{id}", "children"]
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  if (!teamSlugOrId) {
+    return jsonResponse({ code: 400, message: "teamSlugOrId query param required" }, 400);
+  }
+
+  try {
+    const children = await ctx.runQuery(api.taskRuns.listChildRuns, {
+      teamSlugOrId,
+      parentRunId: runId as Id<"taskRuns">,
+    });
+
+    if (children === null) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
+    return jsonResponse({
+      children: children.map((c) => ({
+        id: c._id,
+        taskId: c.taskId,
+        agentName: c.agentName,
+        status: c.status,
+        createdAt: c.createdAt,
+        completedAt: c.completedAt,
+        exitCode: c.exitCode,
+        pullRequestUrl: c.pullRequestUrl,
+        summary: c.summary,
+      })),
+    });
+  } catch (err) {
+    console.error("[cmux.taskRuns.listChildren] Error:", err);
+    const message = err instanceof Error ? err.message : "Failed to list child runs";
+    return jsonResponse({ code: 500, message }, 500);
+  }
+}
+
+// GET /api/v1/cmux/task-runs/{id}/parent - Get parent task run
+async function handleGetParentRun(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  const runId = pathParts[4]; // ["api", "v1", "cmux", "task-runs", "{id}", "parent"]
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  if (!teamSlugOrId) {
+    return jsonResponse({ code: 400, message: "teamSlugOrId query param required" }, 400);
+  }
+
+  try {
+    const parent = await ctx.runQuery(api.taskRuns.getParentRun, {
+      teamSlugOrId,
+      runId: runId as Id<"taskRuns">,
+    });
+
+    if (!parent) {
+      return jsonResponse({ parent: null });
+    }
+
+    return jsonResponse({
+      parent: {
+        id: parent._id,
+        taskId: parent.taskId,
+        agentName: parent.agentName,
+        status: parent.status,
+        createdAt: parent.createdAt,
+        completedAt: parent.completedAt,
+      },
+    });
+  } catch (err) {
+    console.error("[cmux.taskRuns.getParent] Error:", err);
+    const message = err instanceof Error ? err.message : "Failed to get parent run";
+    if (message.includes("not found") || message.includes("unauthorized")) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+    return jsonResponse({ code: 500, message }, 500);
+  }
+}
+
+// GET /api/v1/cmux/task-runs/{id}/children/status - Get aggregated child status
+async function handleGetChildRunsStatus(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  const runId = pathParts[4]; // ["api", "v1", "cmux", "task-runs", "{id}", "children", "status"]
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  if (!teamSlugOrId) {
+    return jsonResponse({ code: 400, message: "teamSlugOrId query param required" }, 400);
+  }
+
+  try {
+    const status = await ctx.runQuery(api.taskRuns.getChildRunsStatus, {
+      teamSlugOrId,
+      parentRunId: runId as Id<"taskRuns">,
+    });
+
+    if (status === null) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
+    return jsonResponse(status);
+  } catch (err) {
+    console.error("[cmux.taskRuns.getChildStatus] Error:", err);
+    const message = err instanceof Error ? err.message : "Failed to get child status";
+    return jsonResponse({ code: 500, message }, 500);
+  }
+}

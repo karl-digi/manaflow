@@ -534,8 +534,9 @@ export function DiffSidebarFilter({
         if (handleElement.hasPointerCapture?.(pointerId)) {
           try {
             handleElement.releasePointerCapture(pointerId);
-          } catch {
-            // Ignore release failures.
+          } catch (error) {
+            // Pointer capture release may fail in some browsers - safe to ignore
+            console.debug("[diff-sidebar-filter] releasePointerCapture failed", error);
           }
         }
         setIsResizingSidebar(false);
@@ -559,8 +560,9 @@ export function DiffSidebarFilter({
 
       try {
         handleElement.setPointerCapture(pointerId);
-      } catch {
-        // Ignore pointer capture failures (e.g., Safari).
+      } catch (error) {
+        // Pointer capture may fail in some browsers (e.g., Safari) - safe to ignore
+        console.debug("[diff-sidebar-filter] setPointerCapture failed", error);
       }
     },
     [sidebarWidth]

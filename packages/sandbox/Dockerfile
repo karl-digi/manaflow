@@ -24,8 +24,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 WORKDIR /workspace
 
 FROM rust-base AS chef
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo install --locked cargo-chef
 COPY packages/sandbox/Cargo.toml packages/sandbox/Cargo.lock ./
 COPY packages/sandbox/benches ./benches
@@ -36,6 +36,13 @@ WORKDIR /workspace
 ENV CARGO_TERM_COLOR=never \
   CARGO_PROFILE_RELEASE_STRIP=symbols \
   CARGO_TARGET_DIR=/workspace/target
+
+# Install libcap-dev required for codex-linux-sandbox (bubblewrap compilation)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  apt-get update && apt-get install -y --no-install-recommends \
+  libcap-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/agentclientprotocol/agent-client-protocol .tmp_acp_repos/agent-client-protocol && \
     git clone https://github.com/zed-industries/codex-acp .tmp_acp_repos/codex-acp && \
@@ -52,8 +59,8 @@ ENV CARGO_TERM_COLOR=never \
 COPY crates/cmux-terminal ./crates/cmux-terminal
 COPY crates/cmux-pty ./crates/cmux-pty
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo build --locked --release --manifest-path crates/cmux-pty/Cargo.toml
 
 # Build VS Code extension
@@ -85,14 +92,14 @@ ENV CARGO_TERM_COLOR=never \
 COPY packages/sandbox/Cargo.toml packages/sandbox/Cargo.lock ./
 COPY packages/sandbox/benches ./benches
 COPY --from=chef /workspace/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo chef cook --release --recipe-path recipe.json
 
 COPY packages/sandbox/src ./src
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   cargo build --locked --release --bin cmux --bin cmux-sandboxd --bin cmux-bridge
 
 FROM ubuntu:24.04 AS dind-installer
@@ -250,14 +257,14 @@ RUN arch="$(uname -m)"; \
     aarch64) ARCH="arm64" ;; \
     *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac; \
-  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/karlorz/vscode-1/releases/latest" \
     | jq -r '.tag_name' \
     | sed 's|^v||'); \
   echo "Installing cmux-code v${CMUX_CODE_RELEASE}"; \
   mkdir -p /app/cmux-code; \
   curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 \
     -o /tmp/cmux-code.tar.gz \
-    "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
+    "https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
   tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1; \
   rm -rf /tmp/cmux-code.tar.gz; \
   # Create VS Code settings directory with default config

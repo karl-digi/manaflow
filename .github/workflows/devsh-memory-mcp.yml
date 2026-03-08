@@ -1,0 +1,109 @@
+# .github/workflows/devsh-memory-mcp.yml
+# Publishes devsh-memory-mcp to npm on version tag push
+#
+# Authentication: Uses npm Granular Access Token (post-classic-token era)
+# - Create via: npm token create --cidr-allowlist=0.0.0.0/0 (for CI)
+# - Or web UI: npmjs.com > Access Tokens > Generate New Token > Granular Access Token
+# - Set "Bypass 2FA" for CI, max 90-day expiration for write tokens
+# - Store as NPM_TOKEN secret in GitHub repo settings
+#
+# OIDC Provenance: --provenance flag attests builds to npm for supply chain security
+name: Publish devsh-memory-mcp to npm
+
+on:
+  push:
+    tags:
+      - 'devsh-memory-mcp@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write  # Required for npm provenance (OIDC attestation)
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  publish:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/devsh-memory-mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: .
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            VERSION="${INPUT_VERSION}"
+          elif [[ "${GITHUB_REF}" == refs/tags/devsh-memory-mcp@* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/devsh-memory-mcp@}"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $VERSION"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+
+      - name: Check npm for existing version
+        id: npm_check
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${VERSION} already exists on npm; skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update package version
+        if: steps.npm_check.outputs.exists == 'false'
+        run: |
+          # Use node to update version directly (avoids npm workspace: protocol issues)
+          node -e "const p=require('./package.json'); p.version='${{ steps.version.outputs.version }}'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2)+'\n')"
+
+      - name: Build
+        if: steps.npm_check.outputs.exists == 'false'
+        run: bun run build
+
+      - name: Stage package in temp directory
+        if: steps.npm_check.outputs.exists == 'false'
+        id: stage
+        run: |
+          set -euo pipefail
+          TEMP_DIR="$(mktemp -d)"
+          cp package.json README.md "$TEMP_DIR/"
+          cp -R dist "$TEMP_DIR/dist"
+          echo "temp_dir=$TEMP_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm with provenance
+        if: steps.npm_check.outputs.exists == 'false'
+        run: |
+          cd "${{ steps.stage.outputs.temp_dir }}"
+          npm publish --provenance --access public --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

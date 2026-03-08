@@ -18,6 +18,10 @@
       "import": "./src/socket-client.ts",
       "types": "./src/socket-client.ts"
     },
+    "./provider-types": {
+      "import": "./src/provider-types.ts",
+      "types": "./src/provider-types.ts"
+    },
     "./node/socket": {
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"
@@ -26,6 +30,10 @@
       "import": "./src/providers/amp/start-amp-proxy.ts",
       "types": "./src/providers/amp/start-amp-proxy.ts"
     },
+    "./src/providers/opencode/completion-detector.ts": {
+      "import": "./src/providers/opencode/completion-detector.ts",
+      "types": "./src/providers/opencode/completion-detector.ts"
+    },
     "./model-usage": {
       "import": "./src/model-usage.ts",
       "types": "./src/model-usage.ts"
@@ -33,6 +41,10 @@
     "./agentConfig": {
       "import": "./src/agentConfig.ts",
       "types": "./src/agentConfig.ts"
+    },
+    "./agent-catalog": {
+      "import": "./src/agent-catalog.ts",
+      "types": "./src/agent-catalog.ts"
     },
     "./terminal-config": {
       "import": "./src/terminal-config.ts",
@@ -106,6 +118,22 @@
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
     },
+    "./providers/anthropic/configs": {
+      "import": "./src/providers/anthropic/configs.ts",
+      "types": "./src/providers/anthropic/configs.ts"
+    },
+    "./providers/anthropic/environment": {
+      "import": "./src/providers/anthropic/environment.ts",
+      "types": "./src/providers/anthropic/environment.ts"
+    },
+    "./providers/openai/environment": {
+      "import": "./src/providers/openai/environment.ts",
+      "types": "./src/providers/openai/environment.ts"
+    },
+    "./providers/opencode/environment": {
+      "import": "./src/providers/opencode/environment.ts",
+      "types": "./src/providers/opencode/environment.ts"
+    },
     "./screenshots/sanitize-markdown": {
       "import": "./src/screenshots/sanitize-markdown.ts",
       "types": "./src/screenshots/sanitize-markdown.ts"
@@ -133,6 +161,38 @@
     "./modal-snapshots": {
       "import": "./src/modal-snapshots.ts",
       "types": "./src/modal-snapshots.ts"
+    },
+    "./pve-lxc-snapshots": {
+      "import": "./src/pve-lxc-snapshots.ts",
+      "types": "./src/pve-lxc-snapshots.ts"
+    },
+    "./provider-registry": {
+      "import": "./src/provider-registry.ts",
+      "types": "./src/provider-registry.ts"
+    },
+    "./providers/opencode/free-models": {
+      "import": "./src/providers/opencode/free-models.ts",
+      "types": "./src/providers/opencode/free-models.ts"
+    },
+    "./providers/openai/codex-token": {
+      "import": "./src/providers/openai/codex-token.ts",
+      "types": "./src/providers/openai/codex-token.ts"
+    },
+    "./resilience/provider-health": {
+      "import": "./src/resilience/provider-health.ts",
+      "types": "./src/resilience/provider-health.ts"
+    },
+    "./resilience": {
+      "import": "./src/resilience/index.ts",
+      "types": "./src/resilience/index.ts"
+    },
+    "./node/obsidian-reader": {
+      "import": "./src/obsidian-reader.ts",
+      "types": "./src/obsidian-reader.ts"
+    },
+    "./agent-memory-protocol": {
+      "import": "./src/agent-memory-protocol.ts",
+      "types": "./src/agent-memory-protocol.ts"
     }
   },
   "peerDependencies": {

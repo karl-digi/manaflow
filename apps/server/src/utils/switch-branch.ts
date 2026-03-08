@@ -148,14 +148,31 @@ for (const repoPath of repoPaths) {
     log(
       "repo=",
       repoPath,
-      "-> existing branch missing, attempting to create:",
+      "-> local branch missing, attempting to track remote:",
+      message,
+    );
+  }
+
+  // Try to fetch and track the remote branch (for retry scenarios where PR branch exists on origin)
+  try {
+    await $`git -C ${repoPath} fetch origin ${branchName}`.quiet();
+    await $`git -C ${repoPath} switch --track origin/${branchName}`.quiet();
+    log("repo=", repoPath, "-> tracked remote branch origin/", branchName ?? "(missing)");
+    continue;
+  } catch (trackError) {
+    const { stderr } = extractShellOutputs(trackError);
+    const message = stderr?.trim() ?? formatError(trackError);
+    log(
+      "repo=",
+      repoPath,
+      "-> remote branch not found, creating new local branch:",
       message,
     );
   }
 
   try {
     await $`git -C ${repoPath} switch -c ${branchName}`.quiet();
-    log("repo=", repoPath, "-> created branch", branchName ?? "(missing)");
+    log("repo=", repoPath, "-> created new local branch", branchName ?? "(missing)");
   } catch (createError) {
     const { stderr } = extractShellOutputs(createError);
     const message = stderr?.trim() ?? formatError(createError);

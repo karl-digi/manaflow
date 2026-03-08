@@ -1,0 +1,1131 @@
+# Hono - Ultrafast Web Framework
+
+Hono is a small, simple, and ultrafast web framework built on Web Standards. The name means "flame" in Japanese. It works on any JavaScript runtime including Cloudflare Workers, Fastly Compute, Deno, Bun, Vercel, Netlify, AWS Lambda, and Node.js. Hono is designed for building Web APIs, edge applications, proxy servers, and full-stack applications with minimal overhead - the `hono/tiny` preset is under 14KB when minified.
+
+The framework provides a delightful developer experience with first-class TypeScript support, clean APIs, and batteries-included middleware. Hono features multiple routers (RegExpRouter for maximum speed, SmartRouter for flexibility) and an RPC system that enables end-to-end type safety between server and client. With built-in middleware for authentication, CORS, caching, logging, and more, Hono lets you "write less, do more" while maintaining excellent performance.
+
+## Quick Start
+
+Create a new Hono project using the starter template.
+
+```bash
+npm create hono@latest my-app
+cd my-app
+npm install
+npm run dev
+```
+
+## Basic Application
+
+Create a simple Hono application with routes for different HTTP methods.
+
+```ts
+import { Hono } from 'hono'
+
+const app = new Hono()
+
+// Basic GET route
+app.get('/', (c) => c.text('Hello Hono!'))
+
+// Return JSON response
+app.get('/api/users', (c) => {
+  return c.json({
+    users: [
+      { id: 1, name: 'Alice' },
+      { id: 2, name: 'Bob' }
+    ]
+  })
+})
+
+// POST with status code
+app.post('/api/users', (c) => {
+  return c.json({ message: 'User created!' }, 201)
+})
+
+// PUT and DELETE
+app.put('/api/users/:id', (c) => c.text(`Updated user ${c.req.param('id')}`))
+app.delete('/api/users/:id', (c) => c.text(`Deleted user ${c.req.param('id')}`))
+
+export default app
+```
+
+## Route Parameters
+
+Handle path parameters, query strings, and wildcards in routes.
+
+```ts
+import { Hono } from 'hono'
+
+const app = new Hono()
+
+// Single path parameter
+app.get('/users/:id', (c) => {
+  const id = c.req.param('id')
+  return c.json({ userId: id })
+})
+
+// Multiple path parameters
+app.get('/posts/:postId/comments/:commentId', (c) => {
+  const { postId, commentId } = c.req.param()
+  return c.json({ postId, commentId })
+})
+
+// Optional parameter
+app.get('/api/animal/:type?', (c) => {
+  const type = c.req.param('type') || 'unknown'
+  return c.text(`Animal type: ${type}`)
+})
+
+// Query parameters
+app.get('/search', (c) => {
+  const query = c.req.query('q')
+  const page = c.req.query('page') || '1'
+  const tags = c.req.queries('tags') // For multiple values: ?tags=A&tags=B
+  return c.json({ query, page, tags })
+})
+
+// Regex constraint on parameter
+app.get('/posts/:date{[0-9]+}/:title{[a-z]+}', (c) => {
+  const { date, title } = c.req.param()
+  return c.json({ date, title })
+})
+
+// Wildcard route
+app.get('/files/*', (c) => c.text('Matched wildcard'))
+
+export default app
+```
+
+## Request Handling
+
+Access request headers, body data, and parse different content types.
+
+```ts
+import { Hono } from 'hono'
+
+const app = new Hono()
+
+// Access headers
+app.get('/info', (c) => {
+  const userAgent = c.req.header('User-Agent')
+  const contentType = c.req.header('Content-Type')
+  return c.json({ userAgent, contentType })
+})
+
+// Parse JSON body
+app.post('/api/data', async (c) => {
+  const body = await c.req.json()
+  return c.json({ received: body })
+})
+
+// Parse form data
+app.post('/submit', async (c) => {
+  const body = await c.req.parseBody()
+  const name = body['name']
+  const email = body['email']
+  return c.json({ name, email })
+})
+
+// Parse form with file upload
+app.post('/upload', async (c) => {
+  const body = await c.req.parseBody()
+  const file = body['file'] as File
+  return c.json({
+    filename: file.name,
+    size: file.size,
+    type: file.type
+  })
+})
+
+// Access raw request
+app.post('/raw', async (c) => {
+  const text = await c.req.text()
+  const arrayBuffer = await c.req.arrayBuffer()
+  return c.text('Received raw data')
+})
+
+export default app
+```
+
+## Response Methods
+
+Use context methods to return different response types with headers and status codes.
+
+```ts
+import { Hono } from 'hono'
+
+const app = new Hono()
+
+// Text response
+app.get('/text', (c) => c.text('Plain text response'))
+
+// JSON response
+app.get('/json', (c) => c.json({ message: 'Hello', status: 'ok' }))
+
+// HTML response
+app.get('/html', (c) => c.html('<h1>Hello HTML!</h1>'))
+
+// Set status code
+app.post('/create', (c) => {
+  c.status(201)
+  return c.json({ created: true })
+})
+
+// Set custom headers
+app.get('/headers', (c) => {
+  c.header('X-Custom-Header', 'CustomValue')
+  c.header('Cache-Control', 'max-age=3600')
+  return c.text('Check the headers!')
+})
+
+// Response with body, status, and headers
+app.get('/full', (c) => {
+  return c.body('Response body', 200, {
+    'X-Custom': 'Header',
+    'Content-Type': 'text/plain'
+  })
+})
+
+// Redirect
+app.get('/old-page', (c) => c.redirect('/new-page'))
+app.get('/permanent', (c) => c.redirect('/new-location', 301))
+
+// Not found
+app.get('/missing', (c) => c.notFound())
+
+export default app
+```
+
+## Route Grouping
+
+Organize routes into groups and sub-applications for better code structure.
+
+```ts
+import { Hono } from 'hono'
+
+// Create sub-routers
+const users = new Hono()
+users.get('/', (c) => c.json({ users: [] }))
+users.get('/:id', (c) => c.json({ id: c.req.param('id') }))
+users.post('/', (c) => c.json({ message: 'User created' }, 201))
+
+const posts = new Hono()
+posts.get('/', (c) => c.json({ posts: [] }))
+posts.get('/:id', (c) => c.json({ id: c.req.param('id') }))
+posts.post('/', (c) => c.json({ message: 'Post created' }, 201))
+
+// Main app
+const app = new Hono()
+
+// Mount sub-routers
+app.route('/users', users)
+app.route('/posts', posts)
+
+// Base path for versioned API
+const v1 = new Hono().basePath('/api/v1')
+v1.get('/status', (c) => c.json({ version: '1.0' }))
+
+const v2 = new Hono().basePath('/api/v2')
+v2.get('/status', (c) => c.json({ version: '2.0' }))
+
+app.route('/', v1)
+app.route('/', v2)
+
+// Chained routes
+app
+  .get('/endpoint', (c) => c.text('GET /endpoint'))
+  .post((c) => c.text('POST /endpoint'))
+  .delete((c) => c.text('DELETE /endpoint'))
+
+export default app
+```
+
+## Middleware
+
+Create and use middleware for request/response processing.
+
+```ts
+import { Hono } from 'hono'
+import { logger } from 'hono/logger'
+import { cors } from 'hono/cors'
+import { etag } from 'hono/etag'
+
+const app = new Hono()
+
+// Built-in middleware
+app.use('*', logger())
+app.use('*', etag())
+
+// CORS middleware with options
+app.use('/api/*', cors({
+  origin: ['https://example.com', 'https://app.example.com'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['X-Custom-Header'],
+  maxAge: 600,
+  credentials: true
+}))
+
+// Custom middleware
+const timing = async (c, next) => {
+  const start = Date.now()
+  await next()
+  const ms = Date.now() - start
+  c.header('X-Response-Time', `${ms}ms`)
+}
+app.use('*', timing)
+
+// Middleware that sets variables
+app.use('*', async (c, next) => {
+  c.set('requestId', crypto.randomUUID())
+  await next()
+})
+
+// Access variables in handler
+app.get('/request-id', (c) => {
+  const requestId = c.get('requestId')
+  return c.json({ requestId })
+})
+
+// Route-specific middleware
+const adminOnly = async (c, next) => {
+  const token = c.req.header('Authorization')
+  if (token !== 'Bearer admin-token') {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  await next()
+}
+
+app.get('/admin', adminOnly, (c) => c.json({ message: 'Admin area' }))
+
+export default app
+```
+
+## Basic Authentication
+
+Protect routes with HTTP Basic Authentication middleware.
+
+```ts
+import { Hono } from 'hono'
+import { basicAuth } from 'hono/basic-auth'
+
+const app = new Hono()
+
+// Basic auth on specific path
+app.use('/admin/*', basicAuth({
+  username: 'admin',
+  password: 'secretpassword'
+}))
+
+app.get('/admin/dashboard', (c) => {
+  return c.text('Welcome to admin dashboard!')
+})
+
+// Multiple users
+app.use('/protected/*', basicAuth(
+  { username: 'user1', password: 'pass1', realm: 'Protected Area' },
+  { username: 'user2', password: 'pass2' }
+))
+
+// Custom verification
+app.use('/custom/*', basicAuth({
+  verifyUser: async (username, password, c) => {
+    // Custom logic - e.g., check database
+    return username === 'dynamic' && password === 'secret123'
+  }
+}))
+
+// Auth success callback
+app.use('/callback/*', basicAuth({
+  username: 'user',
+  password: 'pass',
+  onAuthSuccess: (c, username) => {
+    c.set('authenticatedUser', username)
+  }
+}))
+
+app.get('/callback/info', (c) => {
+  const user = c.get('authenticatedUser')
+  return c.json({ user })
+})
+
+export default app
+```
+
+## Bearer Token Authentication
+
+Authenticate requests using Bearer tokens in the Authorization header.
+
+```ts
+import { Hono } from 'hono'
+import { bearerAuth } from 'hono/bearer-auth'
+
+const app = new Hono()
+
+// Simple token authentication
+app.use('/api/*', bearerAuth({ token: 'my-secret-api-key' }))
+
+app.get('/api/data', (c) => {
+  return c.json({ data: 'Protected content' })
+})
+
+// Multiple valid tokens
+app.use('/multi/*', bearerAuth({
+  token: ['token-1', 'token-2', 'token-3']
+}))
+
+// Custom token verification
+app.use('/custom/*', bearerAuth({
+  verifyToken: async (token, c) => {
+    // Verify against database or external service
+    const validTokens = ['valid-token-1', 'valid-token-2']
+    return validTokens.includes(token)
+  }
+}))
+
+// Role-based access with different tokens
+const readToken = 'read-only-token'
+const writeToken = 'read-write-token'
+
+app.get('/api/resource', bearerAuth({ token: [readToken, writeToken] }), (c) => {
+  return c.json({ message: 'Read access granted' })
+})
+
+app.post('/api/resource', bearerAuth({ token: writeToken }), (c) => {
+  return c.json({ message: 'Write access granted' })
+})
+
+export default app
+
+// Example curl request:
+// curl -H 'Authorization: Bearer my-secret-api-key' http://localhost:3000/api/data
+```
+
+## JWT Authentication
+
+Verify JSON Web Tokens for secure API authentication.
+
+```ts
+import { Hono } from 'hono'
+import { jwt } from 'hono/jwt'
+import { sign } from 'hono/jwt'
+import type { JwtVariables } from 'hono/jwt'
+
+type Variables = JwtVariables
+
+const app = new Hono<{ Variables: Variables }>()
+
+const JWT_SECRET = 'your-secret-key'
+
+// Generate a token (login endpoint)
+app.post('/login', async (c) => {
+  const { username, password } = await c.req.json()
+
+  // Verify credentials (example)
+  if (username === 'user' && password === 'password') {
+    const payload = {
+      sub: username,
+      role: 'admin',
+      exp: Math.floor(Date.now() / 1000) + 60 * 60 // 1 hour
+    }
+    const token = await sign(payload, JWT_SECRET)
+    return c.json({ token })
+  }
+
+  return c.json({ error: 'Invalid credentials' }, 401)
+})
+
+// Protect routes with JWT middleware
+app.use('/protected/*', jwt({
+  secret: JWT_SECRET,
+  alg: 'HS256'
+}))
+
+// Access JWT payload in handler
+app.get('/protected/profile', (c) => {
+  const payload = c.get('jwtPayload')
+  return c.json({
+    user: payload.sub,
+    role: payload.role
+  })
+})
+
+// JWT from cookie instead of header
+app.use('/cookie-auth/*', jwt({
+  secret: JWT_SECRET,
+  alg: 'HS256',
+  cookie: 'auth_token'
+}))
+
+// JWT with environment variable
+app.use('/env-auth/*', (c, next) => {
+  const jwtMiddleware = jwt({
+    secret: c.env.JWT_SECRET,
+    alg: 'HS256'
+  })
+  return jwtMiddleware(c, next)
+})
+
+export default app
+```
+
+## Validation with Zod
+
+Validate request data using Zod schemas for type-safe input handling.
+
+```ts
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+
+const app = new Hono()
+
+// Define schemas
+const createUserSchema = z.object({
+  name: z.string().min(2).max(100),
+  email: z.string().email(),
+  age: z.number().int().min(0).max(150).optional()
+})
+
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  search: z.string().optional()
+})
+
+// Validate JSON body
+app.post('/users', zValidator('json', createUserSchema), (c) => {
+  const data = c.req.valid('json')
+  // data is typed as { name: string, email: string, age?: number }
+  return c.json({ created: data }, 201)
+})
+
+// Validate query parameters
+app.get('/users', zValidator('query', querySchema), (c) => {
+  const { page, limit, search } = c.req.valid('query')
+  return c.json({ page, limit, search })
+})
+
+// Validate path parameters
+const paramSchema = z.object({
+  id: z.coerce.number().int().positive()
+})
+
+app.get('/users/:id', zValidator('param', paramSchema), (c) => {
+  const { id } = c.req.valid('param')
+  return c.json({ userId: id })
+})
+
+// Validate form data
+const formSchema = z.object({
+  title: z.string().min(1),
+  content: z.string().min(10)
+})
+
+app.post('/posts', zValidator('form', formSchema), (c) => {
+  const { title, content } = c.req.valid('form')
+  return c.json({ title, content }, 201)
+})
+
+// Multiple validators
+app.put('/users/:id',
+  zValidator('param', paramSchema),
+  zValidator('json', createUserSchema.partial()),
+  (c) => {
+    const { id } = c.req.valid('param')
+    const updates = c.req.valid('json')
+    return c.json({ id, ...updates })
+  }
+)
+
+export default app
+```
+
+## RPC Client
+
+Share API types between server and client for end-to-end type safety.
+
+```ts
+// server.ts
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+
+const app = new Hono()
+
+const route = app
+  .get('/posts', (c) => {
+    return c.json({
+      posts: [
+        { id: 1, title: 'Hello World' },
+        { id: 2, title: 'Hono is Great' }
+      ]
+    })
+  })
+  .post('/posts',
+    zValidator('json', z.object({
+      title: z.string(),
+      body: z.string()
+    })),
+    (c) => {
+      const { title, body } = c.req.valid('json')
+      return c.json({ id: 3, title, body }, 201)
+    }
+  )
+  .get('/posts/:id', (c) => {
+    const id = c.req.param('id')
+    return c.json({ id, title: 'Post Title', body: 'Post content' })
+  })
+
+export type AppType = typeof route
+export default app
+
+// client.ts
+import { hc } from 'hono/client'
+import type { AppType } from './server'
+
+const client = hc<AppType>('http://localhost:3000')
+
+// Type-safe API calls
+async function main() {
+  // GET request
+  const postsRes = await client.posts.$get()
+  const posts = await postsRes.json()
+  console.log(posts.posts) // typed as { id: number, title: string }[]
+
+  // POST request with typed body
+  const createRes = await client.posts.$post({
+    json: {
+      title: 'New Post',
+      body: 'This is the content'
+    }
+  })
+  const created = await createRes.json()
+  console.log(created.id) // typed as number
+
+  // GET with path parameter
+  const postRes = await client.posts[':id'].$get({
+    param: { id: '1' }
+  })
+  const post = await postRes.json()
+  console.log(post.title)
+
+  // Get URL without making request
+  const url = client.posts.$url()
+  console.log(url.pathname) // '/posts'
+}
+```
+
+## JSX Templates
+
+Render HTML using JSX syntax for server-side rendering.
+
+```tsx
+// Configure tsconfig.json:
+// { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "hono/jsx" } }
+
+import { Hono } from 'hono'
+import type { FC } from 'hono/jsx'
+
+const app = new Hono()
+
+// Layout component
+const Layout: FC<{ title: string }> = (props) => {
+  return (
+    <html>
+      <head>
+        <title>{props.title}</title>
+        <meta charset="UTF-8" />
+      </head>
+      <body>{props.children}</body>
+    </html>
+  )
+}
+
+// Page component with props
+const UserList: FC<{ users: { id: number; name: string }[] }> = ({ users }) => {
+  return (
+    <Layout title="Users">
+      <h1>User List</h1>
+      <ul>
+        {users.map((user) => (
+          <li key={user.id}>{user.name}</li>
+        ))}
+      </ul>
+    </Layout>
+  )
+}
+
+app.get('/users', (c) => {
+  const users = [
+    { id: 1, name: 'Alice' },
+    { id: 2, name: 'Bob' },
+    { id: 3, name: 'Charlie' }
+  ]
+  return c.html(<UserList users={users} />)
+})
+
+// Async component
+const AsyncData: FC = async () => {
+  await new Promise((r) => setTimeout(r, 100))
+  return <div>Data loaded!</div>
+}
+
+app.get('/async', (c) => {
+  return c.html(
+    <Layout title="Async">
+      <AsyncData />
+    </Layout>
+  )
+})
+
+// Form example
+app.get('/form', (c) => {
+  return c.html(
+    <Layout title="Contact">
+      <form method="post" action="/submit">
+        <input type="text" name="name" placeholder="Name" />
+        <input type="email" name="email" placeholder="Email" />
+        <button type="submit">Submit</button>
+      </form>
+    </Layout>
+  )
+})
+
+export default app
+```
+
+## Cookie Management
+
+Set, get, and delete cookies with the Cookie Helper.
+
+```ts
+import { Hono } from 'hono'
+import {
+  getCookie,
+  setCookie,
+  deleteCookie,
+  getSignedCookie,
+  setSignedCookie
+} from 'hono/cookie'
+
+const app = new Hono()
+
+// Set and get cookies
+app.get('/cookie', (c) => {
+  // Set a cookie
+  setCookie(c, 'session', 'abc123', {
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    maxAge: 3600, // 1 hour
+    sameSite: 'Strict'
+  })
+
+  // Get a cookie
+  const session = getCookie(c, 'session')
+
+  // Get all cookies
+  const allCookies = getCookie(c)
+
+  return c.json({ session, allCookies })
+})
+
+// Delete cookie
+app.get('/logout', (c) => {
+  deleteCookie(c, 'session', {
+    path: '/',
+    secure: true
+  })
+  return c.text('Logged out')
+})
+
+// Signed cookies for tamper detection
+const SECRET = 'my-secret-key'
+
+app.get('/signed', async (c) => {
+  // Set signed cookie
+  await setSignedCookie(c, 'user_id', '12345', SECRET, {
+    path: '/',
+    httpOnly: true
+  })
+
+  // Get signed cookie (returns false if tampered)
+  const userId = await getSignedCookie(c, SECRET, 'user_id')
+
+  if (userId === false) {
+    return c.json({ error: 'Cookie tampered' }, 400)
+  }
+
+  return c.json({ userId })
+})
+
+// Cookie with expiration date
+app.get('/remember', (c) => {
+  setCookie(c, 'remember_me', 'true', {
+    path: '/',
+    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    sameSite: 'Lax'
+  })
+  return c.text('Remember me set')
+})
+
+export default app
+```
+
+## Streaming Responses
+
+Stream data to clients using text streams and Server-Sent Events (SSE).
+
+```ts
+import { Hono } from 'hono'
+import { stream, streamText, streamSSE } from 'hono/streaming'
+
+const app = new Hono()
+
+// Basic streaming
+app.get('/stream', (c) => {
+  return stream(c, async (stream) => {
+    stream.onAbort(() => {
+      console.log('Client disconnected')
+    })
+
+    // Write raw bytes
+    await stream.write(new Uint8Array([72, 101, 108, 108, 111]))
+
+    // Pipe another stream
+    // await stream.pipe(someReadableStream)
+  })
+})
+
+// Text streaming
+app.get('/stream-text', (c) => {
+  return streamText(c, async (stream) => {
+    await stream.writeln('Starting...')
+
+    for (let i = 1; i <= 5; i++) {
+      await stream.sleep(500)
+      await stream.writeln(`Processing item ${i}`)
+    }
+
+    await stream.write('Done!')
+  })
+})
+
+// Server-Sent Events
+app.get('/sse', (c) => {
+  return streamSSE(c, async (stream) => {
+    let id = 0
+
+    while (true) {
+      const message = `Current time: ${new Date().toISOString()}`
+
+      await stream.writeSSE({
+        data: message,
+        event: 'time-update',
+        id: String(id++)
+      })
+
+      await stream.sleep(1000)
+    }
+  })
+})
+
+// SSE with JSON data
+app.get('/sse/updates', (c) => {
+  return streamSSE(c, async (stream) => {
+    const updates = [
+      { type: 'user', action: 'joined', name: 'Alice' },
+      { type: 'message', content: 'Hello everyone!' },
+      { type: 'user', action: 'left', name: 'Bob' }
+    ]
+
+    for (const update of updates) {
+      await stream.writeSSE({
+        data: JSON.stringify(update),
+        event: update.type
+      })
+      await stream.sleep(2000)
+    }
+  })
+})
+
+export default app
+
+// Client-side SSE consumption:
+// const eventSource = new EventSource('/sse')
+// eventSource.addEventListener('time-update', (e) => console.log(e.data))
+```
+
+## Error Handling
+
+Handle errors and customize error responses.
+
+```ts
+import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
+
+const app = new Hono()
+
+// Custom 404 handler
+app.notFound((c) => {
+  return c.json({
+    error: 'Not Found',
+    message: `Route ${c.req.path} not found`
+  }, 404)
+})
+
+// Global error handler
+app.onError((err, c) => {
+  console.error('Error:', err)
+
+  if (err instanceof HTTPException) {
+    return err.getResponse()
+  }
+
+  return c.json({
+    error: 'Internal Server Error',
+    message: err.message
+  }, 500)
+})
+
+// Throw HTTP exceptions
+app.get('/protected', (c) => {
+  const auth = c.req.header('Authorization')
+
+  if (!auth) {
+    throw new HTTPException(401, {
+      message: 'Authorization required'
+    })
+  }
+
+  return c.json({ data: 'secret' })
+})
+
+// Custom exception with response
+app.get('/custom-error', (c) => {
+  const errorResponse = new Response(
+    JSON.stringify({ error: 'Custom error', code: 'ERR_001' }),
+    { status: 400, headers: { 'Content-Type': 'application/json' } }
+  )
+
+  throw new HTTPException(400, { res: errorResponse })
+})
+
+// Try-catch in handler
+app.get('/safe', async (c) => {
+  try {
+    const data = await someRiskyOperation()
+    return c.json(data)
+  } catch (error) {
+    return c.json({ error: 'Operation failed' }, 500)
+  }
+})
+
+export default app
+```
+
+## Testing
+
+Test Hono applications using the built-in request helper.
+
+```ts
+import { Hono } from 'hono'
+import { describe, it, expect } from 'vitest'
+
+const app = new Hono()
+
+app.get('/hello', (c) => c.text('Hello World'))
+app.get('/json', (c) => c.json({ message: 'OK' }))
+app.post('/users', async (c) => {
+  const body = await c.req.json()
+  return c.json({ id: 1, ...body }, 201)
+})
+app.get('/users/:id', (c) => {
+  return c.json({ id: c.req.param('id') })
+})
+
+// Tests
+describe('Hono App', () => {
+  it('should return Hello World', async () => {
+    const res = await app.request('/hello')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('Hello World')
+  })
+
+  it('should return JSON', async () => {
+    const res = await app.request('/json')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ message: 'OK' })
+  })
+
+  it('should create user with POST', async () => {
+    const res = await app.request('/users', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Alice' }),
+      headers: { 'Content-Type': 'application/json' }
+    })
+    expect(res.status).toBe(201)
+    expect(await res.json()).toEqual({ id: 1, name: 'Alice' })
+  })
+
+  it('should handle path parameters', async () => {
+    const res = await app.request('/users/42')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: '42' })
+  })
+
+  it('should work with Request object', async () => {
+    const req = new Request('http://localhost/hello')
+    const res = await app.request(req)
+    expect(res.status).toBe(200)
+  })
+
+  it('should test with mock env', async () => {
+    const mockEnv = { API_KEY: 'test-key' }
+    const res = await app.request('/hello', {}, mockEnv)
+    expect(res.status).toBe(200)
+  })
+})
+```
+
+## Cloudflare Workers Deployment
+
+Deploy a Hono application to Cloudflare Workers with environment bindings.
+
+```ts
+// src/index.ts
+import { Hono } from 'hono'
+
+type Bindings = {
+  MY_KV: KVNamespace
+  MY_R2: R2Bucket
+  API_SECRET: string
+}
+
+const app = new Hono<{ Bindings: Bindings }>()
+
+// Access environment variables
+app.get('/config', (c) => {
+  const secret = c.env.API_SECRET
+  return c.json({ hasSecret: !!secret })
+})
+
+// Use KV storage
+app.get('/kv/:key', async (c) => {
+  const key = c.req.param('key')
+  const value = await c.env.MY_KV.get(key)
+  return value ? c.text(value) : c.notFound()
+})
+
+app.put('/kv/:key', async (c) => {
+  const key = c.req.param('key')
+  const value = await c.req.text()
+  await c.env.MY_KV.put(key, value)
+  return c.json({ success: true })
+})
+
+// Use R2 storage
+app.get('/files/:key', async (c) => {
+  const key = c.req.param('key')
+  const object = await c.env.MY_R2.get(key)
+
+  if (!object) return c.notFound()
+
+  return new Response(object.body, {
+    headers: { 'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream' }
+  })
+})
+
+app.put('/files/:key', async (c) => {
+  const key = c.req.param('key')
+  await c.env.MY_R2.put(key, c.req.body)
+  return c.json({ uploaded: key })
+})
+
+export default app
+
+// wrangler.toml configuration:
+// name = "my-worker"
+// main = "src/index.ts"
+// compatibility_date = "2024-01-01"
+//
+// [[kv_namespaces]]
+// binding = "MY_KV"
+// id = "your-kv-namespace-id"
+//
+// [[r2_buckets]]
+// binding = "MY_R2"
+// bucket_name = "my-bucket"
+//
+// [vars]
+// API_SECRET = "your-secret"
+```
+
+## Bun Deployment
+
+Deploy a Hono application with Bun runtime including static file serving.
+
+```ts
+// src/index.ts
+import { Hono } from 'hono'
+import { serveStatic } from 'hono/bun'
+import { logger } from 'hono/logger'
+
+const app = new Hono()
+
+// Middleware
+app.use('*', logger())
+
+// Serve static files
+app.use('/static/*', serveStatic({ root: './' }))
+app.use('/favicon.ico', serveStatic({ path: './public/favicon.ico' }))
+
+// Static with options
+app.use('/assets/*', serveStatic({
+  root: './public',
+  rewriteRequestPath: (path) => path.replace(/^\/assets/, ''),
+  onFound: (_path, c) => {
+    c.header('Cache-Control', 'public, max-age=31536000')
+  },
+  onNotFound: (path, c) => {
+    console.log(`${path} not found`)
+  }
+}))
+
+// API routes
+app.get('/api/health', (c) => c.json({ status: 'ok' }))
+
+app.get('/api/time', (c) => {
+  return c.json({ time: new Date().toISOString() })
+})
+
+// Export with custom port
+export default {
+  port: 3000,
+  fetch: app.fetch
+}
+
+// Run with: bun run src/index.ts
+// Or with hot reload: bun run --hot src/index.ts
+
+// Test file: src/index.test.ts
+import { describe, expect, it } from 'bun:test'
+import app from './index'
+
+describe('App', () => {
+  it('health check', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/health'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'ok' })
+  })
+})
+
+// Run tests: bun test
+```
+
+## Summary
+
+Hono provides a comprehensive framework for building modern web applications across any JavaScript runtime. Its core strengths include an ultrafast router (RegExpRouter), minimal bundle size, and seamless multi-platform support from edge computing (Cloudflare Workers, Fastly) to server-side runtimes (Node.js, Bun, Deno). The framework excels at building REST APIs, real-time streaming applications, and full-stack web apps with JSX templating.
+
+Key integration patterns include: using middleware chains for authentication (Basic, Bearer, JWT), validation (with Zod or other Standard Schema validators), and cross-cutting concerns (logging, CORS, caching); leveraging the RPC client for end-to-end type safety between server and client; and utilizing platform-specific features like Cloudflare KV/R2 bindings or Bun's static file serving. The framework's adherence to Web Standards ensures consistent behavior across platforms while its TypeScript-first design provides excellent developer experience with full type inference for routes, parameters, and responses.

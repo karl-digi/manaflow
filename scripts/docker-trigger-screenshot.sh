@@ -11,6 +11,7 @@ NON_INTERACTIVE=false
 INITIAL_SCREENSHOT_DIR=""
 INITIAL_SCREENSHOT_MTIME=""
 RUN_START_TS=""
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -117,7 +118,7 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 
 echo "Building Docker image..."
-docker build -t "$IMAGE_NAME" .
+docker build -t "$IMAGE_NAME" --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" .
 
 echo "Starting container..."
 if docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then

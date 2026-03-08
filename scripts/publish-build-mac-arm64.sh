@@ -245,7 +245,7 @@ export DEBUG="${DEBUG:-electron-osx-sign*,electron-notarize*}"
 # Ensure entitlements exist right before packaging
 (cd "$CLIENT_DIR" && \
   bunx electron-builder \
-    --config electron-builder.json \
+    --config "${ELECTRON_BUILDER_CONFIG:-electron-builder.json}" \
     --mac dmg zip --arm64 \
     --publish never \
     --config.mac.forceCodeSigning=true \

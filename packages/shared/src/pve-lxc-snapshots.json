@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 2,
+  "updatedAt": "2026-03-07T22:25:02Z",
+  "presets": [
+    {
+      "presetId": "4vcpu_8gb_32gb",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
+      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage.",
+      "versions": [
+        {
+          "version": 43,
+          "snapshotId": "snapshot_c112c38e",
+          "templateVmid": 9039,
+          "capturedAt": "2026-02-07T22:47:14Z"
+        },
+        {
+          "version": 44,
+          "snapshotId": "snapshot_0c079d9b",
+          "templateVmid": 9031,
+          "capturedAt": "2026-02-08T06:41:52Z"
+        },
+        {
+          "version": 45,
+          "snapshotId": "snapshot_764720ec",
+          "templateVmid": 9042,
+          "capturedAt": "2026-02-08T22:35:31Z"
+        },
+        {
+          "version": 46,
+          "snapshotId": "snapshot_9b7724a5",
+          "templateVmid": 9001,
+          "capturedAt": "2026-02-14T22:31:26Z"
+        },
+        {
+          "version": 47,
+          "snapshotId": "snapshot_d14a3320",
+          "templateVmid": 9007,
+          "capturedAt": "2026-02-16T08:10:11Z"
+        },
+        {
+          "version": 48,
+          "snapshotId": "snapshot_ca9ac987",
+          "templateVmid": 9010,
+          "capturedAt": "2026-02-16T11:51:03Z"
+        },
+        {
+          "version": 49,
+          "snapshotId": "snapshot_f9012fix",
+          "templateVmid": 9012,
+          "capturedAt": "2026-02-16T18:30:00Z"
+        },
+        {
+          "version": 50,
+          "snapshotId": "snapshot_992e9524",
+          "templateVmid": 9026,
+          "capturedAt": "2026-02-17T05:07:00Z"
+        },
+        {
+          "version": 51,
+          "snapshotId": "snapshot_46b9cf00",
+          "templateVmid": 9028,
+          "capturedAt": "2026-02-17T08:33:10Z"
+        },
+        {
+          "version": 52,
+          "snapshotId": "snapshot_a1955ed2",
+          "templateVmid": 9034,
+          "capturedAt": "2026-02-17T22:44:44Z"
+        },
+        {
+          "version": 53,
+          "snapshotId": "snapshot_359974c7",
+          "templateVmid": 9030,
+          "capturedAt": "2026-02-19T00:40:00Z"
+        },
+        {
+          "version": 54,
+          "snapshotId": "snapshot_5141774e",
+          "templateVmid": 9045,
+          "capturedAt": "2026-02-19T11:02:02Z"
+        },
+        {
+          "version": 55,
+          "snapshotId": "snapshot_ef5e7854",
+          "templateVmid": 9059,
+          "capturedAt": "2026-02-20T22:29:07Z"
+        },
+        {
+          "version": 56,
+          "snapshotId": "snapshot_719082f2",
+          "templateVmid": 9070,
+          "capturedAt": "2026-02-26T22:49:12Z"
+        },
+        {
+          "version": 57,
+          "snapshotId": "snapshot_4df23865",
+          "templateVmid": 9075,
+          "capturedAt": "2026-02-28T05:08:16Z"
+        },
+        {
+          "version": 58,
+          "snapshotId": "snapshot_a8055dfc",
+          "templateVmid": 9078,
+          "capturedAt": "2026-02-28T06:38:56Z"
+        },
+        {
+          "version": 59,
+          "snapshotId": "snapshot_b0184b10",
+          "templateVmid": 9080,
+          "capturedAt": "2026-02-28T08:06:33Z"
+        },
+        {
+          "version": 60,
+          "snapshotId": "snapshot_0e641d50",
+          "templateVmid": 9049,
+          "capturedAt": "2026-02-28T13:30:11Z"
+        },
+        {
+          "version": 61,
+          "snapshotId": "snapshot_4a589c32",
+          "templateVmid": 9083,
+          "capturedAt": "2026-02-28T13:58:16Z"
+        },
+        {
+          "version": 62,
+          "snapshotId": "snapshot_596aa0db",
+          "templateVmid": 9086,
+          "capturedAt": "2026-02-28T16:47:27Z"
+        },
+        {
+          "version": 63,
+          "snapshotId": "snapshot_1cc34398",
+          "templateVmid": 9090,
+          "capturedAt": "2026-02-28T17:28:17Z"
+        },
+        {
+          "version": 64,
+          "snapshotId": "snapshot_d6f2d054",
+          "templateVmid": 9092,
+          "capturedAt": "2026-02-28T17:48:51Z"
+        },
+        {
+          "version": 65,
+          "snapshotId": "snapshot_c44ef2b8",
+          "templateVmid": 9094,
+          "capturedAt": "2026-02-28T18:17:58Z"
+        },
+        {
+          "version": 66,
+          "snapshotId": "snapshot_641ab7a6",
+          "templateVmid": 9095,
+          "capturedAt": "2026-02-28T18:31:37Z"
+        },
+        {
+          "version": 67,
+          "snapshotId": "snapshot_ed84f89b",
+          "templateVmid": 9096,
+          "capturedAt": "2026-02-28T18:52:26Z"
+        },
+        {
+          "version": 68,
+          "snapshotId": "snapshot_d038629a",
+          "templateVmid": 9105,
+          "capturedAt": "2026-03-03T07:40:24Z"
+        },
+        {
+          "version": 69,
+          "snapshotId": "snapshot_67ff4581",
+          "templateVmid": 9110,
+          "capturedAt": "2026-03-04T22:44:49Z"
+        },
+        {
+          "version": 70,
+          "snapshotId": "snapshot_4a4d42f2",
+          "templateVmid": 9123,
+          "capturedAt": "2026-03-06T18:43:22Z"
+        },
+        {
+          "version": 71,
+          "snapshotId": "snapshot_3f2b0d94",
+          "templateVmid": 9127,
+          "capturedAt": "2026-03-07T22:24:31Z"
+        }
+      ]
+    },
+    {
+      "presetId": "6vcpu_8gb_40gb",
+      "label": "Performance workspace",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "40 GB SSD",
+      "description": "Extra headroom for larger codebases or heavier workloads.",
+      "versions": [
+        {
+          "version": 31,
+          "snapshotId": "snapshot_2c6bde93",
+          "templateVmid": 9040,
+          "capturedAt": "2026-02-07T22:47:49Z"
+        },
+        {
+          "version": 32,
+          "snapshotId": "snapshot_19d17edd",
+          "templateVmid": 9041,
+          "capturedAt": "2026-02-08T06:42:24Z"
+        },
+        {
+          "version": 33,
+          "snapshotId": "snapshot_aff9d612",
+          "templateVmid": 9043,
+          "capturedAt": "2026-02-08T22:36:05Z"
+        },
+        {
+          "version": 34,
+          "snapshotId": "snapshot_380e00e6",
+          "templateVmid": 9002,
+          "capturedAt": "2026-02-14T22:31:56Z"
+        },
+        {
+          "version": 35,
+          "snapshotId": "snapshot_c2bfcdb4",
+          "templateVmid": 9008,
+          "capturedAt": "2026-02-16T08:10:15Z"
+        },
+        {
+          "version": 36,
+          "snapshotId": "snapshot_7a229d76",
+          "templateVmid": 9011,
+          "capturedAt": "2026-02-16T11:51:33Z"
+        },
+        {
+          "version": 37,
+          "snapshotId": "snapshot_f9013fix",
+          "templateVmid": 9013,
+          "capturedAt": "2026-02-16T18:30:00Z"
+        },
+        {
+          "version": 38,
+          "snapshotId": "snapshot_bc2cae7e",
+          "templateVmid": 9027,
+          "capturedAt": "2026-02-17T05:07:29Z"
+        },
+        {
+          "version": 39,
+          "snapshotId": "snapshot_c34f338a",
+          "templateVmid": 9029,
+          "capturedAt": "2026-02-17T08:33:40Z"
+        },
+        {
+          "version": 40,
+          "snapshotId": "snapshot_096865cb",
+          "templateVmid": 9035,
+          "capturedAt": "2026-02-17T22:45:15Z"
+        },
+        {
+          "version": 41,
+          "snapshotId": "snapshot_434f636e",
+          "templateVmid": 9047,
+          "capturedAt": "2026-02-19T11:02:33Z"
+        },
+        {
+          "version": 42,
+          "snapshotId": "snapshot_49f14f78",
+          "templateVmid": 9060,
+          "capturedAt": "2026-02-20T22:29:36Z"
+        },
+        {
+          "version": 43,
+          "snapshotId": "snapshot_b51ad4f8",
+          "templateVmid": 9071,
+          "capturedAt": "2026-02-26T22:49:44Z"
+        },
+        {
+          "version": 44,
+          "snapshotId": "snapshot_9f034fba",
+          "templateVmid": 9076,
+          "capturedAt": "2026-02-28T05:08:45Z"
+        },
+        {
+          "version": 45,
+          "snapshotId": "snapshot_734ff9e9",
+          "templateVmid": 9079,
+          "capturedAt": "2026-02-28T06:39:25Z"
+        },
+        {
+          "version": 46,
+          "snapshotId": "snapshot_18f9734f",
+          "templateVmid": 9081,
+          "capturedAt": "2026-02-28T08:07:02Z"
+        },
+        {
+          "version": 47,
+          "snapshotId": "snapshot_9f706d5f",
+          "templateVmid": 9082,
+          "capturedAt": "2026-02-28T13:30:43Z"
+        },
+        {
+          "version": 48,
+          "snapshotId": "snapshot_f3c2c6fb",
+          "templateVmid": 9084,
+          "capturedAt": "2026-02-28T13:58:47Z"
+        },
+        {
+          "version": 49,
+          "snapshotId": "snapshot_1d309aee",
+          "templateVmid": 9089,
+          "capturedAt": "2026-02-28T16:47:56Z"
+        },
+        {
+          "version": 50,
+          "snapshotId": "snapshot_6b0f7d55",
+          "templateVmid": 9091,
+          "capturedAt": "2026-02-28T17:28:47Z"
+        },
+        {
+          "version": 51,
+          "snapshotId": "snapshot_d661826e",
+          "templateVmid": 9093,
+          "capturedAt": "2026-02-28T17:49:21Z"
+        },
+        {
+          "version": 52,
+          "snapshotId": "snapshot_f5f9d91a",
+          "templateVmid": 9106,
+          "capturedAt": "2026-03-03T07:48:36Z"
+        },
+        {
+          "version": 53,
+          "snapshotId": "snapshot_88363ed8",
+          "templateVmid": 9111,
+          "capturedAt": "2026-03-04T22:45:19Z"
+        },
+        {
+          "version": 54,
+          "snapshotId": "snapshot_b4c96d99",
+          "templateVmid": 9124,
+          "capturedAt": "2026-03-06T18:43:55Z"
+        },
+        {
+          "version": 55,
+          "snapshotId": "snapshot_8c95d174",
+          "templateVmid": 9128,
+          "capturedAt": "2026-03-07T22:25:02Z"
+        }
+      ]
+    }
+  ],
+  "baseTemplateVmid": 9000,
+  "node": "karl-ws"
+}

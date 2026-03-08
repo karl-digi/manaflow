@@ -862,7 +862,8 @@ function unwrapCodexPayload(value: unknown): unknown {
 
     try {
       return unwrapCodexPayload(JSON.parse(trimmed));
-    } catch {
+    } catch (error) {
+      console.debug("[heatmap] Failed to parse JSON payload:", error);
       return null;
     }
   }

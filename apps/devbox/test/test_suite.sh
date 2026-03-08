@@ -1,9 +1,9 @@
 #!/bin/bash
 # test/test_suite.sh
 #
-# Full cmux devbox + Morph Cloud Integration Test Suite
+# Full devsh + Morph Cloud Integration Test Suite
 #
-# This script tests the complete cmux devbox workflow:
+# This script tests the complete devsh workflow:
 # 1. Workspace creation
 # 2. VM start/stop lifecycle
 # 3. Browser automation commands
@@ -11,7 +11,7 @@
 # 5. State persistence across restarts
 #
 # Prerequisites:
-# - cmux devbox CLI installed and in PATH
+# - devsh CLI installed and in PATH
 # - MORPH_API_KEY environment variable set
 # - Base snapshot created (see scripts/create_base_snapshot.py)
 #
@@ -208,7 +208,7 @@ trap cleanup EXIT
 # =============================================================================
 
 echo "=============================================="
-echo "  cmux devbox + Morph Cloud Test Suite"
+echo "     devsh + Morph Cloud Test Suite"
 echo "=============================================="
 echo ""
 echo "Workspace: $WS"

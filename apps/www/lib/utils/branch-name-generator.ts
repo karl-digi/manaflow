@@ -1,10 +1,12 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateObject, type LanguageModel } from "ai";
+import { generateObject, generateText, type LanguageModel } from "ai";
 import {
   CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  normalizeAnthropicBaseUrl,
 } from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
@@ -32,11 +34,21 @@ export function generateRandomId(): string {
   return result;
 }
 
-export function generateBranchName(prTitle: string): string {
+import { DEFAULT_BRANCH_PREFIX as _DEFAULT_BRANCH_PREFIX, MAX_BRANCH_NAME_LENGTH as _MAX_BRANCH_NAME_LENGTH } from "@cmux/shared";
+export const DEFAULT_BRANCH_PREFIX = _DEFAULT_BRANCH_PREFIX;
+export const MAX_BRANCH_NAME_LENGTH = _MAX_BRANCH_NAME_LENGTH;
+
+function truncateBaseBranchName(baseBranchName: string): string {
+  const maxBaseLength = MAX_BRANCH_NAME_LENGTH - 1 - 5;
+  return baseBranchName.substring(0, maxBaseLength).replace(/-+$/g, "");
+}
+
+export function generateBranchName(prTitle: string, branchPrefix: string = DEFAULT_BRANCH_PREFIX): string {
   const kebabTitle = toKebabCase(prTitle);
+  const baseBranchName = truncateBaseBranchName(`${branchPrefix}${kebabTitle}`);
   const randomId = generateRandomId();
-  const separator = kebabTitle.endsWith("-") ? "" : "-";
-  return `manaflow/${kebabTitle}${separator}${randomId}`;
+  const separator = baseBranchName.length > 0 ? "-" : "";
+  return `${baseBranchName}${separator}${randomId}`;
 }
 
 export const prGenerationSchema = z.object({
@@ -54,6 +66,7 @@ export const prGenerationSchema = z.object({
 
 export type PRGeneration = z.infer<typeof prGenerationSchema>;
 
+// ApiKeys type kept for backward compatibility with function signatures
 type ApiKeys = Record<string, string>;
 
 interface PRInfoResult extends PRGeneration {
@@ -96,38 +109,77 @@ function getFallbackInfo(taskDescription: string): PRInfoResult {
   };
 }
 
-function getModelAndProvider(
-  apiKeys: ApiKeys
-): { model: LanguageModel; providerName: string } | null {
-  if (apiKeys.OPENAI_API_KEY) {
-    const openai = createOpenAI({
-      apiKey: apiKeys.OPENAI_API_KEY,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
-    });
-    return {
-      model: openai("gpt-5-nano"),
-      providerName: "OpenAI",
-    };
-  }
+/**
+ * Check if the given base URL is a Bedrock-backed proxy.
+ * These proxies don't support tool_choice.disable_parallel_tool_use.
+ * We detect cmux proxy URLs which route to AWS Bedrock.
+ */
+function isBedrockBackedProxy(baseUrl: string): boolean {
+  // cmux proxy URLs (production and local dev) route to Bedrock
+  if (baseUrl.includes("cmux.dev/api/anthropic")) return true;
+  if (baseUrl.includes("localhost") && baseUrl.includes("/api/anthropic")) return true;
+  // Convex HTTP endpoints also route to Bedrock
+  if (baseUrl.includes(".convex.site")) return true;
+  return false;
+}
 
-  if (apiKeys.GEMINI_API_KEY) {
+type ModelConfig = {
+  model: LanguageModel;
+  providerName: string;
+  useTextMode: boolean; // Use generateText instead of generateObject for Bedrock compatibility
+};
+
+/**
+ * Get model and provider using PLATFORM credentials only.
+ * This is for internal platform AI services (branch names, PR titles, etc.)
+ * and should NOT use user/team API keys.
+ */
+function getModelAndProvider(): ModelConfig | null {
+  // Use platform credentials from environment variables only
+  // Note: AIGATEWAY_* accessed via process.env to support custom AI gateway configurations
+  const geminiKey = env.GEMINI_API_KEY;
+  if (geminiKey) {
     const google = createGoogleGenerativeAI({
-      apiKey: apiKeys.GEMINI_API_KEY,
+      apiKey: geminiKey,
+      baseURL:
+        process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
     });
     return {
       model: google("gemini-2.5-flash"),
       providerName: "Gemini",
+      useTextMode: false,
     };
   }
 
-  if (apiKeys.ANTHROPIC_API_KEY) {
-    const anthropic = createAnthropic({
-      apiKey: apiKeys.ANTHROPIC_API_KEY,
-      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  const openaiKey = env.OPENAI_API_KEY;
+  if (openaiKey) {
+    const openai = createOpenAI({
+      apiKey: openaiKey,
+      baseURL:
+        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
     return {
-      model: anthropic("claude-3-5-haiku-20241022"),
+      model: openai("gpt-5-nano"),
+      providerName: "OpenAI",
+      useTextMode: false,
+    };
+  }
+
+  const anthropicKey = env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const rawAnthropicBaseUrl =
+      process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+      CLOUDFLARE_ANTHROPIC_BASE_URL;
+    const anthropic = createAnthropic({
+      apiKey: anthropicKey,
+      baseURL: normalizeAnthropicBaseUrl(rawAnthropicBaseUrl).forAiSdk,
+    });
+    // Use text mode for Bedrock-backed proxies to avoid tool_choice.disable_parallel_tool_use
+    const useTextMode = isBedrockBackedProxy(rawAnthropicBaseUrl);
+    return {
+      model: anthropic("claude-haiku-4-5-20251001"),
       providerName: "Anthropic",
+      useTextMode,
     };
   }
 
@@ -150,38 +202,84 @@ export function mergeApiKeysWithEnv(apiKeys: Record<string, string>): ApiKeys {
   return merged;
 }
 
+const PR_GENERATION_SYSTEM_PROMPT =
+  "You are a helpful assistant that generates git branch names and PR titles. Generate a VERY SHORT branch name (2-4 words maximum, lowercase, hyphenated) and a concise PR title (5-10 words) that summarize the task. The branch name should be extremely concise and focus on the core action (e.g., 'fix-auth', 'add-logging', 'update-deps', 'refactor-api').";
+
+const PR_GENERATION_TEXT_MODE_SYSTEM_PROMPT = `${PR_GENERATION_SYSTEM_PROMPT}
+
+You MUST respond with ONLY a JSON object (no markdown, no explanation) containing exactly these fields:
+- branchName: A SHORT lowercase hyphenated branch name (2-4 words max)
+- prTitle: A human-readable PR title (5-10 words)
+
+Example response: {"branchName": "add-ci-workflow", "prTitle": "Add GitHub CI workflow for automated testing"}`;
+
+/**
+ * Extract JSON from text response, handling potential markdown code blocks.
+ */
+function extractJsonFromText(text: string): unknown {
+  // Try to find JSON object in response
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error("No JSON object found in response");
+  }
+  return JSON.parse(jsonMatch[0]);
+}
+
 export async function generatePRInfo(
   taskDescription: string,
-  apiKeys: ApiKeys
+  _apiKeys?: ApiKeys
 ): Promise<PRInfoResult> {
   const fallbackInfo = getFallbackInfo(taskDescription);
-  const modelConfig = getModelAndProvider(apiKeys);
+  // Use platform credentials only - not user/team API keys
+  const modelConfig = getModelAndProvider();
 
   if (!modelConfig) {
     console.warn(
-      "[BranchNameGenerator] No API keys available, using environment fallback"
+      "[BranchNameGenerator] No platform API keys available, using fallback"
     );
     return fallbackInfo;
   }
 
-  const { model, providerName } = modelConfig;
+  const { model, providerName, useTextMode } = modelConfig;
 
   try {
-    const { object } = await generateObjectImpl({
-      model,
-      schema: prGenerationSchema,
-      system:
-        "You are a helpful assistant that generates git branch names and PR titles. Generate a VERY SHORT branch name (2-4 words maximum, lowercase, hyphenated) and a concise PR title (5-10 words) that summarize the task. The branch name should be extremely concise and focus on the core action (e.g., 'fix-auth', 'add-logging', 'update-deps', 'refactor-api').",
-      prompt: `Task: ${taskDescription}`,
-      maxRetries: 2,
-      ...(providerName === "OpenAI" ? {} : { temperature: 0.3 }),
-    });
+    let object: PRGeneration;
+
+    if (useTextMode) {
+      // Use generateText with plain text mode for Bedrock-backed proxies
+      // This avoids tool_choice.disable_parallel_tool_use which Bedrock rejects
+      console.info(
+        `[BranchNameGenerator] Using text mode for Bedrock-compatible generation`
+      );
+      const result = await generateText({
+        model,
+        system: PR_GENERATION_TEXT_MODE_SYSTEM_PROMPT,
+        prompt: `Task: ${taskDescription}`,
+        maxRetries: 2,
+        ...(providerName === "OpenAI" ? {} : { temperature: 0.3 }),
+      });
+
+      const parsed = extractJsonFromText(result.text);
+      const validated = prGenerationSchema.parse(parsed);
+      object = validated;
+    } else {
+      // Use generateObject for providers that support tool_choice properly
+      const result = await generateObjectImpl({
+        model,
+        schema: prGenerationSchema,
+        system: PR_GENERATION_SYSTEM_PROMPT,
+        prompt: `Task: ${taskDescription}`,
+        maxRetries: 2,
+        ...(providerName === "OpenAI" ? {} : { temperature: 0.3 }),
+      });
+      object = result.object;
+    }
 
     const sanitizedBranch = sanitizeBranchComponent(object.branchName);
     const sanitizedTitle = sanitizePrTitle(object.prTitle);
 
     console.info(
-      `[BranchNameGenerator] Generated via ${providerName}: branch="${sanitizedBranch}", title="${sanitizedTitle}"`
+      `[BranchNameGenerator] Generated via ${providerName}${useTextMode ? " (text mode)" : ""}: branch="${sanitizedBranch}", title="${sanitizedTitle}"`
     );
 
     return {
@@ -210,7 +308,8 @@ export async function generatePRTitle(
 
 export async function generateBranchBaseName(
   taskDescription: string,
-  apiKeys: ApiKeys
+  apiKeys: ApiKeys,
+  branchPrefix: string = DEFAULT_BRANCH_PREFIX
 ): Promise<{
   baseBranchName: string;
   prTitle: string;
@@ -218,7 +317,7 @@ export async function generateBranchBaseName(
   providerName: string | null;
 }> {
   const info = await generatePRInfo(taskDescription, apiKeys);
-  const baseBranchName = `manaflow/${info.branchName}`;
+  const baseBranchName = `${branchPrefix}${info.branchName}`;
   return {
     baseBranchName,
     prTitle: info.prTitle,
@@ -239,7 +338,8 @@ export function generateBranchNamesFromBase(
   count: number,
   firstId?: string
 ): string[] {
-  const separator = baseBranchName.endsWith("-") ? "" : "-";
+  const truncatedBaseBranchName = truncateBaseBranchName(baseBranchName);
+  const separator = truncatedBaseBranchName.length > 0 ? "-" : "";
   const ids = new Set<string>();
   if (firstId) {
     ids.add(firstId);
@@ -247,22 +347,26 @@ export function generateBranchNamesFromBase(
   while (ids.size < count) {
     ids.add(generateRandomId());
   }
-  return Array.from(ids).map((id) => `${baseBranchName}${separator}${id}`);
+  return Array.from(ids).map(
+    (id) => `${truncatedBaseBranchName}${separator}${id}`
+  );
 }
 
 export function generateUniqueBranchNamesFromTitle(
   prTitle: string,
-  count: number
+  count: number,
+  branchPrefix: string = DEFAULT_BRANCH_PREFIX
 ): string[] {
   const kebabTitle = toKebabCase(prTitle);
-  const baseBranchName = `manaflow/${kebabTitle}`;
+  const baseBranchName = `${branchPrefix}${kebabTitle}`;
   return generateBranchNamesFromBase(baseBranchName, count);
 }
 
 export async function generateNewBranchName(
   taskDescription: string,
   apiKeys: ApiKeys,
-  uniqueId?: string
+  uniqueId?: string,
+  branchPrefix: string = DEFAULT_BRANCH_PREFIX
 ): Promise<{
   branchName: string;
   baseBranchName: string;
@@ -271,7 +375,7 @@ export async function generateNewBranchName(
   providerName: string | null;
 }> {
   const { baseBranchName, prTitle, usedFallback, providerName } =
-    await generateBranchBaseName(taskDescription, apiKeys);
+    await generateBranchBaseName(taskDescription, apiKeys, branchPrefix);
   const [branchName] = generateBranchNamesFromBase(
     baseBranchName,
     1,
@@ -284,7 +388,8 @@ export async function generateUniqueBranchNames(
   taskDescription: string,
   count: number,
   apiKeys: ApiKeys,
-  firstId?: string
+  firstId?: string,
+  branchPrefix: string = DEFAULT_BRANCH_PREFIX
 ): Promise<{
   branchNames: string[];
   baseBranchName: string;
@@ -293,7 +398,7 @@ export async function generateUniqueBranchNames(
   providerName: string | null;
 }> {
   const { baseBranchName, prTitle, usedFallback, providerName } =
-    await generateBranchBaseName(taskDescription, apiKeys);
+    await generateBranchBaseName(taskDescription, apiKeys, branchPrefix);
   return {
     branchNames: generateBranchNamesFromBase(
       baseBranchName,

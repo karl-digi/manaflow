@@ -4,7 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Octokit } from "octokit";
-import { parseGithubRepoUrl } from "@cmux/shared";
+import { parseGithubRepoUrl } from "@cmux/shared/convex-safe";
 
 // Add a manual repository from a custom URL
 export const addManualRepo = action({

@@ -163,8 +163,9 @@ function parseRepoSlug(prIdentifier: string): RepoSlug | null {
       }
       return null;
     }
-  } catch {
-    // Not a URL, fall through to pattern checks.
+  } catch (error) {
+    // Not a URL, fall through to pattern checks
+    console.debug("[run-simple-anthropic-review] Not a URL format, continuing with pattern checks:", error);
   }
 
   const hashMatch = prIdentifier.match(/^([\w.-]+)\/([\w.-]+)#\d+$/i);
@@ -410,13 +411,14 @@ export async function runSimpleAnthropicReviewStream(
         const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText, tooltipLanguage);
 
         try {
+          // Type assertion needed: @ai-sdk packages return V2|V3 but streamText expects V2
           const modelInstance =
             effectiveModelConfig.provider === "openai"
               ? openai(effectiveModelConfig.model)
               : bedrock(effectiveModelConfig.model);
 
           const stream = streamText({
-            model: modelInstance,
+            model: modelInstance as Parameters<typeof streamText>[0]["model"],
             prompt,
             temperature: 0,
             maxRetries: 2,

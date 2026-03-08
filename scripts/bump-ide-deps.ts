@@ -8,41 +8,122 @@ import {
   type IdeDeps,
 } from "./lib/ideDeps";
 
-const npmResponseSchema = z.object({
-  "dist-tags": z.object({
-    latest: z.string().min(1),
-  }),
+const channelSchema = z.enum(["stable", "latest", "beta"]);
+type Channel = z.infer<typeof channelSchema>;
+
+const npmTagResponseSchema = z.object({
+  version: z.string().min(1),
 });
 
-async function fetchLatestNpmVersion(packageName: string): Promise<string> {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
+function parseArgs(argv: string[]): { channel: Channel } {
+  let channelOverride: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--channel" && index + 1 < argv.length) {
+      channelOverride = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--channel=")) {
+      const [, value] = arg.split("=", 2);
+      channelOverride = value;
+    }
+  }
+
+  return {
+    channel: channelSchema.parse(channelOverride ?? "stable"),
+  };
+}
+
+async function fetchDistTag(
+  packageName: string,
+  channel: Channel,
+): Promise<string | null> {
+  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(channel)}`;
   const res = await fetch(url);
+  if (res.status === 404) {
+    return null;
+  }
   if (!res.ok) {
     throw new Error(
-      `Failed to fetch npm info for ${packageName}: ${res.status}`,
+      `Failed to fetch npm info for ${packageName}@${channel}: ${res.status}`,
     );
   }
-  const data = npmResponseSchema.parse(await res.json());
-  return data["dist-tags"].latest;
+  const raw = await res.json();
+  const parsed = npmTagResponseSchema.safeParse(raw);
+  if (parsed.success) {
+    return parsed.data.version;
+  }
+  if (typeof raw.version === "string" && raw.version.trim().length > 0) {
+    return raw.version;
+  }
+  return null;
 }
+
+async function getPackageVersion(
+  packageName: string,
+  channel: Channel,
+): Promise<string> {
+  const requestedVersion = await fetchDistTag(packageName, channel);
+  if (requestedVersion) {
+    console.log(`[${packageName}] Using ${channel}: ${requestedVersion}`);
+    return requestedVersion;
+  }
+
+  if (channel !== "latest") {
+    console.warn(
+      `[${packageName}] Channel '${channel}' not found, falling back to 'latest'`,
+    );
+    const latestVersion = await fetchDistTag(packageName, "latest");
+    if (latestVersion) {
+      console.log(`[${packageName}] Using latest: ${latestVersion}`);
+      return latestVersion;
+    }
+  }
+
+  throw new Error(
+    `[${packageName}] Failed to resolve '${channel}' dist-tag (latest fallback unavailable)`,
+  );
+}
+
+const marketplaceVersionPropertySchema = z.object({
+  key: z.string(),
+  value: z.string(),
+});
+
+const marketplaceVersionSchema = z.object({
+  version: z.string().min(1),
+  properties: z.array(marketplaceVersionPropertySchema).optional(),
+});
 
 const marketplaceResponseSchema = z.object({
   results: z.array(
     z.object({
       extensions: z.array(
         z.object({
-          versions: z.array(
-            z.object({
-              version: z.string().min(1),
-            }),
-          ),
+          versions: z.array(marketplaceVersionSchema),
         }),
       ),
     }),
   ),
 });
 
-const marketplaceFlags = 0x1 | 0x2 | 0x80 | 0x100;
+// Flags for VS Code Marketplace API:
+// 0x1 = IncludeVersions, 0x2 = IncludeFiles, 0x80 = IncludeLatestVersionOnly (negated by pageSize)
+// 0x100 = IncludeVersionProperties, 0x200 = ExcludeNonValidated, 0x800 = IncludeAssetUri
+// We need 0x100 for version properties (to check PreRelease flag)
+// Using 2359 = 0x937 which includes version properties
+const marketplaceFlags = 2359;
+
+function isPreReleaseVersion(
+  version: z.infer<typeof marketplaceVersionSchema>,
+): boolean {
+  const props = version.properties ?? [];
+  return props.some(
+    (p) =>
+      p.key === "Microsoft.VisualStudio.Code.PreRelease" && p.value === "true",
+  );
+}
 
 async function fetchLatestExtensionVersion(
   publisher: string,
@@ -57,6 +138,8 @@ async function fetchLatestExtensionVersion(
             value: `${publisher}.${name}`,
           },
         ],
+        // Request enough versions to find a stable one (pre-release versions may be at the top)
+        pageSize: 100,
       },
     ],
     flags: marketplaceFlags,
@@ -81,21 +164,44 @@ async function fetchLatestExtensionVersion(
   }
 
   const data = marketplaceResponseSchema.parse(await res.json());
-  const version =
-    data.results[0]?.extensions[0]?.versions[0]?.version ?? null;
-  if (!version) {
+  const versions = data.results[0]?.extensions[0]?.versions ?? [];
+  if (versions.length === 0) {
     throw new Error(
       `No versions returned for marketplace extension ${publisher}.${name}`,
     );
   }
-  return version;
+
+  // Find the first non-pre-release version (stable)
+  // Versions are returned in order (newest first), so first stable = latest stable
+  const stableVersion = versions.find((v) => !isPreReleaseVersion(v));
+  if (stableVersion) {
+    console.log(
+      `[${publisher}.${name}] Using stable: ${stableVersion.version}`,
+    );
+    return stableVersion.version;
+  }
+
+  // If no stable version found, fall back to latest (which may be pre-release)
+  const latestVersion = versions[0]?.version;
+  if (!latestVersion) {
+    throw new Error(
+      `No versions found for marketplace extension ${publisher}.${name}`,
+    );
+  }
+  console.warn(
+    `[${publisher}.${name}] No stable version found, using pre-release: ${latestVersion}`,
+  );
+  return latestVersion;
 }
 
-async function bumpPackages(deps: IdeDeps): Promise<void> {
+async function bumpPackages(
+  deps: IdeDeps,
+  channel: Channel,
+): Promise<void> {
   const packageNames = Object.keys(deps.packages);
   const latestEntries = await Promise.all(
     packageNames.map(async (name) => {
-      const version = await fetchLatestNpmVersion(name);
+      const version = await getPackageVersion(name, channel);
       return { name, version };
     }),
   );
@@ -135,11 +241,14 @@ async function bumpExtensions(deps: IdeDeps): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const { channel } = parseArgs(process.argv.slice(2));
+  console.log(`[bump-ide-deps] Channel: ${channel}`);
+
   const repoRoot = process.cwd();
   const deps = await readIdeDeps(repoRoot);
   const originalDeps: IdeDeps = structuredClone(deps);
 
-  await Promise.all([bumpPackages(deps), bumpExtensions(deps)]);
+  await Promise.all([bumpPackages(deps, channel), bumpExtensions(deps)]);
 
   const originalString = JSON.stringify(originalDeps);
   const updatedString = JSON.stringify(deps);

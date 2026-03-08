@@ -5,6 +5,8 @@ import {
   Globe2,
   TerminalSquare,
   GitCompare,
+  Brain,
+  FileText,
   GripVertical,
   X,
   Maximize2,
@@ -21,6 +23,8 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
+import type { TaskRunMemoryPanelProps } from "./TaskRunMemoryPanel";
+import type { TaskRunSummaryPanelProps } from "./TaskRunSummaryPanel";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
@@ -175,7 +179,9 @@ interface PanelFactoryProps {
     title: string;
     description?: string;
   } | null;
+  /** @deprecated Use isBrowserSupported instead */
   isMorphProvider?: boolean;
+  isBrowserSupported?: boolean;
   isBrowserBusy?: boolean;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
@@ -183,6 +189,8 @@ interface PanelFactoryProps {
   WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
   TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
   TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
+  TaskRunMemoryPanel?: React.ComponentType<TaskRunMemoryPanelProps>;
+  TaskRunSummaryPanel?: React.ComponentType<TaskRunSummaryPanelProps>;
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
@@ -563,6 +571,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         browserPlaceholder,
         selectedRun,
         isMorphProvider,
+        isBrowserSupported,
         isBrowserBusy,
         PersistentWebView,
         WorkspaceLoadingIndicator,
@@ -571,7 +580,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
+      // Support both new isBrowserSupported prop and deprecated isMorphProvider
+      const browserSupported = isBrowserSupported ?? isMorphProvider;
+      const shouldShowBrowserLoader = Boolean(selectedRun) && browserSupported && (!browserUrl || !browserPersistKey);
 
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,
@@ -641,6 +652,40 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       );
     }
 
+    case "memory": {
+      const { selectedRun, TaskRunMemoryPanel, teamSlugOrId } = props;
+      if (!TaskRunMemoryPanel || !teamSlugOrId) return null;
+
+      return panelWrapper(
+        <Brain className="size-3" aria-hidden />,
+        PANEL_LABELS.memory,
+        <div className="relative flex-1 min-h-0 overflow-hidden">
+          <TaskRunMemoryPanel
+            key={selectedRun?._id}
+            teamSlugOrId={teamSlugOrId}
+            taskRunId={selectedRun?._id}
+          />
+        </div>
+      );
+    }
+
+    case "summary": {
+      const { task, selectedRun, TaskRunSummaryPanel } = props;
+      if (!TaskRunSummaryPanel) return null;
+
+      return panelWrapper(
+        <FileText className="size-3" aria-hidden />,
+        PANEL_LABELS.summary,
+        <div className="relative flex-1 min-h-0 overflow-hidden">
+          <TaskRunSummaryPanel
+            key={selectedRun?._id}
+            task={task}
+            selectedRun={selectedRun}
+          />
+        </div>
+      );
+    }
+
     case null:
       return null;
 
@@ -694,6 +739,24 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
       prevProps.teamSlugOrId !== nextProps.teamSlugOrId ||
       prevProps.taskId !== nextProps.taskId) {
+      return false;
+    }
+  }
+
+  // For memory panel, check selectedRun and teamSlugOrId changes
+  if (prevProps.type === "memory") {
+    if (prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+      prevProps.teamSlugOrId !== nextProps.teamSlugOrId) {
+      return false;
+    }
+  }
+
+  // For summary panel, check task and selectedRun changes including summary content
+  if (prevProps.type === "summary") {
+    if (prevProps.task?._id !== nextProps.task?._id ||
+      prevProps.task?.pullRequestDescription !== nextProps.task?.pullRequestDescription ||
+      prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+      prevProps.selectedRun?.summary !== nextProps.selectedRun?.summary) {
       return false;
     }
   }

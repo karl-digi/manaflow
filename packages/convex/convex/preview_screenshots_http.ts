@@ -2,18 +2,11 @@ import {
   PreviewScreenshotUploadPayloadSchema,
   ScreenshotUploadUrlRequestSchema,
 } from "@cmux/shared/convex-safe";
+import { jsonResponse } from "../_shared/http-utils";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
 
 async function ensureJsonRequest(
   req: Request,
@@ -39,7 +32,7 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
     loggerPrefix: "[preview-screenshots]",
   });
   if (!auth) {
-    throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
 
   const parsed = await ensureJsonRequest(req);
@@ -136,7 +129,7 @@ export const createPreviewScreenshotUploadUrl = httpAction(
       loggerPrefix: "[preview-screenshots]",
     });
     if (!auth) {
-      throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
     }
 
     const parsed = await ensureJsonRequest(req);

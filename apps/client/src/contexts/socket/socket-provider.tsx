@@ -1,9 +1,11 @@
-import type { AvailableEditors } from "@cmux/shared";
+import type { AvailableEditors, LocalRepoNotFound } from "@cmux/shared";
 import { connectToMainServer } from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { cachedGetUser } from "../../lib/cachedGetUser";
+import { deriveProxyServiceUrl } from "../../lib/deriveProxyServiceUrl";
 import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
@@ -18,7 +20,10 @@ interface SocketProviderProps {
 
 export const SocketProvider: React.FC<SocketProviderProps> = ({
   children,
-  url = env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
+  url = deriveProxyServiceUrl(
+    9776,
+    env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
+  ),
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;
@@ -98,10 +103,25 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
         setAvailableEditors(data);
       };
 
+      const handleLocalRepoNotFound = (data: LocalRepoNotFound) => {
+        toast.error("Local Repository Not Found", {
+          description: data.message,
+          duration: 10000,
+          action: {
+            label: "Settings",
+            onClick: () => {
+              // Navigate to Settings > Worktrees
+              window.location.href = `/${teamSlugOrId}/settings?section=worktrees`;
+            },
+          },
+        });
+      };
+
       newSocket.on("connect", handleConnect);
       newSocket.on("disconnect", handleDisconnect);
       newSocket.on("connect_error", handleConnectError);
       newSocket.on("available-editors", handleAvailableEditors);
+      newSocket.on("local-repo-not-found", handleLocalRepoNotFound);
     })();
 
     return () => {
@@ -112,6 +132,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
         createdSocket.off("disconnect");
         createdSocket.off("connect_error");
         createdSocket.off("available-editors");
+        createdSocket.off("local-repo-not-found");
         createdSocket.disconnect();
       }
       // Reset boot handle so future mounts can suspend appropriately
@@ -146,7 +167,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     };
 
     void refreshAuthentication();
-    const intervalId = window.setInterval(refreshAuthentication, 5 * 60 * 1000);
+    // Refresh every 4 minutes to stay ahead of Stack Auth's ~5 minute token expiration
+    const intervalId = window.setInterval(refreshAuthentication, 4 * 60 * 1000);
     return () => {
       disposed = true;
       window.clearInterval(intervalId);

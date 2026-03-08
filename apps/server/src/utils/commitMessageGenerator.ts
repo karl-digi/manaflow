@@ -1,47 +1,70 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import { api } from "@cmux/convex/api";
-import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+  normalizeAnthropicBaseUrl,
+} from "@cmux/shared";
 import { generateText, type LanguageModel } from "ai";
-import { getConvex } from "../utils/convexClient";
 import { serverLogger } from "./fileLogger";
 
-function getModelAndProvider(
-  apiKeys: Record<string, string>
-): { model: LanguageModel; providerName: string } | null {
-  if (apiKeys.OPENAI_API_KEY) {
+/**
+ * Get model and provider using PLATFORM credentials only.
+ * This is for internal platform AI services (commit messages, branch names, etc.)
+ * and should NOT use user/team API keys.
+ */
+function getModelAndProvider(): { model: LanguageModel; providerName: string } | null {
+  // Use platform credentials from environment variables only
+  // Note: AIGATEWAY_* accessed via process.env to support custom AI gateway configurations
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const google = createGoogleGenerativeAI({
+      apiKey: geminiKey,
+      baseURL:
+        process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
+    });
+    return { model: google("gemini-2.5-flash"), providerName: "Gemini" };
+  }
+
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
     const openai = createOpenAI({
-      apiKey: apiKeys.OPENAI_API_KEY,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      apiKey: openaiKey,
+      baseURL:
+        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
     return { model: openai("gpt-5-nano"), providerName: "OpenAI" };
   }
-  if (apiKeys.GEMINI_API_KEY) {
-    const google = createGoogleGenerativeAI({ apiKey: apiKeys.GEMINI_API_KEY });
-    return { model: google("gemini-2.5-flash"), providerName: "Gemini" };
-  }
-  if (apiKeys.ANTHROPIC_API_KEY) {
-    const anthropic = createAnthropic({ apiKey: apiKeys.ANTHROPIC_API_KEY });
+
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const rawAnthropicBaseUrl =
+      process.env.AIGATEWAY_ANTHROPIC_BASE_URL ||
+      CLOUDFLARE_ANTHROPIC_BASE_URL;
+    const anthropic = createAnthropic({
+      apiKey: anthropicKey,
+      baseURL: normalizeAnthropicBaseUrl(rawAnthropicBaseUrl).forAiSdk,
+    });
     return {
-      model: anthropic("claude-3-5-haiku-20241022"),
+      model: anthropic("claude-haiku-4-5-20251001"),
       providerName: "Anthropic",
     };
   }
+
   return null;
 }
 
 export async function generateCommitMessageFromDiff(
   diff: string,
-  teamSlugOrId: string
+  _teamSlugOrId: string
 ): Promise<string | null> {
-  const apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
-    teamSlugOrId,
-  });
-  const config = getModelAndProvider(apiKeys);
+  // Use platform credentials only - not user/team API keys
+  const config = getModelAndProvider();
   if (!config) {
     serverLogger.warn(
-      "[CommitMsg] No API keys available, skipping AI generation"
+      "[CommitMsg] No platform API keys available, skipping AI generation"
     );
     return null;
   }

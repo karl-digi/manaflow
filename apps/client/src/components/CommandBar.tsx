@@ -7,7 +7,6 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
-import { stackClientApp } from "@/lib/stack";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
 import {
   rewriteLocalWorkspaceUrlIfNeeded,
@@ -501,7 +500,6 @@ export function CommandBar({
 
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
-  const selectedTeamId = stackUser?.selectedTeam?.id ?? null;
   const teamMemberships = useQuery(api.teams.listTeamMemberships, {});
   const reposByOrg = useQuery(api.github.getReposByOrg, { teamSlugOrId });
   const environments = useQuery(api.environments.list, { teamSlugOrId });
@@ -576,7 +574,7 @@ export function CommandBar({
           keywords: compactStrings([
             env.name,
             env.description,
-            env.morphSnapshotId,
+            env.snapshotId,
             ...(env.selectedRepos ?? []),
           ]),
         }));
@@ -636,12 +634,19 @@ export function CommandBar({
 
       const teamSlugOrIdTarget = slug ?? team.id;
 
+      // Determine if this team is current by comparing against URL's teamSlugOrId
+      // The teamSlugOrId from URL can match either the team's slug or its ID
+      const isCurrent =
+        teamSlugOrId === teamSlugOrIdTarget ||
+        teamSlugOrId === team.id ||
+        teamSlugOrId === slug;
+
       items.push({
         id: team.id,
         label,
         slug,
         teamSlugOrId: teamSlugOrIdTarget,
-        isCurrent: selectedTeamId === team.id,
+        isCurrent,
         keywords: compactStrings([label, slug]),
       });
     }
@@ -653,7 +658,7 @@ export function CommandBar({
     });
 
     return items;
-  }, [stackTeams, teamMemberships, selectedTeamId, getClientSlug]);
+  }, [stackTeams, teamMemberships, teamSlugOrId, getClientSlug]);
 
   const teamCommandEntries = useMemo(
     () =>
@@ -673,7 +678,12 @@ export function CommandBar({
     ? "No teams available yet."
     : "Sign in to view teams.";
 
-  const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
+  // Lazy-load tasks only when command bar is open to reduce initial page load
+  // Uses limited query (50 tasks) instead of full table fetch
+  const allTasks = useQuery(
+    api.tasks.getTasksWithTaskRunsLimited,
+    open ? { teamSlugOrId, limit: 50, excludeLocalWorkspaces: env.NEXT_PUBLIC_WEB_MODE || undefined } : "skip"
+  );
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
@@ -1406,10 +1416,13 @@ export function CommandBar({
         try {
           if (stackUser) {
             await stackUser.signOut({
-              redirectUrl: stackClientApp.urls.afterSignOut,
+              redirectUrl: "/sign-in?force=true",
             });
           } else {
-            await stackClientApp.redirectToSignOut({ replace: true });
+            await navigate({
+              to: "/sign-in",
+              search: { force: true },
+            });
           }
         } catch (error) {
           console.error("Sign out failed", error);

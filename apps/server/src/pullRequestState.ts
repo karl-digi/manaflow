@@ -28,10 +28,14 @@ export async function collectRepoFullNamesForRun(
   teamSlugOrId: string,
 ): Promise<string[]> {
   const repos = new Set<string>();
+
+  // 1. Task's configured project
   const project = task.projectFullName?.trim();
   if (project) {
     repos.add(project);
   }
+
+  // 2. Environment's selected repos
   if (run.environmentId) {
     try {
       const environment = await getConvex().query(api.environments.get, {
@@ -48,6 +52,17 @@ export async function collectRepoFullNamesForRun(
       serverLogger.error("Failed to load environment repos for run", error);
     }
   }
+
+  // 3. Discovered repos from sandbox scanning
+  if (run.discoveredRepos?.length) {
+    run.discoveredRepos.forEach((repo) => {
+      const trimmed = typeof repo === "string" ? repo.trim() : "";
+      if (trimmed) {
+        repos.add(trimmed);
+      }
+    });
+  }
+
   return Array.from(repos);
 }
 

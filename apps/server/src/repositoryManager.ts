@@ -8,6 +8,7 @@ import {
   type GitHooksConfig,
 } from "./gitHooks";
 import { serverLogger } from "./utils/fileLogger";
+import { hasEmbeddedCredentials, sanitizeGitUrl, validateBranchName } from "./utils/gitUrl";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
 
 const execAsync = promisify(exec);
@@ -60,6 +61,7 @@ export class RepositoryManager {
   private static instance: RepositoryManager;
   private operations = new Map<string, RepositoryOperation>();
   private worktreeLocks = new Map<string, Promise<void>>();
+  private originFetchLocks = new Map<string, Promise<void>>();
   private resolvedGitPath: string | null = null;
 
   // Global operation queue to prevent any git command conflicts
@@ -303,6 +305,53 @@ export class RepositoryManager {
     }
   }
 
+  private async withOriginFetchLock<T>(
+    originPath: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const existingLock = this.originFetchLocks.get(originPath);
+    if (existingLock) {
+      serverLogger.info(
+        `Waiting for existing fetch operation on ${originPath}...`
+      );
+      const lockTimeout = CLONE_FETCH_TIMEOUT_MS;
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Origin fetch lock timeout after ${lockTimeout}ms for ${originPath}`
+              )
+            ),
+          lockTimeout
+        );
+      });
+      try {
+        await Promise.race([existingLock, timeoutPromise]);
+      } catch (err) {
+        serverLogger.warn(
+          `Origin fetch lock wait failed or timed out, proceeding anyway: ${err}`
+        );
+        this.originFetchLocks.delete(originPath);
+      }
+    }
+
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = () => {
+        this.originFetchLocks.delete(originPath);
+        resolve();
+      };
+    });
+    this.originFetchLocks.set(originPath, lockPromise);
+
+    try {
+      return await operation();
+    } finally {
+      releaseLock!();
+    }
+  }
+
   private async getGitPath(): Promise<string> {
     if (this.resolvedGitPath) return this.resolvedGitPath;
     const candidates = [
@@ -384,7 +433,24 @@ export class RepositoryManager {
         `git remote get-url origin`,
         { cwd: repoPath, suppressErrorLogging: true }
       );
-      const originUrl = stdout.trim();
+      let originUrl = stdout.trim();
+
+      // Auto-fix: If URL has embedded credentials, clean it up to avoid stale tokens
+      if (hasEmbeddedCredentials(originUrl)) {
+        serverLogger.warn(
+          "Found embedded credentials in git remote URL, cleaning up..."
+        );
+        const sanitized = sanitizeGitUrl(originUrl);
+        originUrl = sanitized;
+        try {
+          await this.executeGitCommand(
+            `git remote set-url origin "${sanitized}"`,
+            { cwd: repoPath, suppressErrorLogging: true }
+          );
+        } catch (error) {
+          serverLogger.warn("Failed to sanitize remote origin URL:", error);
+        }
+      }
 
       // Only try to authenticate GitHub URLs
       if (originUrl.startsWith("https://github.com/")) {
@@ -547,6 +613,11 @@ export class RepositoryManager {
     branch?: string,
     remoteUrl?: string
   ): Promise<void> {
+    // Validate branch name if provided to prevent shell injection
+    if (branch) {
+      validateBranchName(branch);
+    }
+
     this.cleanupStaleOperations();
 
     // Use remoteUrl for storage if provided, otherwise use repoUrl
@@ -759,6 +830,23 @@ export class RepositoryManager {
             `git remote set-url origin "${remoteUrl}"`,
             { cwd: originPath }
           );
+
+          // Verify cleanup succeeded
+          const { stdout: currentUrl } = await this.executeGitCommand(
+            `git remote get-url origin`,
+            { cwd: originPath }
+          );
+          const trimmed = currentUrl.trim();
+          if (hasEmbeddedCredentials(trimmed)) {
+            serverLogger.warn(
+              "First cleanup attempt failed, retrying with sanitized URL"
+            );
+            await this.executeGitCommand(
+              `git remote set-url origin "${sanitizeGitUrl(trimmed)}"`,
+              { cwd: originPath }
+            );
+          }
+
           serverLogger.info("Reset remote origin to clean URL");
         } catch (error) {
           serverLogger.warn("Failed to reset remote origin URL:", error);
@@ -838,6 +926,34 @@ export class RepositoryManager {
 
       // Final fallback
       return "main";
+    }
+  }
+
+  /**
+   * Fetch latest changes from remote for an existing local repository.
+   * Used for codex-style mode where we use existing local repos instead of cloning.
+   */
+  async fetchLatest(repoPath: string, branch?: string): Promise<void> {
+    // Validate branch name if provided to prevent shell injection
+    if (branch) {
+      validateBranchName(branch);
+    }
+
+    serverLogger.info(`[fetchLatest] Fetching latest for ${repoPath}`);
+    try {
+      // Get the branch to fetch (use provided or detect default)
+      const targetBranch = branch || (await this.getDefaultBranch(repoPath));
+
+      // Fetch from origin
+      const fetchCmd = `git fetch origin ${targetBranch}`;
+      await this.executeGitCommand(fetchCmd, { cwd: repoPath });
+
+      serverLogger.info(
+        `[fetchLatest] Successfully fetched ${targetBranch} for ${repoPath}`
+      );
+    } catch (error) {
+      serverLogger.warn(`[fetchLatest] Failed to fetch: ${error}`);
+      // Don't throw - fetching is best-effort for existing repos
     }
   }
 
@@ -925,6 +1041,9 @@ export class RepositoryManager {
     branch: string,
     authenticatedUrl?: string
   ): Promise<void> {
+    // Validate branch name to prevent shell injection
+    validateBranchName(branch);
+
     // Fetch the specific branch and explicitly update the remote-tracking ref
     // even if the clone was created with --single-branch.
     // Force-update the remote-tracking ref to tolerate non-fast-forward updates
@@ -970,11 +1089,18 @@ export class RepositoryManager {
       );
       // Parse worktree list properly to avoid false positives from partial path matching
       // e.g., "/path/to/foo" should not match "/path/to/foobar"
-      const normalizedTargetPath = path.resolve(worktreePath);
+      // Git reports canonical paths (e.g., macOS /tmp -> /private/tmp), while
+      // path.resolve() does not resolve symlinks. Use realpath() when possible
+      // to ensure consistent comparisons across platforms.
+      const normalizedTargetPath = await fs
+        .realpath(worktreePath)
+        .catch(() => path.resolve(worktreePath));
       const lines = stdout.split("\n");
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
-          const registeredPath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
+          const registeredPath = await fs
+            .realpath(line.substring(9))
+            .catch(() => path.resolve(line.substring(9))); // Remove 'worktree ' prefix
           if (registeredPath === normalizedTargetPath) {
             return true;
           }
@@ -998,6 +1124,248 @@ export class RepositoryManager {
       serverLogger.info(`Removed worktree at ${worktreePath}`);
     } catch (error) {
       serverLogger.warn(`Failed to remove worktree at ${worktreePath}:`, error);
+    }
+  }
+
+  /**
+   * Check if a path is a valid git repository.
+   */
+  async isValidGitRepository(repoPath: string): Promise<boolean> {
+    try {
+      await this.executeGitCommand(`git rev-parse --git-dir`, {
+        cwd: repoPath,
+        suppressErrorLogging: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * List all worktrees for a repository.
+   * Returns parsed worktree information including path, branch, and HEAD commit.
+   */
+  async listWorktrees(
+    repoPath: string
+  ): Promise<Array<{ path: string; branch: string | null; head: string | null }>> {
+    try {
+      const { stdout } = await this.executeGitCommand(
+        `git worktree list --porcelain`,
+        { cwd: repoPath }
+      );
+
+      const worktrees: Array<{
+        path: string;
+        branch: string | null;
+        head: string | null;
+      }> = [];
+      let currentWorktree: {
+        path: string;
+        branch: string | null;
+        head: string | null;
+      } | null = null;
+
+      const lines = stdout.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          if (currentWorktree) {
+            worktrees.push(currentWorktree);
+          }
+          currentWorktree = {
+            path: line.substring(9),
+            branch: null,
+            head: null,
+          };
+        } else if (line.startsWith("HEAD ") && currentWorktree) {
+          currentWorktree.head = line.substring(5);
+        } else if (line.startsWith("branch refs/heads/") && currentWorktree) {
+          currentWorktree.branch = line.substring(18);
+        } else if (line === "" && currentWorktree) {
+          worktrees.push(currentWorktree);
+          currentWorktree = null;
+        }
+      }
+
+      if (currentWorktree) {
+        worktrees.push(currentWorktree);
+      }
+
+      return worktrees;
+    } catch (error) {
+      serverLogger.warn(`Failed to list worktrees for ${repoPath}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a worktree from an existing local repository (Codex-style).
+   * Does NOT clone - assumes the source repo already exists locally.
+   */
+  async createWorktreeFromLocalRepo(
+    sourceRepoPath: string,
+    worktreePath: string,
+    branchName: string,
+    baseBranch: string = "main",
+    authenticatedUrl?: string
+  ): Promise<string> {
+    // Validate branch names to prevent shell injection
+    validateBranchName(branchName);
+    validateBranchName(baseBranch);
+
+    serverLogger.info(
+      `Creating worktree from local repo ${sourceRepoPath} for branch ${branchName}`
+    );
+
+    // Use the same locking mechanism as createWorktree
+    const inProcessLockKey = `${sourceRepoPath}::${branchName}`;
+    const existingLock = this.worktreeLocks.get(inProcessLockKey);
+    if (existingLock) {
+      serverLogger.info(
+        `Waiting for existing worktree operation on ${sourceRepoPath} (${branchName})...`
+      );
+      const lockTimeout = CLONE_FETCH_TIMEOUT_MS;
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Worktree lock timeout after ${lockTimeout}ms for ${branchName}`
+              )
+            ),
+          lockTimeout
+        );
+      });
+      try {
+        await Promise.race([existingLock, timeoutPromise]);
+      } catch (err) {
+        serverLogger.warn(
+          `Worktree lock wait failed or timed out, proceeding anyway: ${err}`
+        );
+        this.worktreeLocks.delete(inProcessLockKey);
+      }
+    }
+
+    let releaseInProcessLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseInProcessLock = () => {
+        this.worktreeLocks.delete(inProcessLockKey);
+        resolve();
+      };
+    });
+    this.worktreeLocks.set(inProcessLockKey, lockPromise);
+
+    try {
+      const fetchSource = await this.getFetchSource(
+        sourceRepoPath,
+        authenticatedUrl
+      );
+
+      // Try to fetch the branch from remote if it exists
+      let remoteBranchAvailable = false;
+      try {
+        remoteBranchAvailable = await this.withOriginFetchLock(
+          sourceRepoPath,
+          async () => {
+            await this.removeStaleGitLock(sourceRepoPath, "shallow.lock", 15_000);
+            const fetchCmd = `git fetch ${fetchSource} +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+            await this.executeGitCommand(fetchCmd, {
+              cwd: sourceRepoPath,
+              suppressErrorLogging: true,
+            });
+            return true;
+          }
+        );
+      } catch {
+        // Branch doesn't exist on remote, which is fine
+      }
+
+      // Check if branch already has a worktree
+      const existingWorktreePath = await this.findWorktreeUsingBranch(
+        sourceRepoPath,
+        branchName
+      );
+      if (existingWorktreePath) {
+        serverLogger.info(
+          `Branch ${branchName} already attached to worktree at ${existingWorktreePath}`
+        );
+        await this.ensureWorktreeConfigured(existingWorktreePath, branchName);
+        return existingWorktreePath;
+      }
+
+      // Check if local branch exists
+      let branchExists = false;
+      try {
+        await this.executeGitCommand(
+          `git rev-parse --verify refs/heads/${branchName}`,
+          { cwd: sourceRepoPath, suppressErrorLogging: true }
+        );
+        branchExists = true;
+      } catch {
+        // Branch doesn't exist locally
+      }
+
+      // Create the worktree
+      if (branchExists) {
+        serverLogger.info(
+          `Branch ${branchName} exists, creating worktree without new branch`
+        );
+        await this.executeGitCommand(
+          `git worktree add "${worktreePath}" ${branchName}`,
+          { cwd: sourceRepoPath }
+        );
+      } else if (remoteBranchAvailable) {
+        serverLogger.info(
+          `Remote branch origin/${branchName} found; creating worktree tracking remote`
+        );
+        await this.executeGitCommand(
+          `git worktree add -B "${branchName}" "${worktreePath}" origin/${branchName}`,
+          { cwd: sourceRepoPath }
+        );
+      } else {
+        serverLogger.info(
+          `Creating new branch ${branchName} from origin/${baseBranch}`
+        );
+        await this.executeGitCommand(
+          `git worktree add -b "${branchName}" "${worktreePath}" origin/${baseBranch}`,
+          { cwd: sourceRepoPath }
+        );
+      }
+
+      // Configure the worktree
+      await this.configureWorktreeBranch(worktreePath, branchName);
+      await this.setupGitHooks(worktreePath);
+
+      serverLogger.info(`Successfully created worktree at ${worktreePath}`);
+      return worktreePath;
+    } catch (error) {
+      // Handle "already exists" case
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        const alreadyExists =
+          msg.includes("already exists") ||
+          msg.includes("is already checked out");
+        if (alreadyExists) {
+          const actualPath =
+            (await this.findWorktreeUsingBranch(sourceRepoPath, branchName)) ||
+            worktreePath;
+          serverLogger.info(
+            `Worktree already present at ${actualPath}; ensuring configuration`
+          );
+          try {
+            await this.ensureWorktreeConfigured(actualPath, branchName);
+          } catch (e) {
+            serverLogger.warn(
+              `Post-existence configuration failed for ${actualPath}:`,
+              e
+            );
+          }
+          return actualPath;
+        }
+      }
+      throw error;
+    } finally {
+      releaseInProcessLock!();
     }
   }
 
@@ -1043,6 +1411,10 @@ export class RepositoryManager {
     baseBranch: string = "main",
     authenticatedUrl?: string
   ): Promise<string> {
+    // Validate branch names to prevent shell injection
+    validateBranchName(branchName);
+    validateBranchName(baseBranch);
+
     // In-process lock keyed by repo+branch to avoid concurrent add for same branch
     const inProcessLockKey = `${originPath}::${branchName}`;
     const existingLock = this.worktreeLocks.get(inProcessLockKey);
@@ -1082,39 +1454,41 @@ export class RepositoryManager {
       // so that if the agent pushed it, we base the worktree on the pushed commits
       // rather than creating a fresh branch off the base.
       const fetchRemoteBranchRef = async (): Promise<boolean> => {
-        // Proactively clear shallow.lock to avoid fetch contention
-        await this.removeStaleGitLock(originPath, "shallow.lock", 15_000);
-        const fetchCmd = `git fetch --depth ${this.config.fetchDepth} ${fetchSource} +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
-        try {
-          await this.executeGitCommand(fetchCmd, { cwd: originPath });
-        } catch (e) {
-          const msg =
-            e instanceof Error ? `${e.message}\n${e || ""}` : String(e);
-          const lockHit =
-            msg.includes("shallow.lock") ||
-            msg.includes("could not lock shallow") ||
-            msg.includes("Another git process seems to be running");
-          if (lockHit) {
-            // Force-remove lock and retry once with a short backoff
-            await this.removeStaleGitLock(originPath, "shallow.lock", 0, true);
-            await new Promise((r) => setTimeout(r, 150));
+        return this.withOriginFetchLock(originPath, async () => {
+          // Proactively clear shallow.lock to avoid fetch contention
+          await this.removeStaleGitLock(originPath, "shallow.lock", 15_000);
+          const fetchCmd = `git fetch --depth ${this.config.fetchDepth} ${fetchSource} +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+          try {
             await this.executeGitCommand(fetchCmd, { cwd: originPath });
-          } else {
-            // If fetch fails for other reasons (e.g., branch does not exist remotely),
-            // just continue and fall back to base branch creation below.
+          } catch (e) {
+            const msg =
+              e instanceof Error ? `${e.message}\n${e || ""}` : String(e);
+            const lockHit =
+              msg.includes("shallow.lock") ||
+              msg.includes("could not lock shallow") ||
+              msg.includes("Another git process seems to be running");
+            if (lockHit) {
+              // Force-remove lock and retry once with a short backoff
+              await this.removeStaleGitLock(originPath, "shallow.lock", 0, true);
+              await new Promise((r) => setTimeout(r, 150));
+              await this.executeGitCommand(fetchCmd, { cwd: originPath });
+            } else {
+              // If fetch fails for other reasons (e.g., branch does not exist remotely),
+              // just continue and fall back to base branch creation below.
+              return false;
+            }
+          }
+          // Validate that the remote-tracking ref exists now
+          try {
+            await this.executeGitCommand(
+              `git rev-parse --verify refs/remotes/origin/${branchName}`,
+              { cwd: originPath, suppressErrorLogging: true }
+            );
+            return true;
+          } catch {
             return false;
           }
-        }
-        // Validate that the remote-tracking ref exists now
-        try {
-          await this.executeGitCommand(
-            `git rev-parse --verify refs/remotes/origin/${branchName}`,
-            { cwd: originPath, suppressErrorLogging: true }
-          );
-          return true;
-        } catch {
-          return false;
-        }
+        });
       };
 
       const remoteBranchAvailable = await fetchRemoteBranchRef();
@@ -1150,32 +1524,6 @@ export class RepositoryManager {
           return preexistingPath;
         }
       }
-      // First check if the branch is already used by another worktree
-      const existingWorktreePath = await this.findWorktreeUsingBranch(
-        originPath,
-        branchName
-      );
-      if (existingWorktreePath && existingWorktreePath !== worktreePath) {
-        // Another process may have just created it while we were waiting on lock
-        // Align with requested path by removing the other worktree and creating ours
-        serverLogger.info(
-          `Branch ${branchName} attached at ${existingWorktreePath}; replacing with ${worktreePath}`
-        );
-        try {
-          await this.removeWorktree(originPath, existingWorktreePath);
-        } catch (e) {
-          serverLogger.warn(
-            `Failed to remove concurrent worktree ${existingWorktreePath}:`,
-            e
-          );
-        }
-        try {
-          await fs.rm(existingWorktreePath, { recursive: true, force: true });
-        } catch {
-          // Do not block the other worktree from being created
-        }
-      }
-
       // Check if the local branch already exists
       let branchExists = false;
       try {
@@ -1286,6 +1634,9 @@ export class RepositoryManager {
     worktreePath: string,
     branchName: string
   ): Promise<void> {
+    // Validate branch name to prevent shell injection
+    validateBranchName(branchName);
+
     try {
       await this.executeGitCommand(
         `git config branch.${branchName}.remote origin`,

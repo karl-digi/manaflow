@@ -1,4 +1,4 @@
-import { Sandbox } from "e2b";
+import { Sandbox, CommandExitError } from "e2b";
 
 export const DEFAULT_E2B_BASE_URL = "https://api.e2b.dev";
 
@@ -98,8 +98,15 @@ export class E2BInstance {
         exit_code: result.exitCode,
       };
     } catch (err: unknown) {
-      // E2B SDK throws CommandExitError for non-zero exit codes
-      // Extract the result from the error if available
+      // E2B SDK v2 throws CommandExitError for non-zero exit codes
+      if (err instanceof CommandExitError) {
+        return {
+          stdout: err.stdout || '',
+          stderr: err.stderr || '',
+          exit_code: err.exitCode,
+        };
+      }
+      // Legacy check for older SDK versions
       if (err && typeof err === 'object' && 'stdout' in err && 'stderr' in err && 'exitCode' in err) {
         const cmdErr = err as { stdout: string; stderr: string; exitCode: number };
         return {
@@ -156,17 +163,18 @@ export class E2BInstance {
   }
 
   /**
-   * Pause the sandbox
-   * Note: E2B doesn't have native pause, so we just keep it running with extended timeout
+   * Pause the sandbox (E2B SDK v2 beta feature)
+   * Returns true if paused, false if already paused
    */
-  async pause(): Promise<void> {
-    // E2B doesn't have pause functionality, but we can extend timeout
-    // and mark as paused for our tracking
+  async pause(): Promise<boolean> {
+    const result = await this.sandbox.betaPause();
     this._status = "paused";
+    return result;
   }
 
   /**
-   * Resume the sandbox
+   * Resume the sandbox by reconnecting
+   * Note: For resuming a paused sandbox, use Sandbox.connect() which auto-resumes
    */
   async resume(): Promise<void> {
     this._status = "running";
@@ -209,6 +217,17 @@ export class E2BInstance {
 }
 
 /**
+ * Sandbox info returned from list/getInfo
+ */
+export interface E2BSandboxInfo {
+  sandboxId: string;
+  templateId: string;
+  startedAt: Date;
+  name?: string;
+  metadata?: Record<string, string>;
+}
+
+/**
  * E2B Client that provides a similar interface to MorphCloudClient
  */
 export class E2BClient {
@@ -227,7 +246,7 @@ export class E2BClient {
    */
   instances = {
     /**
-     * Start a new sandbox from a template
+     * Start a new sandbox from a template (SDK v2)
      */
     start: async (options: {
       templateId?: string;
@@ -273,7 +292,7 @@ export class E2BClient {
     },
 
     /**
-     * Get an existing sandbox by ID
+     * Get an existing sandbox by ID (auto-resumes if paused)
      */
     get: async (options: { instanceId: string }): Promise<E2BInstance> => {
       const sandbox = await Sandbox.connect(options.instanceId, {
@@ -308,15 +327,88 @@ export class E2BClient {
     },
 
     /**
-     * List all running sandboxes
+     * List all running sandboxes (SDK v2 - uses paginator)
      */
-    list: async (): Promise<Array<{ sandboxId: string; templateId: string; startedAt: Date }>> => {
-      const sandboxes = await Sandbox.list({ apiKey: this.apiKey });
-      return sandboxes.map((s) => ({
-        sandboxId: s.sandboxId,
-        templateId: s.templateId,
-        startedAt: s.startedAt,
-      }));
+    list: async (): Promise<E2BSandboxInfo[]> => {
+      const paginator = Sandbox.list({ apiKey: this.apiKey });
+      const results: E2BSandboxInfo[] = [];
+
+      while (paginator.hasNext) {
+        const sandboxes = await paginator.nextItems();
+        for (const s of sandboxes) {
+          results.push({
+            sandboxId: s.sandboxId,
+            templateId: s.templateId,
+            startedAt: s.startedAt,
+            name: s.name,
+            metadata: s.metadata,
+          });
+        }
+      }
+
+      return results;
+    },
+
+    /**
+     * Get info about a sandbox by ID (SDK v2)
+     */
+    getInfo: async (sandboxId: string): Promise<E2BSandboxInfo | null> => {
+      try {
+        const info = await Sandbox.getInfo(sandboxId, { apiKey: this.apiKey });
+        return {
+          sandboxId: info.sandboxId,
+          templateId: info.templateId,
+          startedAt: info.startedAt,
+          name: info.name,
+          metadata: info.metadata,
+        };
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * Pause a sandbox by ID (SDK v2 beta feature)
+     */
+    pause: async (sandboxId: string): Promise<boolean> => {
+      return await Sandbox.betaPause(sandboxId, { apiKey: this.apiKey });
+    },
+
+    /**
+     * Resume a paused sandbox by connecting to it (SDK v2)
+     * Sandbox.connect() auto-resumes paused sandboxes
+     */
+    resume: async (sandboxId: string, options?: { timeoutMs?: number }): Promise<E2BInstance> => {
+      const sandbox = await Sandbox.connect(sandboxId, {
+        apiKey: this.apiKey,
+        timeoutMs: options?.timeoutMs,
+      });
+
+      // Rebuild HTTP services from the resumed sandbox
+      const httpServices: E2BHttpService[] = [
+        {
+          name: "vscode",
+          port: 39378,
+          url: `https://${sandbox.getHost(39378)}`,
+        },
+        {
+          name: "worker",
+          port: 39377,
+          url: `https://${sandbox.getHost(39377)}`,
+        },
+        {
+          name: "vnc",
+          port: 39380,
+          url: `https://${sandbox.getHost(39380)}`,
+        },
+        {
+          name: "jupyter",
+          port: 8888,
+          url: `https://${sandbox.getHost(8888)}`,
+        },
+      ];
+
+      return new E2BInstance(sandbox, {}, httpServices);
     },
 
     /**
@@ -335,5 +427,6 @@ export const createE2BClient = (config: E2BClientConfig = {}): E2BClient => {
   return new E2BClient(config);
 };
 
-// Re-export types
+// Re-export types and errors from E2B SDK v2
 export type { Sandbox } from "e2b";
+export { CommandExitError } from "e2b";

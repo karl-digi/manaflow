@@ -23,13 +23,13 @@ async function findTaskRunsByPullRequest(
     )
     .collect();
 
-  const junctionMatches: Doc<"taskRuns">[] = [];
-  for (const entry of junctionEntries) {
-    const taskRun = await ctx.db.get(entry.taskRunId);
-    if (taskRun) {
-      junctionMatches.push(taskRun);
-    }
-  }
+  // Batch fetch all task runs in parallel to avoid N+1 query
+  const taskRunResults = await Promise.all(
+    junctionEntries.map((entry) => ctx.db.get(entry.taskRunId))
+  );
+  const junctionMatches = taskRunResults.filter(
+    (taskRun): taskRun is Doc<"taskRuns"> => taskRun !== null
+  );
 
   // Also query the legacy pullRequestUrl field for old data not yet in junction table
   const legacyMatches = await ctx.db

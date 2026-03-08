@@ -678,6 +678,7 @@ async function repoFileExists(
     });
     return true;
   } catch {
+    // Expected: most probed paths won't exist during framework detection
     return false;
   }
 }

@@ -1,8 +1,14 @@
+import { resolve } from "node:path";
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { SENTRY_RELEASE } from "./lib/sentry-release";
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    // Explicitly set workspace root to prevent Next.js from inferring /Users/karlchow
+    // as root (due to package-lock.json in home dir), which causes high memory usage
+    root: resolve(process.cwd(), "..", ".."),
+  },
   serverExternalPackages: ["morphcloud", "ssh2", "node-ssh", "cpu-features"],
   outputFileTracingIncludes: {
     "/": ["./scripts/pr-review/pr-review-inject.bundle.js"],

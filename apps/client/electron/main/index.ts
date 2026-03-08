@@ -46,7 +46,11 @@ import {
   getProxyCredentialsForWebContents,
   startPreviewProxy,
 } from "./task-run-preview-proxy";
-import { normalizeBrowserUrl } from "@cmux/shared";
+import {
+  buildTrustedProxyDomainSet,
+  isTrustedProxyHostname,
+  normalizeBrowserUrl,
+} from "@cmux/shared";
 import {
   ELECTRON_WINDOW_FOCUS_EVENT,
   type ElectronRendererEventMap,
@@ -57,10 +61,25 @@ import {
   isStackAuthCookieName,
 } from "./stack-auth-cookies";
 import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
+import {
+  MCP_HOST_CONFIG_IPC_CHANNELS,
+  readClaudeJsonConfig,
+  readCodexTomlConfig,
+  readOpencodeJsonConfig,
+  type HostMcpFileResult,
+} from "./mcp-host-config";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
-const PARTITION = "persist:manaflow";
-const APP_HOST = "manaflow.local";
+const PARTITION = "persist:cmux";
+const APP_HOST = "cmux.local";
+const FRAME_BLOCKING_RESPONSE_HEADERS = new Set([
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
+]);
 
 function resolveMaxSuspendedWebContents(): number | undefined {
   const raw =
@@ -533,8 +552,9 @@ function registerAutoUpdateIpcHandlers(): void {
 function registerAppIpcHandlers(): void {
   ipcMain.handle("cmux:app:get-protocol-status", async () => {
     try {
+      const cmuxProtocol = env.NEXT_PUBLIC_CMUX_PROTOCOL;
       const call = computeSetAsDefaultProtocolClientCall({
-        scheme: "manaflow",
+        scheme: cmuxProtocol,
         defaultApp: process.defaultApp,
         execPath: process.execPath,
         argv: process.argv,
@@ -546,7 +566,7 @@ function registerAppIpcHandlers(): void {
             ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
             : app.isDefaultProtocolClient(call.scheme);
       } catch (error) {
-        mainWarn("isDefaultProtocolClient(manaflow) failed", error);
+        mainWarn(`isDefaultProtocolClient(${cmuxProtocol}) failed`, error);
       }
 
       return {
@@ -564,6 +584,20 @@ function registerAppIpcHandlers(): void {
   });
 }
 
+function registerMcpHostConfigIpcHandlers(): void {
+  ipcMain.handle(
+    MCP_HOST_CONFIG_IPC_CHANNELS.readClaudeJson,
+    (): Promise<HostMcpFileResult> => readClaudeJsonConfig(),
+  );
+  ipcMain.handle(
+    MCP_HOST_CONFIG_IPC_CHANNELS.readCodexToml,
+    (): Promise<HostMcpFileResult> => readCodexTomlConfig(),
+  );
+  ipcMain.handle(
+    MCP_HOST_CONFIG_IPC_CHANNELS.readOpencodeJson,
+    (): Promise<HostMcpFileResult> => readOpencodeJsonConfig(),
+  );
+}
 
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
@@ -696,9 +730,9 @@ function createWindow(): void {
     },
   };
 
-  // Use only the icon from manaflow-logos iconset.
+  // Use only the icon from cmux-logos iconset.
   const iconPng = resolveResourcePath(
-    "manaflow-logos/manaflow.iconset/icon_512x512.png"
+    "cmux-logos/cmux.iconset/icon_512x512.png"
   );
   if (process.platform !== "darwin") {
     windowOptions.icon = iconPng;
@@ -851,6 +885,7 @@ app.whenReady().then(async () => {
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
   registerAppIpcHandlers();
+  registerMcpHostConfigIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
@@ -949,11 +984,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "Manaflow" instead of package.json name
+  // Ensure macOS menu and About panel use "cmux-next" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("Manaflow");
-      app.setAboutPanelOptions({ applicationName: "Manaflow" });
+      app.setName("cmux-next");
+      app.setAboutPanelOptions({ applicationName: "cmux-next" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -973,9 +1008,11 @@ app.whenReady().then(async () => {
   // Try to register the custom protocol handler with the OS. electron-builder
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
+  // Use env variable for protocol (cmux-dev in dev, cmux-next in prod)
+  const cmuxProtocol = env.NEXT_PUBLIC_CMUX_PROTOCOL;
   try {
     const call = computeSetAsDefaultProtocolClientCall({
-      scheme: "manaflow",
+      scheme: cmuxProtocol,
       defaultApp: process.defaultApp,
       execPath: process.execPath,
       argv: process.argv,
@@ -992,11 +1029,11 @@ app.whenReady().then(async () => {
           : app.isDefaultProtocolClient(call.scheme);
     } catch (error) {
       mainWarn(
-        "isDefaultProtocolClient(manaflow) failed after registration",
+        `isDefaultProtocolClient(${cmuxProtocol}) failed after registration`,
         error,
       );
     }
-    mainLog("setAsDefaultProtocolClient(manaflow)", {
+    mainLog(`setAsDefaultProtocolClient(${cmuxProtocol})`, {
       ok,
       isDefaultProtocolClient,
       packaged: app.isPackaged,
@@ -1016,23 +1053,45 @@ app.whenReady().then(async () => {
   // Set Dock icon from iconset on macOS.
   if (process.platform === "darwin") {
     const iconPng = resolveResourcePath(
-      "manaflow-logos/manaflow.iconset/icon_512x512.png"
+      "cmux-logos/cmux.iconset/icon_512x512.png"
     );
     const img = nativeImage.createFromPath(iconPng);
     if (!img.isEmpty()) app.dock?.setIcon(img);
   }
 
-  // session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-  //   callback({
-  //     responseHeaders: {
-  //       ...details.responseHeaders,
-  //       // "Content-Security-Policy": ["script-src 'self' https://cmux.sh"],
-  //       "Content-Security-Policy": ["*"],
-  //     },
-  //   });
-  // });
-
   const ses = session.fromPartition(PARTITION);
+  const trustedProxyDomains = buildTrustedProxyDomainSet([
+    process.env.PVE_PUBLIC_DOMAIN,
+  ]);
+
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    try {
+      const hostname = new URL(details.url).hostname;
+      if (!isTrustedProxyHostname(hostname, trustedProxyDomains)) {
+        callback({});
+        return;
+      }
+    } catch {
+      callback({});
+      return;
+    }
+
+    const responseHeaders = details.responseHeaders;
+    if (!responseHeaders) {
+      callback({});
+      return;
+    }
+
+    const strippedHeaders: Record<string, string[]> = {};
+    for (const [headerName, headerValues] of Object.entries(responseHeaders)) {
+      if (FRAME_BLOCKING_RESPONSE_HEADERS.has(headerName.toLowerCase())) {
+        continue;
+      }
+      strippedHeaders[headerName] = headerValues;
+    }
+
+    callback({ responseHeaders: strippedHeaders });
+  });
 
   const handleCmuxProtocol = async (request: Request): Promise<Response> => {
     const electronReq = request as unknown as Electron.ProtocolRequest;
@@ -1052,13 +1111,30 @@ app.whenReady().then(async () => {
       return new Response("Not found", { status: 404 });
     }
 
-    const response = await net.fetch(pathToFileURL(fsPath).toString());
     const contentSecurityPolicy =
       "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; " +
       "connect-src * sentry-ipc:; " +
       "worker-src * blob:; child-src * blob:; frame-src *";
-    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
-    return response;
+
+    // Try to fetch the requested file
+    try {
+      const response = await net.fetch(pathToFileURL(fsPath).toString());
+      response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+      return response;
+    } catch (error) {
+      // SPA fallback: if the file doesn't exist and it's not an asset request,
+      // serve index-electron.html so the client-side router can handle the route.
+      // Asset files (with extensions like .js, .css, etc.) should return 404.
+      const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(pathname);
+      if (!hasFileExtension) {
+        const indexPath = path.join(baseDir, "index-electron.html");
+        const fallbackResponse = await net.fetch(pathToFileURL(indexPath).toString());
+        fallbackResponse.headers.set("Content-Security-Policy", contentSecurityPolicy);
+        return fallbackResponse;
+      }
+      // Re-throw for asset files to return proper error
+      throw error;
+    }
   };
 
   ses.protocol.handle("https", handleCmuxProtocol);
@@ -1273,6 +1349,14 @@ function jwksForIssuer(issuer: string) {
 async function verifyJwtAndGetPayload(
   token: string
 ): Promise<JWTPayload | null> {
+  // JWT format: three base64url segments separated by dots
+  // Opaque tokens (like Stack Auth refresh tokens) don't have this structure
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    // Not a JWT - likely an opaque token, silently return null
+    return null;
+  }
+
   try {
     const decoded = decodeJwt(token);
     const iss = decoded.iss;
@@ -1280,8 +1364,9 @@ async function verifyJwtAndGetPayload(
     const JWKS = jwksForIssuer(iss);
     const { payload } = await jwtVerify(token, JWKS, { issuer: iss });
     return payload;
-  } catch (error) {
-    console.error("Failed to verify JWT and get payload", error);
+  } catch {
+    // JWT decode/verify failed - return null silently
+    // The caller logs a warning if both tokens fail verification
     return null;
   }
 }
@@ -1438,8 +1523,22 @@ async function handleProtocolUrl(url: string): Promise<void> {
       return;
     }
 
-    mainLog("Reloading renderer to apply auth cookies");
-    win.webContents.reload();
+    // Navigate to clean base URL to trigger full page reload.
+    // Stack Auth SDK needs a fresh page load to pick up the new cookies.
+    // Hash navigation alone doesn't cause the SDK to re-initialize.
+    const currentUrlObj = new URL(win.webContents.getURL());
+    const homeUrl = currentUrlObj.origin;
+    mainLog("Navigating to home after auth", { homeUrl });
+
+    // Bring window to front
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+
+    // Load home URL - this triggers a full page reload where Stack Auth
+    // will pick up the cookies and recognize the authenticated user.
+    // The SignInComponent will then hide and the app will show.
+    void win.webContents.loadURL(homeUrl);
     return;
   }
 

@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorStatePlugin } from "./EditorStatePlugin";
 import { ImageNode } from "./ImageNode";
 import { ImagePlugin } from "./ImagePlugin";
+import { MarkdownPastePlugin } from "./MarkdownPastePlugin";
 import { MentionPlugin } from "./MentionPlugin";
 
 // Minimal shape of a serialized Lexical node we care about
@@ -633,6 +634,7 @@ export default function LexicalEditor({
           environmentId={environmentId}
         />
         <ImagePlugin />
+        <MarkdownPastePlugin />
         <EditorStatePlugin onEditorReady={onEditorReady} />
       </div>
     </LexicalComposer>

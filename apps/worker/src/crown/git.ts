@@ -11,16 +11,37 @@ type ExecError = Error & {
   status?: number;
 };
 
+type PushTokenSupplier = () => Promise<{
+  token: string;
+  repoFullName: string;
+} | null>;
+
 let cachedRepoPath: string | null = null;
 let cachedRepoHint: string | null = null;
 let cachedRepoPaths: string[] = [];
 
 const PROTECTED_BRANCH_FALLBACKS = new Set(["main", "master"]);
+const AUTH_ERROR_PATTERNS = [
+  /bad credentials/i,
+  /authentication failed/i,
+  /invalid username or password/i,
+  /could not read username/i,
+  /fatal: authentication/i,
+  /HTTP 401/i,
+  /HTTP 403/i,
+  /remote: Permission.*denied/i,
+];
+const GITHUB_TOKEN_IN_URL_PATTERN =
+  /(https:\/\/x-access-token:)([^@]+)(@github\.com)/gi;
 type BranchProtectionCheckResult = {
   isProtected: boolean;
   reason?: "remote_head" | "fallback";
   remoteHead?: string | null;
 };
+
+export function isAuthError(output: string): boolean {
+  return AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(output));
+}
 
 const getRepoHint = (): string | null => {
   const repoFull = process.env.CMUX_REPO_FULL?.trim();
@@ -179,6 +200,28 @@ async function getRemoteHeadBranch(repoPath: string): Promise<string | null> {
 
   const normalized = normalizeBranchName(ref);
   return normalized.length > 0 ? normalized : null;
+}
+
+/**
+ * Auto-detect the default base branch for the repository.
+ * Tries: refs/remotes/origin/HEAD -> origin/main -> origin/master
+ */
+export async function getDefaultBaseBranch(): Promise<string> {
+  const repoPath = await detectGitRepoPath();
+
+  // Try refs/remotes/origin/HEAD first (symref to default branch)
+  const remoteHead = await getRemoteHeadBranch(repoPath);
+  if (remoteHead) {
+    return remoteHead;
+  }
+
+  // Fallback: check if origin/main exists, otherwise use master
+  const mainExists = await runGitCommand(
+    "git rev-parse --verify origin/main",
+    true,
+    repoPath,
+  );
+  return mainExists?.exitCode === 0 ? "main" : "master";
 }
 
 async function checkProtectedBranch(
@@ -366,14 +409,32 @@ function formatDiff(diff: string): string {
 }
 
 export async function collectDiffForRun(
-  baseBranch: string,
+  baseBranch: string | undefined,
   branch: string | null,
 ): Promise<string> {
   if (!branch) {
     return "No changes detected";
   }
 
-  const sanitizedBase = baseBranch || "main";
+  const repoPath = await detectGitRepoPath();
+
+  // Auto-detect base branch if not provided
+  let sanitizedBase = baseBranch?.trim();
+  if (!sanitizedBase) {
+    // Try refs/remotes/origin/HEAD first (symref to default branch)
+    sanitizedBase = await getRemoteHeadBranch(repoPath) ?? undefined;
+    if (!sanitizedBase) {
+      // Fallback: check if origin/main exists, otherwise use master
+      const mainExists = await runGitCommand(
+        "git rev-parse --verify origin/main",
+        true,
+        repoPath,
+      );
+      sanitizedBase = mainExists?.exitCode === 0 ? "main" : "master";
+    }
+    log("INFO", "Auto-detected base branch", { detectedBase: sanitizedBase });
+  }
+
   log("INFO", "Collecting diff from remote branches", {
     baseBranch: sanitizedBase,
     branch,
@@ -388,7 +449,6 @@ export async function collectDiffForRun(
   const branchRef = branch.startsWith("origin/") ? branch : `origin/${branch}`;
 
   let result;
-  const repoPath = await detectGitRepoPath();
   try {
     result = await execAsync("/usr/local/bin/cmux-collect-crown-diff.sh", {
       cwd: repoPath,
@@ -441,9 +501,10 @@ export async function collectDiffForRun(
 
 export async function ensureBranchesAvailable(
   completedRuns: Array<{ id: string; newBranch: string | null }>,
-  baseBranch: string,
+  baseBranch: string | undefined,
 ): Promise<boolean> {
-  const sanitizedBase = baseBranch || "main";
+  // Auto-detect base branch if not provided
+  const sanitizedBase = baseBranch || await getDefaultBaseBranch();
   const baseOk = await fetchRemoteRef(sanitizedBase);
   log("INFO", "Ensuring branches available", {
     baseBranch: sanitizedBase,
@@ -565,6 +626,55 @@ function truncateOutput(output: string | undefined, length = 200): string {
   return output ? output.trim().slice(0, length) : "";
 }
 
+function redactSensitiveOutput(output: string): string {
+  return output.replace(GITHUB_TOKEN_IN_URL_PATTERN, "$1***$3");
+}
+
+export async function pushWithEphemeralToken(
+  branchName: string,
+  repoPath: string,
+  token: string,
+  repoFullName: string,
+): Promise<{ success: boolean; error?: string }> {
+  const remoteUrl = `https://x-access-token:${token}@github.com/${repoFullName}.git`;
+
+  try {
+    // Avoid -u flag: it would persist the tokenized URL in .git/config as branch.<name>.remote
+    await execFileAsync("git", ["push", remoteUrl, `HEAD:refs/heads/${branchName}`], {
+      cwd: repoPath,
+      maxBuffer: 10 * 1024 * 1024,
+      env: {
+        ...process.env,
+        HOME: resolveHomeDirectory(),
+      },
+    });
+    return { success: true };
+  } catch (error) {
+    const execError: ExecError =
+      error instanceof Error
+        ? error
+        : new Error(
+            typeof error === "string"
+              ? error
+              : "Unknown git push with ephemeral token error",
+          );
+    const combinedError = redactSensitiveOutput(
+      [
+        String(execError.stdout ?? "").trim(),
+        String(execError.stderr ?? "").trim(),
+        execError.message ?? "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+
+    return {
+      success: false,
+      error: truncateOutput(combinedError, 200),
+    };
+  }
+}
+
 async function stageAndCommitChanges(
   branchName: string,
   commitMessage: string,
@@ -658,17 +768,23 @@ export async function autoCommitAndPush({
   branchName,
   commitMessage,
   remoteUrl,
+  tokenSupplier,
 }: {
   branchName: string;
   commitMessage: string;
   remoteUrl?: string;
-}): Promise<void> {
+  tokenSupplier?: PushTokenSupplier;
+}): Promise<{ success: boolean; pushedRepos: string[]; errors: string[] }> {
+  const result = { success: false, pushedRepos: [] as string[], errors: [] as string[] };
+
   if (!branchName) {
-    log("ERROR", "Missing branch name for auto-commit");
-    return;
+    const errorMsg = "Missing branch name for auto-commit";
+    log("ERROR", errorMsg);
+    result.errors.push(errorMsg);
+    return result;
   }
 
-  log("INFO", "Auto-commit starting", {
+  log("INFO", "[AUTOCOMMIT] Starting auto-commit workflow", {
     branchName,
     commitMessage: commitMessage.slice(0, 100),
     remoteUrl,
@@ -678,27 +794,38 @@ export async function autoCommitAndPush({
   const repoHint = getRepoHint();
   const targets = repoPaths.length > 0 ? repoPaths : [WORKSPACE_ROOT];
 
+  log("INFO", "[AUTOCOMMIT] Repository targets resolved", {
+    branchName,
+    repoHint,
+    targetCount: targets.length,
+    targets,
+  });
+
   for (const repoPath of targets) {
     const repoName = basename(repoPath);
-    log("INFO", "Auto-commit repository target", {
+    log("INFO", "[AUTOCOMMIT] Processing repository", {
       branchName,
       repoPath,
+      repoName,
     });
 
     const isRepo = await ensureGitRepository(repoPath);
     if (!isRepo) {
-      log("WARN", "Skipping repository, ensure failed", { repoPath });
+      const errorMsg = `Repository ensure failed: ${repoPath}`;
+      log("WARN", "[AUTOCOMMIT] Skipping repository, ensure failed", { repoPath });
+      result.errors.push(errorMsg);
       continue;
     }
 
     const protection = await checkProtectedBranch(branchName, repoPath);
     if (protection.isProtected) {
-      log("WARN", "Auto-commit skipped protected branch", {
+      log("WARN", "[AUTOCOMMIT] Skipped protected branch", {
         branchName,
         repoPath,
         remoteHead: protection.remoteHead,
         reason: protection.reason,
       });
+      result.errors.push(`Protected branch skipped: ${branchName} in ${repoPath}`);
       continue;
     }
 
@@ -709,13 +836,41 @@ export async function autoCommitAndPush({
         : undefined;
 
     if (applyRemoteUrl) {
+      log("INFO", "[AUTOCOMMIT] Configuring remote URL", {
+        repoPath,
+        remoteUrl: applyRemoteUrl,
+      });
       await configureRemote(applyRemoteUrl, repoPath);
     }
+
+    // Check current remote configuration
+    const remoteCheck = await runGitCommand("git remote -v", true, repoPath);
+    log("INFO", "[AUTOCOMMIT] Current remotes before push", {
+      repoPath,
+      remotes: remoteCheck?.stdout.trim().split("\n") || [],
+    });
 
     await stageAndCommitChanges(branchName, commitMessage, repoPath);
     await syncWithRemote(branchName, repoPath);
 
-    log("INFO", "Pushing to remote", {
+    // Check git credential helper configuration
+    const credentialHelper = await runGitCommand("git config --get credential.helper", true, repoPath);
+    const ghAuthStatus = await runGitCommand("gh auth status 2>&1", true, repoPath);
+
+    // Check what commits exist on this branch vs origin
+    const currentHead = await runGitCommand("git rev-parse HEAD", true, repoPath);
+    const logResult = await runGitCommand(`git log --oneline -5`, true, repoPath);
+
+    log("INFO", "[AUTOCOMMIT] Pre-push diagnostic", {
+      repoPath,
+      branchName,
+      credentialHelper: credentialHelper?.stdout.trim() || "not set",
+      ghAuthStatus: ghAuthStatus?.stdout.trim().slice(0, 300) || "unknown",
+      currentHead: currentHead?.stdout.trim() || "unknown",
+      recentCommits: logResult?.stdout.trim().split("\n").slice(0, 3) || [],
+    });
+
+    log("INFO", "[AUTOCOMMIT] Pushing to remote", {
       branchName,
       repoPath,
       command: `git push -u origin ${branchName}`,
@@ -723,23 +878,93 @@ export async function autoCommitAndPush({
 
     const pushResult = await runGitCommandSafe(
       ["push", "-u", "origin", branchName],
-      false,
+      true,
       repoPath,
     );
 
-    if (pushResult) {
-      log("INFO", "Push completed", {
-        branchName,
+    if (!pushResult) {
+      result.errors.push(`Push failed for ${repoPath}: no git output`);
+      continue;
+    }
+
+    log("INFO", "[AUTOCOMMIT] Push completed", {
+      branchName,
+      repoPath,
+      exitCode: pushResult.exitCode,
+      stdout: truncateOutput(pushResult.stdout),
+      stderr: truncateOutput(pushResult.stderr),
+    });
+
+    if (pushResult.exitCode === 0) {
+      result.pushedRepos.push(repoPath);
+      continue;
+    }
+
+    const pushOutput = `${pushResult.stdout}\n${pushResult.stderr}`;
+    const pushErrorSnippet = truncateOutput(
+      redactSensitiveOutput(pushOutput),
+      200,
+    );
+
+    const canRetryWithFreshToken =
+      Boolean(tokenSupplier) && (targets.length === 1 || Boolean(applyRemoteUrl));
+
+    if (canRetryWithFreshToken && isAuthError(pushOutput) && tokenSupplier) {
+      log("WARN", "[AUTOCOMMIT] Auth error detected, fetching fresh token for retry", {
         repoPath,
-        exitCode: pushResult.exitCode,
-        stdout: truncateOutput(pushResult.stdout),
-        stderr: truncateOutput(pushResult.stderr),
+        branchName,
+      });
+
+      const freshAuth = await tokenSupplier();
+      if (freshAuth?.token && freshAuth.repoFullName) {
+        const retryResult = await pushWithEphemeralToken(
+          branchName,
+          repoPath,
+          freshAuth.token,
+          freshAuth.repoFullName,
+        );
+
+        if (retryResult.success) {
+          result.pushedRepos.push(repoPath);
+          log("INFO", "[AUTOCOMMIT] Push succeeded with fresh token", {
+            repoPath,
+            branchName,
+          });
+          continue;
+        }
+
+        log("ERROR", "[AUTOCOMMIT] Push retry with fresh token also failed", {
+          repoPath,
+          branchName,
+          error: retryResult.error,
+        });
+
+        result.errors.push(
+          `Push failed after auth refresh for ${repoPath}: ${retryResult.error ?? "Unknown error"}`,
+        );
+        continue;
+      }
+
+      log("WARN", "[AUTOCOMMIT] Fresh token unavailable for push retry", {
+        repoPath,
+        branchName,
       });
     }
+
+    result.errors.push(
+      `Push failed with exit code ${pushResult.exitCode}: ${pushErrorSnippet || "Unknown git error"}`,
+    );
   }
 
-  log("INFO", "Auto-commit finished successfully", {
+  result.success = result.pushedRepos.length > 0;
+
+  log("INFO", "[AUTOCOMMIT] Auto-commit workflow finished", {
     branchName,
     repositoriesProcessed: targets.length,
+    pushedRepos: result.pushedRepos,
+    errors: result.errors,
+    success: result.success,
   });
+
+  return result;
 }

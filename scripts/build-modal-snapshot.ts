@@ -79,13 +79,13 @@ rm -f /tmp/chrome.deb
 # Install cmux-code (VSCode fork)
 mkdir -p /app/cmux-code
 curl -fSL --retry 3 --retry-delay 2 -o /tmp/cmux-code.tar.gz \\
-  "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_VERSION}/vscode-server-linux-x64-web.tar.gz"
+  "https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_VERSION}/vscode-server-linux-x64-web.tar.gz"
 tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1
 rm -f /tmp/cmux-code.tar.gz
 
 # Install worker daemon (Go binary for PTY/SSH)
 curl -fSL --retry 3 --retry-delay 2 -o /usr/local/bin/worker-daemon \\
-  "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_VERSION}/worker-daemon"
+  "https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_VERSION}/worker-daemon"
 chmod +x /usr/local/bin/worker-daemon
 
 # Install JupyterLab + data science stack

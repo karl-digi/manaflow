@@ -313,8 +313,9 @@ export function useIframePreflight({
         const closeReader = async () => {
           try {
             await reader.cancel();
-          } catch {
-            // ignore
+          } catch (error) {
+            // Reader may already be closed or cancelled - log at debug level
+            console.debug("[useIframePreflight] closeReader error (expected if already closed)", error);
           }
         };
 
@@ -325,8 +326,8 @@ export function useIframePreflight({
               if (isIframePreflightPhasePayload(parsed)) {
                 handlePhaseEvent(parsed);
               }
-            } catch {
-              // ignore malformed JSON
+            } catch (error) {
+              console.error("[useIframePreflight] Failed to parse phase event JSON", error, event.data);
             }
             return;
           }
@@ -337,8 +338,8 @@ export function useIframePreflight({
               if (isIframePreflightResult(parsed)) {
                 handleResultEvent(parsed);
               }
-            } catch {
-              // ignore malformed JSON
+            } catch (error) {
+              console.error("[useIframePreflight] Failed to parse result event JSON", error, event.data);
             }
           }
         };

@@ -1,6 +1,8 @@
 // Do NOT export Node-only utilities here; browser builds import this index.
 
 export * from "./agentConfig";
+export * from "./apiKeys";
+export * from "./model-usage";
 export * from "./convex-ready";
 export * from "./crown";
 export * from "./diff-types";
@@ -14,9 +16,11 @@ export * from "./utils/normalize-browser-url";
 export * from "./utils/reserved-cmux-ports";
 export * from "./utils/morph-instance";
 export * from "./utils/is-local-host";
+export * from "./utils/proxy-origin";
 export * from "./utils/local-vscode-placeholder";
 export * from "./utils/anthropic";
 export * from "./utils/openai";
+export * from "./utils/gemini";
 export * from "./utils/validate-exposed-ports";
 export * from "./utils/generate-workspace-name";
 export * from "./utils/derive-repo-base-name";
@@ -25,9 +29,17 @@ export * from "./worker-schemas";
 export * from "./pull-request-state";
 export * from "./iframe-preflight";
 export * from "./morph-snapshots";
+export * from "./pve-lxc-snapshots";
+export * from "./sandbox-presets";
 export * from "./e2b-templates";
 export * from "./screenshots/types";
 export * from "./config/host-config";
+export * from "./git-constants";
+export * from "./mcp-server-config";
+export * from "./mcp-presets";
+export * from "./mcp-injection";
+export * from "./mcp-form";
+export * from "./mcp-preview";
 // Note: useNetwork hook is NOT exported here to avoid SSR issues.
 // Import directly from "@cmux/shared/hooks/use-network" in client components.
 // Note: Environment component utilities are NOT exported here.

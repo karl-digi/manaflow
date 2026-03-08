@@ -1,6 +1,7 @@
 # Logs
 logs/
 *.log
+.chrome-debug-profile/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

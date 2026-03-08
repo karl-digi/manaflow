@@ -66,9 +66,8 @@ sleep 2
 echo "Running Playwright Vite tests..."
 export PROXY_URL="http://127.0.0.1:$PROXY_PORT"
 
-# We filter to run only vite.spec.ts
 cd tests/playwright
-if npx playwright test tests/vite.spec.ts; then
+if npx playwright test tests/vite.pw.ts; then
     echo "Vite tests PASSED"
     RESULT=0
 else

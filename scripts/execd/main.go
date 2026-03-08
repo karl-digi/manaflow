@@ -133,7 +133,7 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	cmd := exec.CommandContext(baseCtx, "/bin/sh", "-c", command)
+	cmd := exec.CommandContext(baseCtx, "/bin/bash", "-c", command)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = writeJSONLine(w, flusher, execEvent{
@@ -170,8 +170,14 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 	go readPipe(clientCtx, stdout, "stdout", &wg, w, flusher)
 	go readPipe(clientCtx, stderr, "stderr", &wg, w, flusher)
 
-	waitErr := cmd.Wait()
+	// IMPORTANT: Wait for all pipe reads to complete BEFORE calling cmd.Wait().
+	// According to Go's documentation: "It is incorrect to call Wait before all
+	// reads from the pipe have completed." The pipes are closed when the command
+	// exits, which causes EOF to be sent to the reading goroutines. After they
+	// finish reading all data (including any buffered data), cmd.Wait() can be
+	// called safely.
 	wg.Wait()
+	waitErr := cmd.Wait()
 
 	exitCode := 0
 	ctxErr := baseCtx.Err()
@@ -207,6 +213,52 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// filesHandler accepts a tar archive body and extracts it to /workspace.
+// This enables workspace file sync for PVE LXC containers.
+func filesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Create /workspace if it doesn't exist
+	if err := os.MkdirAll("/workspace", 0755); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream the request body directly to tar for extraction
+	cmd := exec.Command("tar", "-x", "-C", "/workspace")
+	cmd.Stdin = r.Body
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create stderr pipe: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to start tar: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Read stderr for error messages
+	stderrBytes, _ := io.ReadAll(stderr)
+	waitErr := cmd.Wait()
+
+	if waitErr != nil {
+		errMsg := strings.TrimSpace(string(stderrBytes))
+		if errMsg == "" {
+			errMsg = waitErr.Error()
+		}
+		http.Error(w, fmt.Sprintf("tar extraction failed: %s", errMsg), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Files extracted to /workspace")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 func determinePort(flagPort int) int {
 	if env := strings.TrimSpace(os.Getenv("EXECD_PORT")); env != "" {
 		if value, err := strconv.Atoi(env); err == nil && value > 0 && value < 65536 {
@@ -227,6 +279,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/exec", execHandler)
+	mux.HandleFunc("/files", filesHandler)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),

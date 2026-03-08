@@ -1,0 +1,42 @@
+#!/bin/bash
+set -euo pipefail
+
+# Canonical token files for root-based PVE-LXC containers.
+AUTH_TOKEN_FILE="/root/.worker-auth-token"
+VSCODE_TOKEN_FILE="/root/.vscode-token"
+BOOT_ID_FILE="/root/.token-boot-id"
+
+# Compatibility mirrors for components that still read /home/user paths.
+LEGACY_AUTH_TOKEN_FILE="/home/user/.worker-auth-token"
+LEGACY_VSCODE_TOKEN_FILE="/home/user/.vscode-token"
+LEGACY_BOOT_ID_FILE="/home/user/.token-boot-id"
+
+CURRENT_BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "unknown")
+
+# Only skip regeneration if ALL required token files exist and boot ID matches
+if [ -f "$BOOT_ID_FILE" ] && [ -f "$AUTH_TOKEN_FILE" ] && [ -f "$VSCODE_TOKEN_FILE" ]; then
+    SAVED_BOOT_ID=$(cat "$BOOT_ID_FILE" 2>/dev/null || echo "")
+    if [ "$CURRENT_BOOT_ID" = "$SAVED_BOOT_ID" ]; then
+        exit 0
+    fi
+fi
+
+AUTH_TOKEN=$(openssl rand -hex 32)
+printf "%s" "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
+chmod 644 "$AUTH_TOKEN_FILE"
+
+printf "%s" "$AUTH_TOKEN" > "$VSCODE_TOKEN_FILE"
+chmod 644 "$VSCODE_TOKEN_FILE"
+
+printf "%s" "$CURRENT_BOOT_ID" > "$BOOT_ID_FILE"
+chmod 644 "$BOOT_ID_FILE"
+
+# Mirror to /home/user for backward compatibility.
+mkdir -p /home/user 2>/dev/null || true
+printf "%s" "$AUTH_TOKEN" > "$LEGACY_AUTH_TOKEN_FILE" 2>/dev/null || true
+printf "%s" "$AUTH_TOKEN" > "$LEGACY_VSCODE_TOKEN_FILE" 2>/dev/null || true
+printf "%s" "$CURRENT_BOOT_ID" > "$LEGACY_BOOT_ID_FILE" 2>/dev/null || true
+chmod 644 \
+    "$LEGACY_AUTH_TOKEN_FILE" \
+    "$LEGACY_VSCODE_TOKEN_FILE" \
+    "$LEGACY_BOOT_ID_FILE" 2>/dev/null || true

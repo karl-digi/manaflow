@@ -1,24 +1,16 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { env } from "../_shared/convex-env";
-import type { FunctionReference } from "convex/server";
+import { jsonResponse } from "../_shared/http-utils";
 
 const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
 
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
 // Security: Validate instance ID format to prevent injection attacks
-// IDs should be cr_ or cmux_ followed by 8+ alphanumeric characters
-const INSTANCE_ID_REGEX = /^(cr|cmux)_[a-zA-Z0-9]{8,}$/;
+// IDs should be manaflow_, cmux_, or cr_ followed by 8+ alphanumeric characters
+const INSTANCE_ID_REGEX = /^(?:manaflow|cmux|cr)_[a-zA-Z0-9]{8,}$/;
 
 function isValidInstanceId(id: string): boolean {
   return INSTANCE_ID_REGEX.test(id);
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
 /**
@@ -110,21 +102,6 @@ function extractNetworkingUrls(
   };
 }
 
-// Type-safe references to devboxInstances functions
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const devboxApi = (api as any).devboxInstances as {
-  create: FunctionReference<"mutation", "public">;
-  list: FunctionReference<"query", "public">;
-  getById: FunctionReference<"query", "public">;
-  updateStatus: FunctionReference<"mutation", "public">;
-  recordAccess: FunctionReference<"mutation", "public">;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const devboxInternalApi = (internal as any).devboxInstances as {
-  getInfo: FunctionReference<"query", "internal">;
-};
-
 /**
  * Get the provider instance ID for a devbox ID
  */
@@ -132,7 +109,7 @@ async function getProviderInstanceId(
   ctx: ActionCtx,
   devboxId: string
 ): Promise<string | null> {
-  const info = await ctx.runQuery(devboxInternalApi.getInfo, {
+  const info = await ctx.runQuery(internal.devboxInstances.getInfo, {
     devboxId,
   }) as { providerInstanceId: string } | null;
   return info?.providerInstanceId ?? null;
@@ -237,7 +214,7 @@ export const createInstance = httpAction(async (ctx, req) => {
     // Store the instance in Convex
     let result: { id: string; isExisting: boolean };
     try {
-      result = await ctx.runMutation(devboxApi.create, {
+      result = await ctx.runMutation(api.devboxInstances.create, {
         teamSlugOrId: body.teamSlugOrId,
         providerInstanceId: morphData.id,
         provider: "morph",
@@ -286,7 +263,7 @@ export const listInstances = httpAction(async (ctx, req) => {
   }
 
   try {
-    const instances = await ctx.runQuery(devboxApi.list, {
+    const instances = await ctx.runQuery(api.devboxInstances.list, {
       teamSlugOrId,
     });
 
@@ -311,7 +288,7 @@ async function handleGetInstance(
 ): Promise<Response> {
   try {
     // Get instance from Convex by ID
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     }) as { id: string; status: string; name?: string } | null;
@@ -332,7 +309,7 @@ async function handleGetInstance(
     if (!morphResponse.ok) {
       // Instance may have been deleted
       if (morphResponse.status === 404) {
-        await ctx.runMutation(devboxApi.updateStatus, {
+        await ctx.runMutation(api.devboxInstances.updateStatus, {
           teamSlugOrId,
           id,
           status: "stopped",
@@ -367,7 +344,7 @@ async function handleGetInstance(
 
     // Update status in Convex if changed
     if (status !== instance.status) {
-      await ctx.runMutation(devboxApi.updateStatus, {
+      await ctx.runMutation(api.devboxInstances.updateStatus, {
         teamSlugOrId,
         id,
         status,
@@ -401,7 +378,7 @@ async function handleExecCommand(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -447,7 +424,7 @@ async function handleExecCommand(
     const result = await morphResponse.json();
 
     // Record access
-    await ctx.runMutation(devboxApi.recordAccess, {
+    await ctx.runMutation(api.devboxInstances.recordAccess, {
       teamSlugOrId,
       id,
     });
@@ -469,7 +446,7 @@ async function handlePauseInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -505,7 +482,7 @@ async function handlePauseInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "paused",
@@ -528,7 +505,7 @@ async function handleResumeInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -564,7 +541,7 @@ async function handleResumeInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "running",
@@ -587,7 +564,7 @@ async function handleStopInstance(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -623,7 +600,7 @@ async function handleStopInstance(
     }
 
     // Update status in Convex
-    await ctx.runMutation(devboxApi.updateStatus, {
+    await ctx.runMutation(api.devboxInstances.updateStatus, {
       teamSlugOrId,
       id,
       status: "stopped",
@@ -643,7 +620,7 @@ async function handleGetInstanceSsh(
 ): Promise<Response> {
   try {
     // Verify the user owns this instance
-    const instance = await ctx.runQuery(devboxApi.getById, {
+    const instance = await ctx.runQuery(api.devboxInstances.getById, {
       teamSlugOrId,
       id,
     });
@@ -683,7 +660,7 @@ async function handleGetInstanceSsh(
     };
 
     // Record access
-    await ctx.runMutation(devboxApi.recordAccess, {
+    await ctx.runMutation(api.devboxInstances.recordAccess, {
       teamSlugOrId,
       id,
     });

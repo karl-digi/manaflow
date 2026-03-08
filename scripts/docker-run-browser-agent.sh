@@ -15,6 +15,7 @@ SCREENSHOT_DIR="${SCREENSHOT_DIR:-logs/browser-agent}"
 SCREENSHOT_TMP_PATH="/tmp/cmux-browser-agent.png"
 SCREENSHOT_HOST_PATH=""
 SCREENSHOT_COPIED=false
+IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL:-stable}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -213,7 +214,7 @@ if [[ "${SKIP_BUILD:-}" = "1" ]]; then
   echo "Skipping Docker image build because SKIP_BUILD=1"
 else
   echo "Building Docker image..."
-  docker build -t "$IMAGE_NAME" .
+  docker build -t "$IMAGE_NAME" --build-arg IDE_DEPS_CHANNEL="${IDE_DEPS_CHANNEL}" .
 fi
 
 if docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then

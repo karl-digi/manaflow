@@ -24,17 +24,6 @@ export async function getWorkerAuth(
     return null;
   }
 
-  // Debug logging to understand JWT validation issues
-  const tokenLength = token.length;
-  const tokenParts = token.split(".");
-  const tokenPreview = token.slice(0, 50);
-  console.log(`${prefix} JWT debug:`, {
-    length: tokenLength,
-    parts: tokenParts.length,
-    preview: tokenPreview,
-    endsCorrectly: token.slice(-20),
-  });
-
   try {
     const payload = await verifyTaskRunToken(
       token,

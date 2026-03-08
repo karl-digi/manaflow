@@ -20,7 +20,7 @@ clean_ports() {
     ports=("$@")
   else
     local default_convex=${CONVEX_PORT:-9777}
-    ports=(5173 "$default_convex" 9777 9778)
+    ports=(5173 9776 "$default_convex" 9777 9778 9779)
   fi
 
   echo -e "${BLUE}Checking ports and cleaning up processes...${NC}"
@@ -28,14 +28,28 @@ clean_ports() {
   for port in "${ports[@]}"; do
     # Get PIDs of processes listening on the port, excluding Google Chrome and OrbStack
     # Be resilient to set -euo pipefail in callers: lsof returns non-zero when no matches
-    local pids
-    pids=$({ lsof -ti :"$port" 2>/dev/null || true; } | while read -r pid; do
-      local proc
-      proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "")
-      if [[ ! "$proc" =~ (Google|Chrome|OrbStack) ]]; then
-        echo "$pid"
-      fi
-    done)
+    local pids=""
+
+    # Try lsof first (works well on macOS)
+    if command -v lsof >/dev/null 2>&1; then
+      pids=$({ lsof -ti :"$port" 2>/dev/null || true; } | while read -r pid; do
+        local proc
+        proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "")
+        if [[ ! "$proc" =~ (Google|Chrome|OrbStack) ]]; then
+          echo "$pid"
+        fi
+      done)
+    fi
+
+    # Fallback to ss if lsof found nothing (Linux-specific)
+    if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+      pids=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+    fi
+
+    # Final fallback to netstat
+    if [ -z "$pids" ] && command -v netstat >/dev/null 2>&1; then
+      pids=$(netstat -tlnp 2>/dev/null | grep ":$port " | grep -oE '[0-9]+/' | tr -d '/' | sort -u || true)
+    fi
 
     if [ -n "$pids" ]; then
       echo -e "${YELLOW}Killing processes on port $port (excluding Chrome/OrbStack)...${NC}"

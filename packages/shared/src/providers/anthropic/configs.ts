@@ -13,9 +13,11 @@ import {
  * Priority:
  * 1. OAuth token (user-provided) - uses user's Claude subscription
  * 2. Anthropic API key (user-provided) - uses user's API key
- * 3. Platform proxy endpoint (fallback) - server handles auth via Cloudflare AI Gateway
+ *    - If user explicitly provides the placeholder key 'sk_placeholder_cmux_anthropic_api_key',
+ *      the request will be routed to platform Bedrock proxy
+ * 3. No fallback - users must provide credentials to use Claude agents
  */
-function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
+export function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
   return async (keys): Promise<Partial<EnvironmentResult>> => {
     // Base env vars to unset (prevent conflicts)
     const unsetEnv = [...CLAUDE_KEY_ENV_VARS_TO_UNSET];
@@ -37,7 +39,7 @@ function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
       };
     }
 
-    // Priority 2: User-provided Anthropic API key
+    // Priority 2: User-provided Anthropic API key (includes explicit placeholder key for platform credits)
     if (anthropicKey && anthropicKey.trim().length > 0) {
       return {
         env: {
@@ -47,93 +49,46 @@ function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
       };
     }
 
-    // Priority 3: Platform proxy endpoint (fallback)
-    // Sandbox calls server endpoint which adds API key and forwards to Cloudflare AI Gateway
+    // No credentials provided - return empty env (will fail requirements check)
     return {
-      env: {
-        ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
-      },
+      env: {},
       unsetEnv,
     };
   };
 }
 
-export const CLAUDE_OPUS_4_6_CONFIG: AgentConfig = {
-  name: "claude/opus-4.6",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--model",
-    "claude-opus-4-6",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  // User-configurable: OAuth token (preferred) or API key; falls back to platform proxy
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: createApplyClaudeApiKeys(),
-  completionDetector: startClaudeCompletionDetector,
-};
+// Factory types and implementation
+interface ClaudeModelSpec {
+  nameSuffix: string;
+  modelApiId: string;
+}
 
-export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
-  name: "claude/opus-4.5",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--model",
-    "claude-opus-4-5",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  // User-configurable: OAuth token (preferred) or API key; falls back to platform proxy
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: createApplyClaudeApiKeys(),
-  completionDetector: startClaudeCompletionDetector,
-};
+function createClaudeConfig(spec: ClaudeModelSpec): AgentConfig {
+  return {
+    name: `claude/${spec.nameSuffix}`,
+    command: "claude",
+    args: [
+      "--allow-dangerously-skip-permissions",
+      "--dangerously-skip-permissions",
+      "--model",
+      spec.modelApiId,
+      "--ide",
+      "$PROMPT",
+    ],
+    environment: getClaudeEnvironment,
+    checkRequirements: checkClaudeRequirements,
+    apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
+    applyApiKeys: createApplyClaudeApiKeys(),
+    completionDetector: startClaudeCompletionDetector,
+  };
+}
 
-export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
-  name: "claude/sonnet-4.5",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--model",
-    "claude-sonnet-4-5",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  // User-configurable: OAuth token (preferred) or API key; falls back to platform proxy
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: createApplyClaudeApiKeys(),
-  completionDetector: startClaudeCompletionDetector,
-};
+const CLAUDE_MODEL_SPECS: ClaudeModelSpec[] = [
+  { nameSuffix: "opus-4.6", modelApiId: "claude-opus-4-6" },
+  { nameSuffix: "opus-4.5", modelApiId: "claude-opus-4-5-20251101" },
+  { nameSuffix: "sonnet-4.5", modelApiId: "claude-sonnet-4-5-20250929" },
+  { nameSuffix: "haiku-4.5", modelApiId: "claude-haiku-4-5-20251001" },
+];
 
-export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
-  name: "claude/haiku-4.5",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--model",
-    "claude-haiku-4-5",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  // User-configurable: OAuth token (preferred) or API key; falls back to platform proxy
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: createApplyClaudeApiKeys(),
-  completionDetector: startClaudeCompletionDetector,
-};
+export const CLAUDE_AGENT_CONFIGS: AgentConfig[] =
+  CLAUDE_MODEL_SPECS.map(createClaudeConfig);

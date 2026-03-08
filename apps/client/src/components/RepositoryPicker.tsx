@@ -2,7 +2,6 @@ import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@cmux/convex/api";
-import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
   consumeGitHubAppInstallIntent,
@@ -13,6 +12,8 @@ import { useUser } from "@stackframe/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
+import { useQuery as useRQQuery } from "@tanstack/react-query";
+import { getApiConfigSandboxOptions } from "@cmux/www-openapi-client/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import {
   useCallback,
@@ -78,7 +79,8 @@ export interface RepositoryPickerProps {
   teamSlugOrId: string;
   instanceId?: string;
   initialSelectedRepos?: string[];
-  initialSnapshotId?: MorphSnapshotId;
+  /** Initial snapshot/preset ID. If not provided, will use the provider's default. */
+  initialSnapshotId?: string;
   showHeader?: boolean;
   showContinueButton?: boolean;
   showManualConfigOption?: boolean;
@@ -90,7 +92,7 @@ export interface RepositoryPickerProps {
   onStartConfigure?: (payload: {
     selectedRepos: string[];
     instanceId?: string;
-    snapshotId?: MorphSnapshotId;
+    snapshotId?: string;
   }) => void;
   topAccessory?: ReactNode;
   /**
@@ -124,8 +126,9 @@ export function RepositoryPicker({
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
-  const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
-    initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
+  // Snapshot ID is now a plain string - the actual default comes from the API
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | undefined>(
+    initialSnapshotId
   );
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
@@ -138,14 +141,17 @@ export function RepositoryPicker({
     }
   );
 
+  // Fetch sandbox config to get default preset ID
+  const { data: sandboxConfig } = useRQQuery(getApiConfigSandboxOptions());
 
+  // Set default snapshotId from sandbox config if not already set
   useEffect(() => {
     if (initialSnapshotId) {
       setSelectedSnapshotId(initialSnapshotId);
-    } else {
-      setSelectedSnapshotId(DEFAULT_MORPH_SNAPSHOT_ID);
+    } else if (sandboxConfig?.defaultPresetId && !selectedSnapshotId) {
+      setSelectedSnapshotId(sandboxConfig.defaultPresetId);
     }
-  }, [initialSnapshotId]);
+  }, [initialSnapshotId, sandboxConfig?.defaultPresetId, selectedSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
     void queryClient.invalidateQueries();
@@ -254,7 +260,7 @@ export function RepositoryPicker({
   );
 
   const updateSnapshotSelection = useCallback(
-    (nextSnapshotId: MorphSnapshotId) => {
+    (nextSnapshotId: string) => {
       const shouldResetInstanceId = nextSnapshotId !== selectedSnapshotId;
       setSelectedSnapshotId(nextSnapshotId);
       void navigate({
@@ -550,9 +556,10 @@ function RepositoryConnectionsSection({
       const win = window.open("about:blank", name, features);
       if (win) {
         try {
+          // Security: prevent reverse tabnabbing by nullifying opener
           (win as Window & { opener: null | Window }).opener = null;
         } catch (_error) {
-          void 0;
+          // Some browsers block setting opener on cross-origin windows - safe to ignore
         }
         try {
           win.location.href = url;

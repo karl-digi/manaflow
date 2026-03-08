@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
+import { runtimeProviderValidator } from "../_shared/provider-validators";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -16,8 +17,15 @@ import {
   type StoredPullRequestInfo,
 } from "@cmux/shared/pull-request-state";
 
+const CLOUD_WORKSPACE_JWT_TTL = "7d";
+const DEFAULT_JWT_TTL = "12h";
+
+function getJwtTtl(isCloudWorkspace?: boolean): string {
+  return isCloudWorkspace ? CLOUD_WORKSPACE_JWT_TTL : DEFAULT_JWT_TTL;
+}
+
 function rewriteMorphUrl(url: string): string {
-  // do not rewrite ports 39375 39377 39378 39379 39380 39381
+  // do not rewrite ports 39375 39377 39378 39379 39380 39381 39383
   if (
     url.includes("http.cloud.morph.so") &&
     (url.startsWith("https://port-39375-") ||
@@ -25,7 +33,8 @@ function rewriteMorphUrl(url: string): string {
       url.startsWith("https://port-39378-") ||
       url.startsWith("https://port-39379-") ||
       url.startsWith("https://port-39380-") ||
-      url.startsWith("https://port-39381-"))
+      url.startsWith("https://port-39381-") ||
+      url.startsWith("https://port-39383-"))
   ) {
     return url;
   }
@@ -93,29 +102,37 @@ async function syncTaskRunPullRequests(
     }
   }
 
-  // Delete entries that no longer exist
-  for (const entry of existingEntries) {
-    const key = `${entry.repoFullName}:${entry.prNumber}`;
-    if (!newPrs.has(key)) {
-      await ctx.db.delete(entry._id);
-    }
-  }
-
-  // Add new entries
+  // Determine entries to delete and add
   const existingKeys = new Set(
     existingEntries.map((e) => `${e.repoFullName}:${e.prNumber}`),
   );
+
+  const toDelete = existingEntries.filter((entry) => {
+    const key = `${entry.repoFullName}:${entry.prNumber}`;
+    return !newPrs.has(key);
+  });
+
+  const toInsert: Array<{ repoFullName: string; prNumber: number }> = [];
   for (const [key, pr] of newPrs) {
     if (!existingKeys.has(key)) {
-      await ctx.db.insert("taskRunPullRequests", {
+      toInsert.push(pr);
+    }
+  }
+
+  // Batch operations using Promise.all to avoid N+1 queries
+  const now = Date.now();
+  await Promise.all([
+    ...toDelete.map((entry) => ctx.db.delete(entry._id)),
+    ...toInsert.map((pr) =>
+      ctx.db.insert("taskRunPullRequests", {
         taskRunId,
         teamId,
         repoFullName: pr.repoFullName,
         prNumber: pr.prNumber,
-        createdAt: Date.now(),
-      });
-    }
-  }
+        createdAt: now,
+      })
+    ),
+  ]);
 }
 
 function deriveGeneratedBranchName(branch?: string | null): string | undefined {
@@ -290,6 +307,124 @@ async function updateTaskStatusFromRuns(
   }
 }
 
+/**
+ * D4.3: Update parent run summary when a child run completes.
+ * Aggregates child statuses and PRs into parent's summary.
+ *
+ * Also schedules result aggregation to notify the parent agent's sandbox
+ * via MAILBOX.json so the parent can react to child completion.
+ */
+async function updateParentRunOnChildComplete(
+  ctx: MutationCtx,
+  childRun: Doc<"taskRuns">,
+): Promise<void> {
+  if (!childRun.parentRunId) {
+    return; // No parent to update
+  }
+
+  const parentRun = await ctx.db.get(childRun.parentRunId);
+  if (!parentRun) {
+    return;
+  }
+
+  // Get all children of this parent
+  const children = await ctx.db
+    .query("taskRuns")
+    .withIndex("by_parent", (q) => q.eq("parentRunId", childRun.parentRunId))
+    .collect();
+
+  // Count statuses
+  const statusCounts: Record<string, number> = {
+    pending: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+  };
+  const childPRs: string[] = [];
+
+  for (const child of children) {
+    statusCounts[child.status] = (statusCounts[child.status] || 0) + 1;
+    if (child.pullRequestUrl) {
+      childPRs.push(child.pullRequestUrl);
+    }
+  }
+
+  const total = children.length;
+  const terminal = statusCounts.completed + statusCounts.failed + statusCounts.skipped;
+  const allComplete = total > 0 && terminal === total;
+
+  // Build aggregated summary
+  const summaryParts: string[] = [];
+  const statusEmoji = allComplete
+    ? (statusCounts.failed > 0 ? "Warning" : "Complete")
+    : "In Progress";
+  summaryParts.push(`## Agent Team Status (${statusEmoji})`);
+  summaryParts.push(`- Total children: ${total}`);
+  summaryParts.push(`- Completed: ${statusCounts.completed}`);
+  summaryParts.push(`- Failed: ${statusCounts.failed}`);
+  summaryParts.push(`- Running: ${statusCounts.running}`);
+  summaryParts.push(`- Pending: ${statusCounts.pending}`);
+
+  if (childPRs.length > 0) {
+    summaryParts.push(`\n## Child PRs`);
+    for (const pr of childPRs) {
+      summaryParts.push(`- ${pr}`);
+    }
+  }
+
+  const aggregatedSummary = summaryParts.join("\n");
+
+  // Update parent with aggregated info
+  const updates: Partial<Doc<"taskRuns">> = {
+    updatedAt: Date.now(),
+  };
+
+  // Append to existing summary or create new
+  if (parentRun.summary) {
+    // Check if we already have an Agent Team Status section
+    if (parentRun.summary.includes("## Agent Team Status")) {
+      // Replace the section
+      const beforeSection = parentRun.summary.split("## Agent Team Status")[0];
+      updates.summary = beforeSection.trim() + "\n\n" + aggregatedSummary;
+    } else {
+      updates.summary = parentRun.summary + "\n\n" + aggregatedSummary;
+    }
+  } else {
+    updates.summary = aggregatedSummary;
+  }
+
+  await ctx.db.patch(childRun.parentRunId, updates);
+
+  // Schedule result aggregation to notify parent agent's sandbox via MAILBOX.json
+  // This allows the parent agent to react to child completion in real-time
+  if (parentRun.vscode?.status === "running" && parentRun.vscode?.containerName) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.resultAggregation.notifyParentOnChildComplete,
+      {
+        parentRunId: childRun.parentRunId,
+        childRunId: childRun._id,
+        childAgentName: childRun.agentName,
+        childStatus: childRun.status,
+        childSummary: childRun.summary,
+        childPullRequestUrl: childRun.pullRequestUrl,
+        childExitCode: childRun.exitCode,
+        statusCounts: {
+          pending: statusCounts.pending,
+          running: statusCounts.running,
+          completed: statusCounts.completed,
+          failed: statusCounts.failed,
+          skipped: statusCounts.skipped,
+        },
+        totalChildren: total,
+        parentProvider: parentRun.vscode.provider,
+        parentContainerName: parentRun.vscode.containerName,
+      }
+    );
+  }
+}
+
 async function fetchTaskRunsForTask(
   ctx: QueryCtx,
   teamId: string,
@@ -381,6 +516,92 @@ async function fetchTaskRunsForTask(
   return rootRuns;
 }
 
+/**
+ * Internal mutation to create a task run with JWT.
+ * Used by CLI HTTP API for task creation with sandbox provisioning.
+ */
+export const createInternal = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    taskId: v.id("tasks"),
+    prompt: v.string(),
+    agentName: v.optional(v.string()),
+    newBranch: v.optional(v.string()),
+    environmentId: v.optional(v.id("environments")),
+    parentRunId: v.optional(v.id("taskRuns")), // Agent Teams (D4) - parent-child relationships
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== args.teamId || task.userId !== args.userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    if (args.environmentId) {
+      const environment = await ctx.db.get(args.environmentId);
+      if (!environment || environment.teamId !== args.teamId) {
+        throw new Error("Environment not found");
+      }
+    }
+    // Validate parent run if specified (must belong to same team AND user)
+    if (args.parentRunId) {
+      const parentRun = await ctx.db.get(args.parentRunId);
+      if (!parentRun || parentRun.teamId !== args.teamId || parentRun.userId !== args.userId) {
+        throw new Error("Parent task run not found or unauthorized");
+      }
+    }
+    const taskRunId = await ctx.db.insert("taskRuns", {
+      taskId: args.taskId,
+      parentRunId: args.parentRunId,
+      prompt: args.prompt,
+      agentName: args.agentName,
+      newBranch: args.newBranch,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: args.environmentId,
+      isLocalWorkspace: task.isLocalWorkspace,
+      isCloudWorkspace: task.isCloudWorkspace,
+    });
+
+    // Update task's lastActivityAt and selectedTaskRunId
+    const hasCrownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    const taskPatch: {
+      lastActivityAt: number;
+      selectedTaskRunId?: Id<"taskRuns">;
+    } = {
+      lastActivityAt: now,
+    };
+
+    if (!hasCrownedRun) {
+      taskPatch.selectedTaskRunId = taskRunId;
+    }
+
+    await ctx.db.patch(args.taskId, taskPatch);
+
+    // Generate JWT for sandbox authentication
+    const jwt = await new SignJWT({
+      taskRunId,
+      teamId: args.teamId,
+      userId: args.userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime(getJwtTtl(task.isCloudWorkspace))
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { taskRunId, jwt };
+  },
+});
+
 // Create a new task run
 export const create = authMutation({
   args: {
@@ -406,6 +627,13 @@ export const create = authMutation({
         throw new Error("Environment not found");
       }
     }
+    // Validate parent run if specified (must belong to same team AND user)
+    if (args.parentRunId) {
+      const parentRun = await ctx.db.get(args.parentRunId);
+      if (!parentRun || parentRun.teamId !== teamId || parentRun.userId !== userId) {
+        throw new Error("Parent task run not found or unauthorized");
+      }
+    }
     const taskRunId = await ctx.db.insert("taskRuns", {
       taskId: args.taskId,
       parentRunId: args.parentRunId,
@@ -424,7 +652,11 @@ export const create = authMutation({
 
     // Update task's lastActivityAt for sorting
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
-    const taskPatch: { generatedBranchName?: string; lastActivityAt: number } = {
+    const taskPatch: {
+      generatedBranchName?: string;
+      lastActivityAt: number;
+      selectedTaskRunId?: Id<"taskRuns">;
+    } = {
       lastActivityAt: now,
     };
     if (
@@ -433,6 +665,20 @@ export const create = authMutation({
     ) {
       taskPatch.generatedBranchName = generatedBranchName;
     }
+
+    // Update selectedTaskRunId if task has no crowned run
+    // (new run becomes the selected run by default)
+    const hasCrownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (!hasCrownedRun) {
+      taskPatch.selectedTaskRunId = taskRunId;
+    }
+
     await ctx.db.patch(args.taskId, taskPatch);
     const jwt = await new SignJWT({
       taskRunId,
@@ -441,7 +687,7 @@ export const create = authMutation({
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("12h")
+      .setExpirationTime(getJwtTtl(task.isCloudWorkspace))
       .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
     return { taskRunId, jwt };
@@ -558,6 +804,12 @@ export const updateStatus = internalMutation({
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
 
+      // D4.3: Update parent run if this is a child run
+      const updatedRun = await ctx.db.get(args.id);
+      if (updatedRun) {
+        await updateParentRunOnChildComplete(ctx, updatedRun);
+      }
+
       // Create a notification for the user (also marks as unread)
       console.log("[taskNotifications] Creating notification", {
         taskId: run.taskId,
@@ -571,6 +823,16 @@ export const updateStatus = internalMutation({
         userId: run.userId,
         type: args.status === "completed" ? "run_completed" : "run_failed",
       });
+
+      // Schedule GitHub Project status sync if task has project linkage
+      const task = await ctx.db.get(run.taskId);
+      if (task?.githubProjectId && task?.githubProjectItemId && task?.githubProjectInstallationId) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.githubProjectSync.syncStatusToProject,
+          { taskId: run.taskId },
+        );
+      }
     }
   },
 });
@@ -584,6 +846,14 @@ export const getRunDiffContext = authQuery({
   handler: async (ctx, args) => {
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
+    // Note: taskRunCompleted will be updated below after fetching runDoc
+    const screenshotConfig = {
+      screenshotWorkflowEnabled:
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "true" ||
+        env.CMUX_ENABLE_SCREENSHOT_WORKFLOW === "1",
+      taskRunCompleted: false, // Will be updated below
+    };
+
     const [taskDoc, taskRuns] = await Promise.all([
       ctx.db.get(args.taskId),
       fetchTaskRunsForTask(ctx, teamId, args.taskId, true),
@@ -595,6 +865,7 @@ export const getRunDiffContext = authQuery({
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
         screenshotSets: [],
+        screenshotConfig,
       };
     }
 
@@ -633,8 +904,12 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    // Fetch the run document to check status and get screenshots
+    const runDoc = await ctx.db.get(args.runId);
+    const taskRunCompleted =
+      runDoc?.status === "completed" || runDoc?.status === "failed";
+
     const screenshotSets = await (async () => {
-      const runDoc = await ctx.db.get(args.runId);
       // Prevent leaking screenshots for runs outside the authenticated task/team
       if (
         !runDoc ||
@@ -689,6 +964,10 @@ export const getRunDiffContext = authQuery({
       taskRuns,
       branchMetadataByRepo,
       screenshotSets,
+      screenshotConfig: {
+        ...screenshotConfig,
+        taskRunCompleted,
+      },
     };
   },
 });
@@ -949,10 +1228,55 @@ export const getJwt = authMutation({
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("12h")
+      .setExpirationTime(getJwtTtl(doc.isCloudWorkspace))
       .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
     return { jwt };
+  },
+});
+
+// Internal version of getJwt for background worker orchestration
+// Does not require user authentication - used by internal spawn endpoint
+export const getJwtInternal = internalMutation({
+  args: {
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.taskRunId);
+    if (!doc) {
+      throw new Error("Task run not found");
+    }
+
+    const jwt = await new SignJWT({
+      taskRunId: args.taskRunId,
+      teamId: doc.teamId,
+      userId: doc.userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime(getJwtTtl(doc.isCloudWorkspace))
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { jwt, teamId: doc.teamId, userId: doc.userId };
+  },
+});
+
+// Internal mutation to update branch without auth
+export const updateBranchInternal = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    newBranch: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id);
+    if (!doc) {
+      throw new Error("Task run not found");
+    }
+    await ctx.db.patch(args.id, {
+      newBranch: args.newBranch,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
   },
 });
 
@@ -1007,6 +1331,12 @@ export const updateStatusPublic = authMutation({
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
 
+      // D4.3: Update parent run if this is a child run
+      const updatedDoc = await ctx.db.get(args.id);
+      if (updatedDoc) {
+        await updateParentRunOnChildComplete(ctx, updatedDoc);
+      }
+
       // Create a notification for the user (also marks as unread)
       console.log("[taskNotifications] Creating notification (crown)", {
         taskId: doc.taskId,
@@ -1030,12 +1360,7 @@ export const updateVSCodeInstance = authMutation({
     teamSlugOrId: v.string(),
     id: v.id("taskRuns"),
     vscode: v.object({
-      provider: v.union(
-        v.literal("docker"),
-        v.literal("morph"),
-        v.literal("daytona"),
-        v.literal("other"),
-      ),
+      provider: runtimeProviderValidator,
       containerName: v.optional(v.string()),
       status: v.union(
         v.literal("starting"),
@@ -1054,6 +1379,8 @@ export const updateVSCodeInstance = authMutation({
       ),
       url: v.optional(v.string()),
       workspaceUrl: v.optional(v.string()),
+      vncUrl: v.optional(v.string()),
+      xtermUrl: v.optional(v.string()),
       startedAt: v.optional(v.number()),
       stoppedAt: v.optional(v.number()),
     }),
@@ -1140,10 +1467,23 @@ export const updateVSCodePorts = authMutation({
       status: "starting" as const,
     };
 
+    // Update ports and regenerate URLs with new port
+    // Only regenerate if this is a Docker provider (localhost URLs)
+    const newUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}`
+        : vscode.url;
+    const newWorkspaceUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}/?folder=/root/workspace`
+        : vscode.workspaceUrl;
+
     await ctx.db.patch(args.id, {
       vscode: {
         ...vscode,
         ports: args.ports,
+        url: newUrl,
+        workspaceUrl: newWorkspaceUrl,
       },
       updatedAt: Date.now(),
     });
@@ -1215,6 +1555,38 @@ export const getByContainerName = authQuery({
   },
 });
 
+/**
+ * Check if the task associated with a container name is archived.
+ * Used by iframe-preflight to prevent waking VMs for archived tasks.
+ */
+export const isTaskArchivedByContainerName = authQuery({
+  args: { teamSlugOrId: v.string(), containerName: v.string() },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const run = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_vscode_container_name", (q) =>
+        q.eq("vscode.containerName", args.containerName),
+      )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .first();
+
+    if (!run) {
+      // If we can't find the run, return false (not archived) to allow the request
+      // This handles edge cases where container name doesn't match
+      return { isArchived: false, found: false };
+    }
+
+    // Look up the parent task to check its archived status
+    const task = await ctx.db.get(run.taskId);
+    if (!task) {
+      return { isArchived: false, found: false };
+    }
+
+    return { isArchived: task.isArchived === true, found: true };
+  },
+});
+
 // Complete a task run
 export const complete = authMutation({
   args: {
@@ -1268,6 +1640,38 @@ export const fail = authMutation({
 
     // After marking this run as failed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
+  },
+});
+
+/**
+ * Fail a task run as a team member (not necessarily the owner).
+ * Used for cascading cancellation from orchestration tasks where any team
+ * member can cancel tasks, not just the original owner.
+ */
+export const failByTeamMember = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    errorMessage: v.string(),
+    exitCode: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    // Only check team membership, not ownership
+    if (!doc || doc.teamId !== teamId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      status: "failed",
+      errorMessage: args.errorMessage,
+      exitCode: args.exitCode ?? 1,
+      completedAt: now,
+      updatedAt: now,
+    });
+    // Update task status using the original owner's userId for consistency
+    await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, doc.userId);
   },
 });
 
@@ -1409,6 +1813,22 @@ export const workerComplete = internalMutation({
     // After marking this run as completed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
 
+    // D4.3: Update parent run if this is a child run
+    const updatedRun = await ctx.db.get(args.taskRunId);
+    if (updatedRun) {
+      await updateParentRunOnChildComplete(ctx, updatedRun);
+    }
+
+    // Notify orchestration worker of completion (handles orchestration-managed tasks)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.orchestrationWorker.handleTaskCompletion,
+      {
+        taskRunId: args.taskRunId,
+        exitCode: args.exitCode,
+      }
+    );
+
     // Note: Notifications are handled separately via /api/notifications/agent-stopped
     // which is called by the stop hook. This keeps status updates decoupled from notifications.
 
@@ -1513,12 +1933,7 @@ export const updateVSCodeMetadataInternal = internalMutation({
     vscode: v.optional(
       v.object({
         provider: v.optional(
-          v.union(
-            v.literal("docker"),
-            v.literal("morph"),
-            v.literal("daytona"),
-            v.literal("other"),
-          ),
+          runtimeProviderValidator,
         ),
         containerName: v.optional(v.string()),
         status: v.optional(
@@ -1535,6 +1950,8 @@ export const updateVSCodeMetadataInternal = internalMutation({
         ),
         url: v.optional(v.string()),
         workspaceUrl: v.optional(v.string()),
+        vncUrl: v.optional(v.string()),
+        xtermUrl: v.optional(v.string()),
         startedAt: v.optional(v.number()),
         stoppedAt: v.optional(v.number()),
         lastAccessedAt: v.optional(v.number()),
@@ -1873,6 +2290,53 @@ export const updateEnvironmentError = authMutation({
   },
 });
 
+/**
+ * Update discovered repos for a task run (internal, from server)
+ * Called when scanning sandbox for git repos in custom environment tasks
+ */
+export const updateDiscoveredReposInternal = internalMutation({
+  args: {
+    runId: v.id("taskRuns"),
+    discoveredRepos: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    await ctx.db.patch(args.runId, {
+      discoveredRepos: args.discoveredRepos,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Update discovered repos for a task run (authenticated, from client)
+ * Allows UI to trigger repo discovery and update the task run
+ */
+export const updateDiscoveredRepos = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    discoveredRepos: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    await ctx.db.patch(args.runId, {
+      discoveredRepos: args.discoveredRepos,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const archive = authMutation({
   args: {
     teamSlugOrId: v.string(),
@@ -1905,6 +2369,24 @@ export const archive = authMutation({
         }),
       ),
     );
+
+    // Recalculate selectedTaskRunId if we archived/unarchived a run that might affect the selection
+    const task = await ctx.db.get(run.taskId);
+    if (task) {
+      const targetIdsSet = new Set(targetIds);
+      // Need to recalculate if:
+      // 1. We archived the currently selected run, OR
+      // 2. We unarchived runs (might have unarchived a crowned run or newer run)
+      const needsRecalculation =
+        (args.archive && task.selectedTaskRunId && targetIdsSet.has(task.selectedTaskRunId)) ||
+        !args.archive;
+
+      if (needsRecalculation) {
+        await ctx.runMutation(internal.taskRuns.updateSelectedTaskRunForTask, {
+          taskId: run.taskId,
+        });
+      }
+    }
   },
 });
 
@@ -2126,9 +2608,410 @@ export const createForPreview = internalMutation({
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("12h")
+      .setExpirationTime(getJwtTtl(task.isCloudWorkspace))
       .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
     return { taskRunId, jwt };
+  },
+});
+
+/**
+ * Internal mutation to recalculate and update the selectedTaskRunId for a task.
+ * Selects the crowned run if one exists, otherwise falls back to the latest non-archived run.
+ */
+export const updateSelectedTaskRunForTask = internalMutation({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      return;
+    }
+
+    // Find crowned run first
+    const crownedRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .first();
+
+    if (crownedRun) {
+      await ctx.db.patch(args.taskId, { selectedTaskRunId: crownedRun._id });
+      return;
+    }
+
+    // Fall back to latest non-archived run
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .order("desc")
+      .first();
+
+    await ctx.db.patch(args.taskId, {
+      selectedTaskRunId: latestRun?._id,
+    });
+  },
+});
+
+/**
+ * Update starting commit SHA for a task run (used for diff baseline in custom environments).
+ * Called after hydration completes to capture the commit SHA before the agent runs.
+ */
+export const updateStartingCommitSha = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    startingCommitSha: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    if (run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    await ctx.db.patch(args.id, {
+      startingCommitSha: args.startingCommitSha,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// ============================================================================
+// D4.2: Agent Teams - Parent-Child Task Relationship Queries
+// ============================================================================
+
+/**
+ * Get all child task runs for a given parent task run.
+ * Returns immediate children only (not recursive).
+ */
+export const listChildRuns = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    parentRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Verify parent run exists and belongs to the team.
+    // Returns null (not throw) so React useQuery() doesn't crash the error boundary.
+    const parentRun = await ctx.db.get(args.parentRunId);
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null;
+    }
+
+    const children = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_parent", (q) => q.eq("parentRunId", args.parentRunId))
+      .collect();
+
+    // Filter by team access (same as getByTask pattern)
+    return children.filter((run) => run.teamId === teamId);
+  },
+});
+
+/**
+ * Get parent task run info for a given child task run.
+ * Returns null if the run has no parent.
+ */
+export const getParentRun = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Throws for invalid/unauthorized run - safe because this query is only called
+    // from the HTTP handler (cmux_http.ts) which has try/catch for 404 mapping.
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.teamId !== teamId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    if (!run.parentRunId) {
+      return null;
+    }
+
+    const parentRun = await ctx.db.get(run.parentRunId);
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null; // Parent exists but not accessible
+    }
+
+    return parentRun;
+  },
+});
+
+/**
+ * Get aggregated status of all child runs for a parent.
+ * Returns counts by status and overall completion state.
+ */
+export const getChildRunsStatus = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    parentRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Verify parent run exists and belongs to the team.
+    // Returns null (not throw) so React useQuery() doesn't crash the error boundary.
+    const parentRun = await ctx.db.get(args.parentRunId);
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null;
+    }
+
+    const children = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_parent", (q) => q.eq("parentRunId", args.parentRunId))
+      .collect();
+
+    // Filter by team access (same as getByTask pattern)
+    const accessibleChildren = children.filter(
+      (run) => run.teamId === teamId
+    );
+
+    const statusCounts: Record<string, number> = {
+      pending: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+    };
+
+    for (const child of accessibleChildren) {
+      statusCounts[child.status] = (statusCounts[child.status] || 0) + 1;
+    }
+
+    const total = accessibleChildren.length;
+    const terminal = statusCounts.completed + statusCounts.failed + statusCounts.skipped;
+    const allComplete = total > 0 && terminal === total;
+    const anyFailed = statusCounts.failed > 0;
+    const allSucceeded = total > 0 && statusCounts.completed === total;
+
+    return {
+      total,
+      statusCounts,
+      allComplete,
+      anyFailed,
+      allSucceeded,
+      childRunIds: accessibleChildren.map((c) => c._id),
+    };
+  },
+});
+
+/**
+ * Update PTY session info for terminal attachment/reconnection.
+ * Called by agentSpawner when terminal is created.
+ */
+export const updatePtySession = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    ptySessionId: v.string(),
+    ptyBackend: v.union(v.literal("cmux-pty"), v.literal("tmux")),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      ptySessionId: args.ptySessionId,
+      ptyBackend: args.ptyBackend,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Get running task runs for a team with PTY session info.
+ * Used by VSCode extension for terminal reconnection on reload.
+ */
+export const getRunningWithPty = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user_status_created", (q) =>
+        q.eq("teamId", teamId).eq("userId", ctx.identity.subject).eq("status", "running")
+      )
+      .collect();
+
+    // Return only runs with PTY session info
+    return runs
+      .filter((run) => run.ptySessionId)
+      .map((run) => ({
+        _id: run._id,
+        taskId: run.taskId,
+        agentName: run.agentName,
+        ptySessionId: run.ptySessionId,
+        ptyBackend: run.ptyBackend,
+        vscode: run.vscode,
+      }));
+  },
+});
+
+// ============================================================================
+// Autopilot Mutations (Phase 6: Long-Running Sessions)
+// ============================================================================
+
+/**
+ * Update autopilot heartbeat timestamp.
+ * Called periodically by autopilot wrapper script in sandbox.
+ */
+export const updateAutopilotHeartbeat = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id);
+    if (!doc) {
+      throw new Error("Task run not found");
+    }
+    if (!doc.autopilotConfig) {
+      throw new Error("Task run is not in autopilot mode");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      autopilotConfig: {
+        ...doc.autopilotConfig,
+        lastHeartbeat: now,
+      },
+      updatedAt: now,
+    });
+
+    return { ok: true, lastHeartbeat: now };
+  },
+});
+
+/**
+ * Update autopilot status (running/paused/wrap-up/completed/stopped).
+ * Called by autopilot wrapper script when status changes.
+ */
+export const updateAutopilotStatus = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("wrap-up"),
+      v.literal("completed"),
+      v.literal("stopped")
+    ),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id);
+    if (!doc) {
+      throw new Error("Task run not found");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      autopilotStatus: args.status,
+      updatedAt: now,
+    });
+
+    return { ok: true, status: args.status };
+  },
+});
+
+/**
+ * Store Codex thread-id for session resume.
+ * Called by sandbox when codex notify hook receives thread_id.
+ */
+export const updateCodexThreadId = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    threadId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id);
+    if (!doc) {
+      throw new Error("Task run not found");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      codexThreadId: args.threadId,
+      updatedAt: now,
+    });
+
+    return { ok: true, threadId: args.threadId };
+  },
+});
+
+/**
+ * Initialize autopilot config when starting an autopilot session.
+ * Called by agentSpawner when task is created with --autopilot flag.
+ */
+export const initializeAutopilot = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    totalMinutes: v.number(),
+    turnMinutes: v.number(),
+    wrapUpMinutes: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      autopilotConfig: {
+        enabled: true,
+        totalMinutes: args.totalMinutes,
+        turnMinutes: args.turnMinutes,
+        wrapUpMinutes: args.wrapUpMinutes,
+        startedAt: now,
+        lastHeartbeat: now,
+      },
+      autopilotStatus: "running",
+      updatedAt: now,
+    });
+
+    return { ok: true, startedAt: now };
+  },
+});
+
+/**
+ * Get autopilot info for resume.
+ * Returns thread-id and config for resuming an autopilot session.
+ */
+export const getAutopilotInfo = internalQuery({
+  args: {
+    id: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id);
+    if (!doc) {
+      return null;
+    }
+
+    return {
+      taskRunId: doc._id,
+      taskId: doc.taskId,
+      status: doc.status,
+      autopilotConfig: doc.autopilotConfig,
+      autopilotStatus: doc.autopilotStatus,
+      codexThreadId: doc.codexThreadId,
+      vscode: doc.vscode,
+    };
   },
 });

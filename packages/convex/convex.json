@@ -6,7 +6,6 @@
       "node-ssh",
       "cpu-features",
       "@octokit/request",
-      "@cmux/e2b-client",
       "e2b",
       "modal"
     ],

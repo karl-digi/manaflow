@@ -19,12 +19,12 @@ import {
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { api } from "@cmux/convex/api";
-import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import type { ProviderStatusResponse } from "@cmux/shared";
+import type { AgentVendor } from "@cmux/shared/agent-catalog";
 import { parseGithubRepoUrl } from "@cmux/shared";
 import { useUser } from "@stackframe/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
 import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
@@ -55,6 +55,24 @@ interface DashboardInputControlsProps {
   cloudToggleDisabled?: boolean;
   branchDisabled?: boolean;
   providerStatus?: ProviderStatusResponse | null;
+  /** Set of agent names disabled by user in Settings > Models */
+  disabledByUserModels?: Set<string>;
+  /** Models from Convex (includes runtime-discovered models), filtered by availability */
+  convexModels?: ConvexModelEntry[] | null;
+}
+
+// Type for models from Convex
+interface ConvexModelEntry {
+  _id: string;
+  name: string;
+  displayName: string;
+  vendor: string;
+  tier: "free" | "paid";
+  enabled: boolean;
+  tags?: string[];
+  requiredApiKeys: string[];
+  disabled?: boolean;
+  sortOrder: number;
 }
 
 type AgentOption = SelectOptionObject & { displayLabel: string; isDisabled?: boolean };
@@ -153,107 +171,105 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   teamSlugOrId,
   cloudToggleDisabled = false,
   branchDisabled = false,
-  providerStatus = null,
+  // providerStatus is kept for backward compatibility but no longer used
+  // (availability filtering is now done server-side via Convex)
+  providerStatus: _providerStatus = null,
+  disabledByUserModels,
+  convexModels,
 }: DashboardInputControlsProps) {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const user = useUser({ or: "return-null" });
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
-  const providerStatusMap = useMemo(() => {
-    const map = new Map<string, ProviderStatus>();
-    providerStatus?.providers?.forEach((provider) => {
-      map.set(provider.name, provider);
-    });
-    return map;
-  }, [providerStatus?.providers]);
-  const handleOpenSettings = useCallback(() => {
-    void router.navigate({
-      to: "/$teamSlugOrId/settings",
-      params: { teamSlugOrId },
-    });
-  }, [router, teamSlugOrId]);
   const agentOptions = useMemo<AgentOption[]>(() => {
-    const vendorKey = (name: string): string => {
-      const lower = name.toLowerCase();
-      if (lower.startsWith("codex/")) return "openai";
-      if (lower.startsWith("claude/")) return "claude";
-      if (lower.startsWith("gemini/")) return "gemini";
-      if (lower.startsWith("opencode/")) return "opencode";
-      if (lower.startsWith("qwen/")) return "qwen";
-      if (lower.startsWith("cursor/")) return "cursor";
-      if (lower.startsWith("amp")) return "amp";
-      return "other";
+    const baseModels: Array<{
+      name: string;
+      displayName: string;
+      vendor: string;
+      disabled?: boolean;
+    }> = convexModels ?? [];
+
+    // Filter out agents disabled by user in Settings > Models (legacy - now unused)
+    const enabledModels = disabledByUserModels
+      ? baseModels.filter((entry) => !disabledByUserModels.has(entry.name))
+      : baseModels;
+
+    // Filter out agents disabled at catalog level (e.g., deprecated models)
+    const activeModels = enabledModels.filter(
+      (entry) => entry.disabled !== true
+    );
+
+    const vendorHeadingLabel: Record<AgentVendor | "other", string> = {
+      openai: "OpenAI / Codex",
+      anthropic: "Claude",
+      google: "Gemini",
+      opencode: "OpenCode",
+      qwen: "Qwen",
+      cursor: "Cursor",
+      amp: "Amp",
+      xai: "xAI",
+      openrouter: "OpenRouter",
+      other: "Other",
     };
-    const shortName = (label: string): string => {
-      const slashIndex = label.indexOf("/");
-      return slashIndex >= 0 ? label.slice(slashIndex + 1) : label;
+
+    // Define vendor order for consistent grouping
+    // This matches the order in AGENT_CATALOG: anthropic, openai, amp, opencode, google, qwen, cursor
+    const vendorOrder: Record<string, number> = {
+      anthropic: 0,
+      openai: 1,
+      amp: 2,
+      opencode: 3,
+      google: 4,
+      qwen: 5,
+      cursor: 6,
+      xai: 7,
+      openrouter: 8,
+      other: 99,
     };
-    return AGENT_CONFIGS.map((agent) => {
-      const status = providerStatusMap.get(agent.name);
-      const missingRequirements = status?.missingRequirements ?? [];
-      const isAvailable = status?.isAvailable ?? true;
 
-      // Check if agent is disabled at config level (e.g., not available on Bedrock)
-      const isDisabledByConfig = agent.disabled === true;
-      const isUnavailable = !isAvailable || isDisabledByConfig;
+    // Sort models by vendor group first, then by sortOrder within each vendor
+    // This ensures models are grouped by vendor but respects the catalog order within each group
+    const sortedModels = [...activeModels].sort((a, b) => {
+      const vendorA = vendorOrder[a.vendor] ?? 99;
+      const vendorB = vendorOrder[b.vendor] ?? 99;
+      if (vendorA !== vendorB) return vendorA - vendorB;
+      // Within same vendor, sort by sortOrder (from database)
+      const orderA = "sortOrder" in a ? (a as ConvexModelEntry).sortOrder : 999;
+      const orderB = "sortOrder" in b ? (b as ConvexModelEntry).sortOrder : 999;
+      return orderA - orderB;
+    });
 
-      // Determine warning tooltip content
-      let warningConfig: AgentOption["warning"] = undefined;
-      if (isDisabledByConfig) {
-        warningConfig = {
-          tooltip: (
-            <div className="space-y-1">
-              <p className="text-xs font-semibold text-amber-500">
-                Not available
-              </p>
-              <p className="text-xs text-neutral-300">
-                {agent.disabledReason ?? "This agent is currently disabled."}
-              </p>
-            </div>
-          ),
-        };
-      } else if (!isAvailable) {
-        warningConfig = {
-          tooltip: (
-            <div className="space-y-1">
-              <p className="text-xs font-semibold text-red-500">
-                Setup required
-              </p>
-              <p className="text-xs text-neutral-300">
-                {env.NEXT_PUBLIC_WEB_MODE
-                  ? "Add your API key for this agent in Settings."
-                  : "Add credentials for this agent in Settings."}
-              </p>
-              {missingRequirements.length > 0 ? (
-                <ul className="list-disc pl-4 text-xs text-neutral-400">
-                  {missingRequirements.map((req) => (
-                    <li key={req}>{req}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <p className="text-[10px] tracking-wide text-neutral-500 pt-1 border-t border-neutral-700">
-                Click to open settings
-              </p>
-            </div>
-          ),
-          onClick: handleOpenSettings,
-        };
-      }
-
+    const options = sortedModels.map((entry) => {
       return {
-        label: agent.name,
-        displayLabel: shortName(agent.name),
-        value: agent.name,
-        icon: <AgentLogo agentName={agent.name} className="w-4 h-4" />,
-        iconKey: vendorKey(agent.name),
-        isUnavailable,
-        isDisabled: isDisabledByConfig,
-        warning: warningConfig,
+        label: entry.name,
+        displayLabel: entry.displayName,
+        value: entry.name,
+        icon: <AgentLogo agentName={entry.name} vendor={entry.vendor as AgentVendor} className="w-4 h-4" />,
+        iconKey: entry.vendor,
       } satisfies AgentOption;
     });
-  }, [handleOpenSettings, providerStatusMap]);
+
+    const grouped: AgentOption[] = [];
+    let lastVendor: string | null = null;
+    for (const option of options) {
+      const vendor = option.iconKey ?? "other";
+      if (vendor !== lastVendor) {
+        lastVendor = vendor;
+        const headingLabel = vendorHeadingLabel[vendor as keyof typeof vendorHeadingLabel] ?? vendor;
+        grouped.push({
+          label: headingLabel,
+          displayLabel: headingLabel,
+          value: `heading:${vendor}`,
+          heading: true,
+          iconKey: vendor,
+        });
+      }
+      grouped.push(option);
+    }
+
+    return grouped;
+  }, [convexModels, disabledByUserModels]);
 
   const agentOptionsByValue = useMemo(() => {
     const map = new Map<string, AgentOption>();

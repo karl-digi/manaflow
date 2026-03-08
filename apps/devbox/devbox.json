@@ -20,7 +20,7 @@
   ],
   "shell": {
     "init_hook": [
-      "echo 'cmux devbox Workspace: cmux-cloud-cli'",
+      "echo 'devsh Workspace: cmux-cloud-cli'",
       "echo '   App:     http://localhost:'$PORT",
       "echo '   VS Code: http://localhost:'$CODE_PORT"
     ],

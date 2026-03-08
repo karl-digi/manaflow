@@ -15,7 +15,7 @@ const stackAdminApp = new StackAdminApp({
 });
 
 const user = await stackAdminApp.getUser(
-  "487b5ddc-0da0-4f12-8834-f452863a83f5"
+  process.env.STACK_TEST_USER_ID || "487b5ddc-0da0-4f12-8834-f452863a83f5"
 );
 
 if (!user) {
@@ -30,13 +30,13 @@ if (!stackAuthToken) {
   throw new Error("Token not found");
 }
 
-const url = "https://polite-canary-804.convex.cloud";
+const url = env.NEXT_PUBLIC_CONVEX_URL;
 
 const client = new ConvexHttpClient(url);
 client.setAuth(stackAuthToken);
 
 const result = await client.query(api.github.listProviderConnections, {
-  teamSlugOrId: "manaflow",
+  teamSlugOrId: "example-team",
 });
 
 console.log(result);

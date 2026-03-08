@@ -1,6 +1,8 @@
 "use node";
 
-// TODO: we don't need a node action for this once stack auth can run in v8 environments
+// NOTE: This action requires the Node.js runtime directive because it imports the Stack
+// server app, which has dependencies that are not compatible with Convex v8 environments.
+// Once Stack Auth adds v8 environment support, the "use node" directive can be removed.
 
 import { v } from "convex/values";
 import { stackServerAppJs } from "../_shared/stackServerAppJs";
@@ -23,7 +25,8 @@ export const syncTeamMembershipsFromStack = internalAction({
       }
 
       const members = await team.listUsers();
-      await Promise.all(
+      // Use Promise.allSettled to ensure all members are processed even if some fail
+      const results = await Promise.allSettled(
         members.map((member) =>
           ctx.runMutation(internal.stack.ensureMembership, {
             teamId,
@@ -31,6 +34,22 @@ export const syncTeamMembershipsFromStack = internalAction({
           }),
         ),
       );
+
+      // Log any failures but don't throw - partial success is better than none
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === "rejected"
+      );
+      if (failures.length > 0) {
+        console.error(
+          "[stack_webhook] Some membership syncs failed",
+          {
+            teamId,
+            totalMembers: members.length,
+            failureCount: failures.length,
+            errors: failures.map((f) => f.reason),
+          },
+        );
+      }
     } catch (error) {
       console.error("[stack_webhook] Failed to sync team memberships", {
         teamId,

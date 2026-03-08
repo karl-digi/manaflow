@@ -1,5 +1,6 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { PullRequestDetailView } from "@/components/prs/PullRequestDetailView";
+import { TitleBar } from "@/components/TitleBar";
 import { createFileRoute } from "@tanstack/react-router";
 import { preloadPullRequestDetail } from "../lib/preloadPullRequestDetail";
 
@@ -21,8 +22,9 @@ export const Route = createFileRoute(
 
 function PROnlyRoute() {
   const { teamSlugOrId, owner, repo, number } = Route.useParams();
+  const title = `${owner}/${repo}#${number}`;
   return (
-    <FloatingPane>
+    <FloatingPane header={<TitleBar title={title} />}>
       <div className="min-w-0 min-h-0 h-full flex flex-col">
         <div className="flex-1 min-h-0 h-full overflow-y-auto bg-white dark:bg-neutral-900">
           <PullRequestDetailView

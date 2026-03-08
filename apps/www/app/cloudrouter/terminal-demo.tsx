@@ -25,7 +25,7 @@ const STEPS: Step[] = [
   // --- Phase 1: Install the skill ---
   {
     type: "shell",
-    command: "npx skills add manaflow-ai/cloudrouter",
+    command: "npx skills add karlorz/cloudrouter",
     output: [
       "",
       [{ text: "  Installing cloudrouter skill...", color: "#a3a3a3" }],

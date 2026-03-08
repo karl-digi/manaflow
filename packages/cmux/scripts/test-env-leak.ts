@@ -110,18 +110,18 @@ function checkForEnvLeaks(): void {
     if (!hasEnvIgnore) {
       foundIssues.push("WARNING: .gitignore does not exclude .env files");
     } else {
-      console.log("✓ .gitignore properly excludes .env files\n");
+      console.log("[ok] .gitignore properly excludes .env files\n");
     }
   }
 
   // Report results
   if (hasLeaks) {
-    console.error("❌ FAILED: Found potential security leaks:\n");
+    console.error("[FAIL] Found potential security leaks:\n");
     foundIssues.forEach((issue) => console.error(`  - ${issue}`));
     process.exit(1);
   } else {
-    console.log("✅ PASSED: No .env file leaks detected");
-    console.log("✅ No hardcoded sensitive values found");
+    console.log("[ok] PASSED: No .env file leaks detected");
+    console.log("[ok] No hardcoded sensitive values found");
     process.exit(0);
   }
 }

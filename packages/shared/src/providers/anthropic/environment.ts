@@ -2,7 +2,18 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
-import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "../../utils/anthropic";
+import {
+  CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY,
+  normalizeAnthropicBaseUrl,
+} from "../../utils/anthropic";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+  getProjectContextFile,
+  getCrossToolSymlinkCommands,
+} from "../../agent-memory-protocol";
+import { buildMergedClaudeConfig } from "../../mcp-preview";
 
 export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "ANTHROPIC_API_KEY",
@@ -17,10 +28,24 @@ export async function getClaudeEnvironment(
   // These must be lazy since configs are imported into the browser
   // const { exec } = await import("node:child_process");
   // const { promisify } = await import("node:util");
-  const { readFile } = await import("node:fs/promises");
-  const { homedir } = await import("node:os");
   const { Buffer } = await import("node:buffer");
   // const execAsync = promisify(exec);
+
+  // useHostConfig is safe for desktop/Electron apps where the host IS the user's machine.
+  // For server deployments, this should be false to prevent credential leakage.
+  const useHostConfig = ctx.useHostConfig ?? false;
+
+  let hostConfigText: string | undefined;
+  if (useHostConfig) {
+    const { readFile } = await import("node:fs/promises");
+
+    try {
+      const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+      hostConfigText = await readFile(`${homeDir}/.claude.json`, "utf-8");
+    } catch {
+      hostConfigText = undefined;
+    }
+  }
 
   const files: EnvironmentResult["files"] = [];
   const env: Record<string, string> = {};
@@ -28,20 +53,14 @@ export async function getClaudeEnvironment(
   const claudeLifecycleDir = "/root/lifecycle/claude";
   const claudeSecretsDir = `${claudeLifecycleDir}/secrets`;
   const claudeApiKeyHelperPath = `${claudeSecretsDir}/anthropic_key_helper.sh`;
-
   // Prepare .claude.json
   try {
-    // Try to read existing .claude.json, or create a new one
-    let existingConfig = {};
-    try {
-      const content = await readFile(`${homedir()}/.claude.json`, "utf-8");
-      existingConfig = JSON.parse(content);
-    } catch {
-      // File doesn't exist or is invalid, start fresh
-    }
-
     const config = {
-      ...existingConfig,
+      ...buildMergedClaudeConfig({
+        hostConfigText,
+        mcpServerConfigs: ctx.mcpServerConfigs ?? [],
+        agentName: ctx.agentName,
+      }),
       projects: {
         "/root/workspace": {
           allowedTools: [],
@@ -140,6 +159,10 @@ echo "[CMUX Stop Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
 
 if [ -n "\${CMUX_TASK_RUN_JWT}" ] && [ -n "\${CMUX_TASK_RUN_ID}" ] && [ -n "\${CMUX_CALLBACK_URL}" ]; then
   (
+    # Sync memory files to Convex (best-effort, before completion callbacks)
+    echo "[CMUX Stop Hook] Syncing memory files..." >> "$LOG_FILE"
+    /root/lifecycle/memory/sync.sh >> "$LOG_FILE" 2>&1 || true
+
     # Call crown/complete for status updates
     echo "[CMUX Stop Hook] Calling crown/complete..." >> "$LOG_FILE"
     curl -s -X POST "\${CMUX_CALLBACK_URL}/api/crown/complete" \\
@@ -184,6 +207,62 @@ exit 0`;
     mode: "755",
   });
 
+  // Plan hook script - captures ExitPlanMode and syncs to GitHub Projects
+  // Receives JSON on stdin with tool_input containing plan file path
+  const planHookScript = `#!/bin/bash
+# Claude Code plan hook - syncs plans to GitHub Projects
+# This script is called when ExitPlanMode tool is used
+
+LOG_FILE="/root/lifecycle/claude-hook.log"
+INPUT=$(cat)
+
+echo "[CMUX Plan Hook] Script started at $(date)" >> "$LOG_FILE"
+echo "[CMUX Plan Hook] Input: $INPUT" >> "$LOG_FILE"
+
+# Only sync if we have the required env vars and a linked project
+if [ -z "\${CMUX_TASK_RUN_JWT}" ] || [ -z "\${CMUX_CALLBACK_URL}" ]; then
+  echo "[CMUX Plan Hook] Missing env vars, skipping sync" >> "$LOG_FILE"
+  exit 0
+fi
+
+# Extract plan file path from tool_input (if available)
+# ExitPlanMode doesn't pass the plan file path directly, so we look for plan files
+PLAN_DIR="/root/.claude/plans"
+if [ ! -d "$PLAN_DIR" ]; then
+  echo "[CMUX Plan Hook] No plans directory found" >> "$LOG_FILE"
+  exit 0
+fi
+
+# Find the most recently modified plan file
+PLAN_FILE=$(ls -t "$PLAN_DIR"/*.md 2>/dev/null | head -1)
+if [ -z "$PLAN_FILE" ] || [ ! -f "$PLAN_FILE" ]; then
+  echo "[CMUX Plan Hook] No plan files found" >> "$LOG_FILE"
+  exit 0
+fi
+
+echo "[CMUX Plan Hook] Found plan file: $PLAN_FILE" >> "$LOG_FILE"
+
+# Read plan content
+PLAN_CONTENT=$(cat "$PLAN_FILE" | head -c 50000)  # Limit to 50KB
+
+# Send to plan sync endpoint (best-effort, non-blocking)
+(
+  curl -s -X POST "\${CMUX_CALLBACK_URL}/api/integrations/github-projects/plan-sync" \\
+    -H "Content-Type: application/json" \\
+    -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+    -d "$(jq -n --arg content "$PLAN_CONTENT" --arg file "$PLAN_FILE" '{planContent: $content, planFile: $file}')" \\
+    >> "$LOG_FILE" 2>&1 || true
+  echo "[CMUX Plan Hook] Sync request sent" >> "$LOG_FILE"
+) &
+
+exit 0`;
+
+  files.push({
+    destinationPath: `${claudeLifecycleDir}/plan-hook.sh`,
+    contentBase64: Buffer.from(planHookScript).toString("base64"),
+    mode: "755",
+  });
+
   // Check if user has provided an OAuth token (preferred) or API key
   const hasOAuthToken =
     ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
@@ -191,9 +270,11 @@ exit 0`;
   const hasAnthropicApiKey =
     ctx.apiKeys?.ANTHROPIC_API_KEY &&
     ctx.apiKeys.ANTHROPIC_API_KEY.trim().length > 0;
+  const userCustomBaseUrl = ctx.apiKeys?.ANTHROPIC_BASE_URL?.trim();
+  const bypassProxy = ctx.workspaceSettings?.bypassAnthropicProxy ?? false;
 
   // If OAuth token is provided, write it to /etc/claude-code/env
-  // The wrapper scripts (claude, npx, bunx) source this file before running claude-code
+  // The wrapper scripts (claude and other launchers) source this file before running claude-code
   // This is necessary because CLAUDE_CODE_OAUTH_TOKEN must be set as an env var
   // BEFORE claude-code starts (it checks OAuth early, before loading settings.json)
   if (hasOAuthToken) {
@@ -223,13 +304,15 @@ exit 0`;
           ],
         },
       ],
-      Notification: [
+      // Plan mode hook: captures plans when ExitPlanMode is called
+      // Syncs plan content to GitHub Projects if project is linked
+      PostToolUse: [
         {
-          matcher: ".*",
+          matcher: "ExitPlanMode",
           hooks: [
             {
               type: "command",
-              command: `${claudeLifecycleDir}/stop-hook.sh`,
+              command: `${claudeLifecycleDir}/plan-hook.sh`,
             },
           ],
         },
@@ -237,14 +320,50 @@ exit 0`;
     },
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
-      ...(hasOAuthToken
-        ? {}
-        : {
+      // CMUX system vars for stop hooks (memory sync, crown/complete)
+      CMUX_CALLBACK_URL: ctx.callbackUrl,
+      CMUX_TASK_RUN_ID: ctx.taskRunId,
+      CMUX_TASK_RUN_JWT: ctx.taskRunJwt,
+      ...(() => {
+        // Priority order for base URL routing:
+        // 1. OAuth token -> direct to Anthropic (no proxy)
+        // 2. Provider override with baseUrl -> direct to override URL + custom headers
+        // 3. bypassProxy && userCustomBaseUrl -> legacy bypass
+        // 4. Default -> cmux proxy
+
+        if (hasOAuthToken) {
+          // OAuth users always connect directly to Anthropic.
+          return {};
+        }
+
+        // Provider override takes precedence over legacy bypass
+        if (ctx.providerConfig?.isOverridden && ctx.providerConfig.baseUrl) {
+          const result: Record<string, string | number> = {
+            ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrl(ctx.providerConfig.baseUrl)
+              .forRawFetch,
+          };
+          if (ctx.providerConfig.customHeaders) {
+            result.ANTHROPIC_CUSTOM_HEADERS = Object.entries(ctx.providerConfig.customHeaders)
+              .map(([k, v]) => `${k}:${v}`)
+              .join("\n");
+          }
+          return result;
+        }
+
+        if (bypassProxy && userCustomBaseUrl) {
+          return {
+            ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrl(userCustomBaseUrl)
+              .forRawFetch,
+          };
+        }
+
+        return {
           ANTHROPIC_BASE_URL: `${ctx.callbackUrl}/api/anthropic`,
           ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}\nx-cmux-source:cmux`,
-        }
-      ),
+        };
+      })(),
     },
   };
 
@@ -276,6 +395,41 @@ echo ${apiKeyToOutput}`;
   startupCommands.push(
     "echo '[CMUX] Settings directory in ~/.claude:' && ls -la /root/.claude/",
   );
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+
+  // Inject GitHub Projects context if task is linked to a project item (Phase 5)
+  if (ctx.githubProjectContext) {
+    files.push(
+      getProjectContextFile({
+        ...ctx.githubProjectContext,
+        taskRunJwt: ctx.taskRunJwt,
+        callbackUrl: ctx.callbackUrl,
+      }),
+    );
+  }
+
+  // Add CLAUDE.md to user-level memory (~/.claude/CLAUDE.md)
+  // This follows Claude Code's native memory hierarchy:
+  // - User memory (~/.claude/CLAUDE.md) applies to all projects
+  // - Stored outside git workspace to avoid pollution
+  // See: https://code.claude.com/docs/en/memory.md
+  const claudeMdContent = `# cmux Agent Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "$HOME/.claude/CLAUDE.md",
+    contentBase64: Buffer.from(claudeMdContent).toString("base64"),
+    mode: "644",
+  });
+
+  // Create cross-tool symlinks for shared instructions
+  // This allows Codex and Gemini to read the same CLAUDE.md via symlinks
+  // at their native user-level paths (~/.codex/AGENTS.md, ~/.gemini/GEMINI.md)
+  startupCommands.push(...getCrossToolSymlinkCommands());
 
   return {
     files,

@@ -33,7 +33,7 @@ const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
   x64: null,
 };
 
-const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/manaflow";
+const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/cmux";
 
 const compactNumberFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -59,7 +59,7 @@ const formatStarCount = (stars?: number | null): string => {
 export function SiteHeader({
   linkPrefix = "",
   showDownload = true,
-  fallbackUrl = "https://github.com/manaflow-ai/manaflow/releases",
+  fallbackUrl = "https://github.com/karlorz/cmux/releases",
   latestVersion,
   macDownloadUrls,
   extraEndContent,
@@ -142,8 +142,8 @@ export function SiteHeader({
               className="hidden md:inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800"
               title={
                 latestVersion
-                  ? `Download Manaflow ${latestVersion} for macOS`
-                  : "Download Manaflow for macOS"
+                  ? `Download cmux ${latestVersion} for macOS`
+                  : "Download cmux for macOS"
               }
               urls={effectiveUrls}
             >
@@ -176,8 +176,8 @@ function GithubRepoButton({
   const formattedStars = formatStarCount(stars);
   const ariaLabel =
     typeof stars === "number"
-      ? `View Manaflow on GitHub (${formattedStars} stars)`
-      : "View Manaflow on GitHub";
+      ? `View cmux on GitHub (${formattedStars} stars)`
+      : "View cmux on GitHub";
 
   return (
     <a

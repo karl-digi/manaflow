@@ -10,8 +10,7 @@ export const AMP_CONFIG: AgentConfig = {
     "--prompt-env",
     "CMUX_PROMPT",
     "--",
-    "bunx",
-    "@sourcegraph/amp@latest",
+    "amp",
     "--dangerously-allow-all",
   ],
   environment: getAmpEnvironment,
@@ -26,8 +25,7 @@ export const AMP_GPT_5_CONFIG: AgentConfig = {
     "--prompt-env",
     "CMUX_PROMPT",
     "--",
-    "bunx",
-    "@sourcegraph/amp@latest",
+    "amp",
     "--dangerously-allow-all",
     "--try-gpt5",
   ],
@@ -36,3 +34,5 @@ export const AMP_GPT_5_CONFIG: AgentConfig = {
   checkRequirements: checkAmpRequirements,
   // No completion detector for AMP because it is handled by the proxy, which starts from environment
 };
+
+export const AMP_AGENT_CONFIGS: AgentConfig[] = [AMP_CONFIG, AMP_GPT_5_CONFIG];

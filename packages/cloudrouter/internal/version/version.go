@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	npmRegistryURL     = "https://registry.npmjs.org/@manaflow-ai/cloudrouter"
+	npmRegistryURL     = "https://registry.npmjs.org/@karlorz/cloudrouter"
 	checkIntervalHours = 6 // Only check every 6 hours
 	configDirName      = "cloudrouter"
 )
@@ -199,7 +199,7 @@ func PrintUpdateWarning(result *CheckResult) bool {
 	fmt.Fprintf(os.Stderr, "│  A new version of cloudrouter is available: %s → %s    │\n",
 		padVersion(result.CurrentVersion), padVersion(result.LatestVersion))
 	fmt.Fprintf(os.Stderr, "│                                                             │\n")
-	fmt.Fprintf(os.Stderr, "│  To update: npm i -g @manaflow-ai/cloudrouter               │\n")
+	fmt.Fprintf(os.Stderr, "│  To update: npm i -g @karlorz/cloudrouter               │\n")
 	fmt.Fprintf(os.Stderr, "╰─────────────────────────────────────────────────────────────╯\n")
 	fmt.Fprintf(os.Stderr, "\n")
 

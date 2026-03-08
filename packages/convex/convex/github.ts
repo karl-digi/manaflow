@@ -9,12 +9,13 @@ export const getReposByOrg = authQuery({
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    // Limit to 500 repos to avoid excessive bandwidth (most users have <100 repos)
     const repos = await ctx.db
       .query("repos")
       .withIndex("by_team_user", (q) =>
         q.eq("teamId", teamId).eq("userId", userId)
       )
-      .collect();
+      .take(500);
 
     // Group by organization
     const reposByOrg = repos.reduce(
@@ -893,5 +894,31 @@ export const getRepoByFullNameInternal = internalQuery({
         q.eq("teamId", teamId).eq("fullName", fullName)
       )
       .first();
+  },
+});
+
+/**
+ * Get the GitHub installation ID for a repo.
+ * Looks up the repo by fullName and returns the installation ID from its provider connection.
+ */
+export const getRepoInstallationIdInternal = internalQuery({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+  },
+  handler: async (ctx, { teamId, repoFullName }): Promise<number | null> => {
+    const repo = await ctx.db
+      .query("repos")
+      .withIndex("by_team_fullName", (q) =>
+        q.eq("teamId", teamId).eq("fullName", repoFullName)
+      )
+      .first();
+
+    if (!repo?.connectionId) {
+      return null;
+    }
+
+    const connection = await ctx.db.get(repo.connectionId);
+    return connection?.installationId ?? null;
   },
 });

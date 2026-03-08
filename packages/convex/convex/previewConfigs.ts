@@ -1,15 +1,8 @@
 import { v } from "convex/values";
+import { normalizeRepoFullName } from "../_shared/git";
 import { getTeamId } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
 import { internalMutation, internalQuery } from "./_generated/server";
-
-function normalizeRepoFullName(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed.includes("/")) {
-    throw new Error("repoFullName must be in the form owner/name");
-  }
-  return trimmed.replace(/\.git$/i, "").toLowerCase();
-}
 
 export const listByTeam = authQuery({
   args: {

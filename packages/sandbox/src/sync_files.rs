@@ -13,6 +13,40 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tar::Builder;
 use tar::Header;
 
+const CODEX_NOTIFY_BLOCK: &str = r#"notify = [
+  "sh",
+  "-c",
+  "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
+  "--",
+]
+
+"#;
+
+const CODEX_SANDBOX_MODE_LINE: &str = "sandbox_mode = \"danger-full-access\"\n\n";
+
+fn ensure_codex_defaults(content: &str) -> String {
+    let has_notify = content
+        .lines()
+        .any(|line| line.trim_start().starts_with("notify"));
+    let has_sandbox_mode = content
+        .lines()
+        .any(|line| line.trim_start().starts_with("sandbox_mode"));
+
+    if has_notify && has_sandbox_mode {
+        return content.to_string();
+    }
+
+    let mut prefix = String::new();
+    if !has_notify {
+        prefix.push_str(CODEX_NOTIFY_BLOCK);
+    }
+    if !has_sandbox_mode {
+        prefix.push_str(CODEX_SANDBOX_MODE_LINE);
+    }
+
+    format!("{prefix}{content}")
+}
+
 pub struct SyncFileDef {
     pub name: &'static str,
     pub host_path: &'static str,    // Relative to HOME
@@ -246,25 +280,6 @@ pub async fn upload_sync_files_with_list(
 
         let temp_dir_name = "__cmux_sync_temp";
 
-        fn ensure_codex_notify(content: &str) -> String {
-            let has_notify = content
-                .lines()
-                .any(|line| line.trim_start().starts_with("notify"));
-            if has_notify {
-                return content.to_string();
-            }
-
-            let notify_block = r#"notify = [
-  "sh",
-  "-c",
-  "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
-  "--",
-]
-
-"#;
-            format!("{notify_block}{content}")
-        }
-
         for SyncFileToUpload {
             host_path,
             sandbox_path: sandbox_path_str,
@@ -280,10 +295,10 @@ pub async fn upload_sync_files_with_list(
                 // For directories, recursively add all contents
                 tar.append_dir_all(&tar_path, &host_path)
             } else if sandbox_path_str == "/root/.codex/config.toml" {
-                // Ensure Codex config always has our notify hook
+                // Ensure Codex config always has required defaults.
                 match fs::read_to_string(&host_path) {
                     Ok(raw) => {
-                        let merged = ensure_codex_notify(&raw);
+                        let merged = ensure_codex_defaults(&raw);
                         let bytes = merged.as_bytes();
                         let mut header = Header::new_gnu();
                         if let Err(e) = header.set_path(&tar_path) {
@@ -365,6 +380,7 @@ pub async fn upload_sync_files_with_list(
         command: vec!["/bin/sh".into(), "-c".into(), move_script.into()],
         workdir: None,
         env: Vec::new(),
+        timeout_ms: None,
     };
 
     let exec_url = format!("{}/sandboxes/{}/exec", base_url.trim_end_matches('/'), id);
@@ -416,25 +432,6 @@ pub fn prebuild_sync_files_tar() -> Result<Option<Vec<u8>>, String> {
         let mut tar = Builder::new(&mut buffer);
         let temp_dir_name = "__cmux_sync_temp";
 
-        fn ensure_codex_notify(content: &str) -> String {
-            let has_notify = content
-                .lines()
-                .any(|line| line.trim_start().starts_with("notify"));
-            if has_notify {
-                return content.to_string();
-            }
-
-            let notify_block = r#"notify = [
-  "sh",
-  "-c",
-  "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
-  "--",
-]
-
-"#;
-            format!("{notify_block}{content}")
-        }
-
         for SyncFileToUpload {
             host_path,
             sandbox_path: sandbox_path_str,
@@ -450,7 +447,7 @@ pub fn prebuild_sync_files_tar() -> Result<Option<Vec<u8>>, String> {
             } else if sandbox_path_str == "/root/.codex/config.toml" {
                 match fs::read_to_string(&host_path) {
                     Ok(raw) => {
-                        let merged = ensure_codex_notify(&raw);
+                        let merged = ensure_codex_defaults(&raw);
                         let bytes = merged.as_bytes();
                         let mut header = Header::new_gnu();
                         if header.set_path(&tar_path).is_err() {
@@ -547,6 +544,7 @@ pub async fn upload_prebuilt_sync_files(
         command: vec!["/bin/sh".into(), "-c".into(), move_script.into()],
         workdir: None,
         env: Vec::new(),
+        timeout_ms: None,
     };
 
     let exec_url = format!("{}/sandboxes/{}/exec", base_url.trim_end_matches('/'), id);

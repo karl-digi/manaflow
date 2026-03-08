@@ -14,6 +14,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isSignedThinkingBlock(node: Record<string, unknown>): boolean {
+  const blockType = typeof node.type === "string" ? node.type : null;
+  return (
+    blockType === "thinking" ||
+    blockType === "redacted_thinking" ||
+    typeof node.signature === "string"
+  );
+}
+
+function getBearerToken(header: string | null): string | null {
+  if (!header) {
+    return null;
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1]?.trim();
+  return token ? token : null;
+}
+
 /**
  * Strip unsupported fields from cache_control objects in the request body.
  * Some clients (e.g. Claude Code) send cache_control with a "scope" field
@@ -22,6 +45,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeCacheControl(body: Record<string, unknown>): void {
   function walk(node: unknown): void {
     if (!isRecord(node)) return;
+
+    // Anthropic requires replaying thinking blocks exactly as received.
+    if (isSignedThinkingBlock(node)) {
+      return;
+    }
 
     if (isRecord(node.cache_control)) {
       delete (node.cache_control as Record<string, unknown>).scope;
@@ -32,6 +60,8 @@ function sanitizeCacheControl(body: Record<string, unknown>): void {
         for (const item of value) {
           walk(item);
         }
+      } else if (isRecord(value)) {
+        walk(value);
       }
     }
   }
@@ -123,57 +153,64 @@ export async function POST(request: NextRequest) {
 
     const xApiKeyHeader = request.headers.get("x-api-key");
     const authorizationHeader = request.headers.get("authorization");
-    const isOAuthToken = getIsOAuthToken(
-      xApiKeyHeader || authorizationHeader || ""
-    );
-    const useOriginalApiKey =
-      !isOAuthToken &&
-      xApiKeyHeader !== hardCodedApiKey &&
-      authorizationHeader !== hardCodedApiKey;
+    const bearerToken = getBearerToken(authorizationHeader);
+    const providedApiKey =
+      xApiKeyHeader ?? (bearerToken && !getIsOAuthToken(bearerToken) ? bearerToken : null);
+    const isOAuthToken = getIsOAuthToken(providedApiKey || bearerToken || "");
     const body = await request.json();
     sanitizeCacheControl(body);
 
     // Build headers
-    // When using Convex endpoint with platform credits, send the placeholder key
-    // so Convex routes to Bedrock instead of Cloudflare/Anthropic
+    // Forward the user's actual API key to Convex so it can properly route:
+    // - User key (any non-placeholder) -> Anthropic/Cloudflare
+    // - Placeholder key -> Bedrock (platform credits)
     const apiKeyForRequest = USE_CLOUDFLARE_AI_GATEWAY
-      ? env.ANTHROPIC_API_KEY
-      : hardCodedApiKey;
+      ? (env.ANTHROPIC_API_KEY ?? "")
+      : (providedApiKey ?? hardCodedApiKey);
 
-    const headers: Record<string, string> =
-      useOriginalApiKey && !TEMPORARY_DISABLE_AUTH
-        ? (() => {
-            const filtered = new Headers(request.headers);
-            return Object.fromEntries(filtered);
-          })()
-        : {
-            "Content-Type": "application/json",
-            "x-api-key": apiKeyForRequest,
-            "anthropic-version": "2023-06-01",
-          };
+    const filteredHeaders = new Headers();
+    request.headers.forEach((value, key) => {
+      const lowerKey = key.toLowerCase();
+      if (
+        ![
+          "host",
+          "content-length",
+          "connection",
+          "transfer-encoding",
+        ].includes(lowerKey)
+      ) {
+        filteredHeaders.set(key, value);
+      }
+    });
+
+    filteredHeaders.set("content-type", "application/json");
+    if (!filteredHeaders.has("anthropic-version")) {
+      filteredHeaders.set("anthropic-version", "2023-06-01");
+    }
+    if (!filteredHeaders.has("x-api-key")) {
+      filteredHeaders.set("x-api-key", apiKeyForRequest);
+    }
 
     // Forward cmux headers to Convex so it can extract auth for tracking
     if (!USE_CLOUDFLARE_AI_GATEWAY) {
       const cmuxToken = request.headers.get("x-cmux-token");
       const cmuxSource = request.headers.get("x-cmux-source");
       if (cmuxToken) {
-        headers["x-cmux-token"] = cmuxToken;
+        filteredHeaders.set("x-cmux-token", cmuxToken);
       }
       if (cmuxSource) {
-        headers["x-cmux-source"] = cmuxSource;
+        filteredHeaders.set("x-cmux-source", cmuxSource);
       }
     }
 
-    // Add beta header if beta param is present
-    if (!useOriginalApiKey) {
-      if (beta === "true") {
-        headers["anthropic-beta"] = "messages-2023-12-15";
-      }
+    // Preserve caller betas when present, otherwise add the legacy beta fallback.
+    if (beta === "true" && !filteredHeaders.has("anthropic-beta")) {
+      filteredHeaders.set("anthropic-beta", "messages-2023-12-15");
     }
 
     const response = await fetch(getAnthropicApiUrl(), {
       method: "POST",
-      headers,
+      headers: Object.fromEntries(filteredHeaders.entries()),
       body: JSON.stringify(body),
     });
 

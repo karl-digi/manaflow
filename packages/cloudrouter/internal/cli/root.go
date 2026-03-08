@@ -3,8 +3,8 @@ package cli
 import (
 	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/auth"
-	"github.com/manaflow-ai/cloudrouter/internal/version"
+	"github.com/karlorz/cloudrouter/internal/auth"
+	"github.com/karlorz/cloudrouter/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -54,8 +54,6 @@ GPU options (--gpu, auto-selects Modal provider):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
-
-  The following GPUs require approval (contact founders@manaflow.ai):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models
@@ -134,6 +132,7 @@ func init() {
 	rootCmd.AddCommand(execCmd)
 
 	// File transfer commands
+	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(downloadCmd)
 

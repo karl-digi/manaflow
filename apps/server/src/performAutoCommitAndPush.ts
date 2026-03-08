@@ -66,8 +66,8 @@ export default async function performAutoCommitAndPush(
       if (aiCommit && aiCommit.trim()) {
         commitMessage = aiCommit.trim();
       } else {
-        console.warn(
-          "No AI commit message generated, falling back to task-based message"
+        serverLogger.warn(
+          "[AgentSpawner] No AI commit message generated, falling back to task-based message"
         );
         commitMessage = `${truncatedDescription}\n\nTask completed by ${agent.name} agent${
           isCrowned ? " 🏆" : ""

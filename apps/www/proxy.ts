@@ -33,7 +33,8 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
-  if (hostname === "cloudrouter.dev" && pathname === "/") {
+  // Upstream uses cloudrouter.dev, fork can use cr.karldigi.dev or similar
+  if ((hostname === "cloudrouter.dev" || hostname === "cr.karldigi.dev") && pathname === "/") {
     return NextResponse.rewrite(new URL("/cloudrouter", request.url));
   }
 

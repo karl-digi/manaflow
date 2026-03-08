@@ -2987,6 +2987,7 @@ async fn handle_exec_request(
         command,
         workdir: args.workdir,
         env: args.env,
+        timeout_ms: None,
     };
     let url = format!(
         "{}/sandboxes/{}/exec",
@@ -4411,6 +4412,7 @@ async fn handle_ssh_exec(
             command,
             workdir: None,
             env: Vec::new(),
+            timeout_ms: None,
         };
         let url = format!(
             "{}/sandboxes/{}/exec",
@@ -5313,6 +5315,7 @@ async fn exec_in_sandbox(
         command: command.iter().map(|s| s.to_string()).collect(),
         workdir,
         env: vec![],
+        timeout_ms: None,
     };
     let url = format!(
         "{}/sandboxes/{}/exec",
@@ -5525,6 +5528,7 @@ mod tests {
             },
             workdir: args.workdir.clone(),
             env: args.env.clone(),
+            timeout_ms: None,
         };
         assert_eq!(built.command, vec!["/bin/sh", "-c", "echo 123"]);
     }

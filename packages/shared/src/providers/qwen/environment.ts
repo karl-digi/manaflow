@@ -2,12 +2,18 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
+import {
+  getMemoryStartupCommand,
+  getMemorySeedFiles,
+  getMemoryProtocolInstructions,
+  getProjectContextFile,
+} from "../../agent-memory-protocol";
 
 // Prepare Qwen CLI environment for OpenAI-compatible API key mode.
 // We previously supported the Qwen OAuth device flow, but cmux now uses
 // API keys via DashScope or OpenRouter configured in Settings.
 async function makeQwenEnvironment(
-  _ctx: EnvironmentContext,
+  ctx: EnvironmentContext,
   defaultBaseUrl: string | null,
   defaultModel: string | null
 ): Promise<EnvironmentResult> {
@@ -69,6 +75,37 @@ async function makeQwenEnvironment(
   // Set sensible default base URL for the OpenAI-compatible API if none provided via settings
   if (defaultBaseUrl) env.OPENAI_BASE_URL = defaultBaseUrl;
   if (defaultModel) env.OPENAI_MODEL = defaultModel;
+
+  // Provider override takes precedence over default base URL
+  if (ctx.providerConfig?.isOverridden && ctx.providerConfig.baseUrl) {
+    env.OPENAI_BASE_URL = ctx.providerConfig.baseUrl;
+  }
+
+  // Add agent memory protocol support
+  startupCommands.push(getMemoryStartupCommand());
+  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+
+  // Inject GitHub Projects context if task is linked to a project item (Phase 5)
+  if (ctx.githubProjectContext) {
+    files.push(
+      getProjectContextFile({
+        ...ctx.githubProjectContext,
+        taskRunJwt: ctx.taskRunJwt,
+        callbackUrl: ctx.callbackUrl,
+      }),
+    );
+  }
+
+  // Add QWEN.md with memory protocol instructions for the project
+  const qwenMdContent = `# cmux Project Instructions
+
+${getMemoryProtocolInstructions()}
+`;
+  files.push({
+    destinationPath: "/root/workspace/QWEN.md",
+    contentBase64: Buffer.from(qwenMdContent).toString("base64"),
+    mode: "644",
+  });
 
   return { files, env, startupCommands };
 }

@@ -33,7 +33,6 @@ export const CrownWorkerCheckResponseSchema = z.object({
   ok: z.literal(true),
   taskId: z.string(),
   allRunsFinished: z.boolean(),
-  allWorkersReported: z.boolean(),
   shouldEvaluate: z.boolean(),
   singleRunWinnerId: z.string().nullable(),
   existingEvaluation: z
@@ -88,6 +87,7 @@ export const WorkerTaskRunResponseSchema = z.object({
       projectFullName: z.string().nullable().optional(),
     })
     .nullable(),
+  screenshotWorkflowEnabled: z.boolean().optional(),
 });
 export type WorkerTaskRunResponse = z.infer<typeof WorkerTaskRunResponseSchema>;
 
@@ -106,6 +106,18 @@ export type WorkerAllRunsCompleteResponse = z.infer<
   typeof WorkerAllRunsCompleteResponseSchema
 >;
 
+export const WorkerPushAuthResponseSchema = z.object({
+  ok: z.literal(true),
+  source: z.enum(["github_app", "none"]),
+  token: z.string().nullable(),
+  repoFullName: z.string().nullable(),
+  installationId: z.number().nullable(),
+  reason: z.string().optional(),
+});
+export type WorkerPushAuthResponse = z.infer<
+  typeof WorkerPushAuthResponseSchema
+>;
+
 export const CandidateDataSchema = z.object({
   runId: z.string(),
   agentName: z.string(),
@@ -115,8 +127,12 @@ export const CandidateDataSchema = z.object({
 export type CandidateData = z.infer<typeof CandidateDataSchema>;
 
 export const CrownEvaluationResponseSchema = z.object({
-  winner: z.number().int().min(0),
+  winner: z.number().int().min(0).nullable(),
   reason: z.string(),
+  /** Whether this result was produced by fallback due to AI service failure */
+  isFallback: z.boolean().optional(),
+  /** Human-readable message about the evaluation process */
+  evaluationNote: z.string().optional(),
 });
 export type CrownEvaluationResponse = z.infer<
   typeof CrownEvaluationResponseSchema
@@ -124,6 +140,7 @@ export type CrownEvaluationResponse = z.infer<
 
 export const CrownSummarizationResponseSchema = z.object({
   summary: z.string(),
+  executionSummary: z.string().optional(),
 });
 export type CrownSummarizationResponse = z.infer<
   typeof CrownSummarizationResponseSchema
@@ -188,12 +205,12 @@ export const CrownSummarizationPromptSchema = z.object({
 export const WorkerCheckSchema = z.object({
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
-  checkType: z.enum(["info", "all-complete", "crown"]).optional(),
+  checkType: z.enum(["info", "all-complete", "crown", "push-auth"]).optional(),
 });
 
 export const WorkerFinalizeSchema = z.object({
   taskId: typedZid("tasks"),
-  winnerRunId: typedZid("taskRuns"),
+  winnerRunId: typedZid("taskRuns").nullable().optional(),
   reason: z.string(),
   evaluationPrompt: z.string(),
   evaluationResponse: z.string(),
@@ -211,6 +228,10 @@ export const WorkerFinalizeSchema = z.object({
     .optional(),
   pullRequestTitle: z.string().optional(),
   pullRequestDescription: z.string().optional(),
+  /** Whether this evaluation was produced by fallback due to AI service failure */
+  isFallback: z.boolean().optional(),
+  /** Human-readable note about the evaluation process */
+  evaluationNote: z.string().optional(),
 });
 
 export const WorkerCompleteRequestSchema = z.object({

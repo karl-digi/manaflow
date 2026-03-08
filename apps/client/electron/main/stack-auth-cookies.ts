@@ -176,7 +176,7 @@ export function buildStackAuthCookieSpecs(options: {
     },
     isHttps: {
       name: "stack-is-https",
-      value: "true",
+      value: secure ? "true" : "false",
       secure,
       httpOnly: false,
       sameSite: "lax",

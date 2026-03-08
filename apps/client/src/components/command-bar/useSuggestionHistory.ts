@@ -27,7 +27,8 @@ const safeParseHistory = (raw: string | null): SuggestionHistoryEntry[] => {
           : null,
       )
       .filter((entry): entry is SuggestionHistoryEntry => Boolean(entry));
-  } catch {
+  } catch (error) {
+    console.debug("[useSuggestionHistory] Failed to parse history JSON", error);
     return [];
   }
 };
@@ -36,7 +37,8 @@ const readHistory = (storageKey: string): SuggestionHistoryEntry[] => {
   if (!isBrowser) return [];
   try {
     return safeParseHistory(window.localStorage.getItem(storageKey));
-  } catch {
+  } catch (error) {
+    console.debug("[useSuggestionHistory] Failed to read history from localStorage", error);
     return [];
   }
 };
@@ -48,8 +50,9 @@ const persistHistory = (
   if (!isBrowser) return;
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(entries));
-  } catch {
-    // Ignore storage errors (e.g. private mode)
+  } catch (error) {
+    // Storage may fail in private mode or when quota exceeded
+    console.debug("[useSuggestionHistory] Failed to persist history", error);
   }
 };
 

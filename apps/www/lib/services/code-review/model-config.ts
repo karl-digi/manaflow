@@ -135,8 +135,9 @@ export function getInitialTooltipLanguage(): TooltipLanguageValue {
       // Validate it's a known language value
       return normalizeTooltipLanguage(stored);
     }
-  } catch {
-    // localStorage not available or JSON parse failed
+  } catch (error) {
+    // localStorage not available or JSON parse failed - log for debugging
+    console.error("[model-config] Failed to load tooltip language from storage:", error);
   }
 
   // No stored preference - detect from browser

@@ -1,7 +1,10 @@
 import { TaskRunChatPane } from "@/components/TaskRunChatPane";
 import { TaskRunTerminalPane } from "@/components/TaskRunTerminalPane";
+import { TaskRunMemoryPanel } from "@/components/TaskRunMemoryPanel";
+import { TaskRunSummaryPanel } from "@/components/TaskRunSummaryPanel";
 import { FloatingPane } from "@/components/floating-pane";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { AgentTeamPanel } from "@/components/dashboard/AgentTeamPanel";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
@@ -17,6 +20,7 @@ import {
   removePanelFromAllPositions,
   getCurrentLayoutPanels,
   PANEL_LABELS,
+  PANEL_ICON_COMPONENTS,
 } from "@/lib/panel-config";
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
@@ -24,7 +28,7 @@ import {
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
-  toMorphVncUrl,
+  toGenericVncUrl,
   toMorphXtermBaseUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
@@ -46,14 +50,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useMutation, useQuery } from "convex/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Plus,
-  Code2,
-  Globe2,
-  TerminalSquare,
-  GitCompare,
-  MessageCircle,
-} from "lucide-react";
+import { Plus } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
@@ -151,7 +148,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         }
       }
       if (selectedRun && rawBrowserUrl) {
-        const vncUrl = toMorphVncUrl(rawBrowserUrl);
+        const vncUrl = toGenericVncUrl(rawBrowserUrl);
         if (vncUrl) {
           void preloadTaskRunBrowserIframe(selectedRun._id, vncUrl).catch(
             (error) => {
@@ -239,21 +236,6 @@ function EmptyPanelSlot({
 }: EmptyPanelSlotProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const getPanelIcon = (panelType: PanelType) => {
-    switch (panelType) {
-      case "chat":
-        return <MessageCircle className="size-4" />;
-      case "workspace":
-        return <Code2 className="size-4" />;
-      case "terminal":
-        return <TerminalSquare className="size-4" />;
-      case "browser":
-        return <Globe2 className="size-4" />;
-      case "gitDiff":
-        return <GitCompare className="size-4" />;
-    }
-  };
-
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-lg border border-dashed border-neutral-300 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900">
       <div className="flex h-full items-center justify-center p-4">
@@ -274,22 +256,25 @@ function EmptyPanelSlot({
                   onClick={() => setIsOpen(false)}
                 />
                 <div className="absolute left-0 top-full z-[var(--z-popover)] mt-2 w-48 rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
-                  {availablePanels.map((panelType) => (
-                    <button
-                      key={panelType}
-                      type="button"
-                      onClick={() => {
-                        onAddPanel(position, panelType);
-                        setIsOpen(false);
-                      }}
-                      className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700 first:rounded-t-lg last:rounded-b-lg transition-colors"
-                    >
-                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
-                        {getPanelIcon(panelType)}
-                      </div>
-                      {PANEL_LABELS[panelType]}
-                    </button>
-                  ))}
+                  {availablePanels.map((panelType) => {
+                    const Icon = PANEL_ICON_COMPONENTS[panelType];
+                    return (
+                      <button
+                        key={panelType}
+                        type="button"
+                        onClick={() => {
+                          onAddPanel(position, panelType);
+                          setIsOpen(false);
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700 first:rounded-t-lg last:rounded-b-lg transition-colors"
+                      >
+                        <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                          <Icon className="size-4" />
+                        </div>
+                        {PANEL_LABELS[panelType]}
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -484,6 +469,19 @@ function TaskDetailPage() {
   }, [search.runId, taskRunIndex, taskRuns]);
 
   const selectedRunId = selectedRun?._id ?? null;
+  const selectedRunChildren = useQuery(
+    api.taskRuns.listChildRuns,
+    selectedRunId
+      ? {
+          teamSlugOrId,
+          parentRunId: selectedRunId,
+        }
+      : "skip"
+  );
+  const shouldRenderAgentTeamPanel =
+    Boolean(selectedRunId) &&
+    selectedRunChildren != null &&
+    selectedRunChildren.length > 0;
 
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(
@@ -658,13 +656,14 @@ function TaskDetailPage() {
     if (!rawBrowserUrl) {
       return null;
     }
-    return toMorphVncUrl(rawBrowserUrl);
+    return toGenericVncUrl(rawBrowserUrl);
   }, [rawBrowserUrl]);
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
   const hasBrowserView = Boolean(browserUrl);
   const isMorphProvider = selectedRun?.vscode?.provider === "morph";
+  const isBrowserSupported = selectedRun?.vscode?.provider === "morph" || selectedRun?.vscode?.provider === "pve-lxc";
 
   const handleBrowserStatusChange = useCallback(
     (status: PersistentIframeStatus) => {
@@ -801,17 +800,14 @@ function TaskDetailPage() {
 
   // Determine effective layout mode based on workspace type
   // - Local workspaces: single panel (just VSCode)
-  // - Cloud workspaces: two-horizontal (VSCode left, browser right)
-  // - Regular tasks: use user's configured layout
+  // - Cloud workspaces and regular tasks: use user's configured layout
   const effectiveLayoutMode = useMemo(() => {
     if (isLocalWorkspaceTask) {
       return "single-panel" as const;
     }
-    if (isCloudWorkspaceTask) {
-      return "two-horizontal" as const;
-    }
+    // Cloud workspaces and regular tasks use user's configured layout
     return panelConfig.layoutMode;
-  }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
+  }, [isLocalWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
     // For local workspaces: just VSCode
@@ -824,19 +820,9 @@ function TaskDetailPage() {
       };
     }
 
-    // For cloud workspaces: VSCode left, browser right
-    if (isCloudWorkspaceTask) {
-      return {
-        topLeft: "workspace" as const,
-        topRight: "browser" as const,
-        bottomLeft: null,
-        bottomRight: null,
-      };
-    }
-
-    // Regular tasks: use configured layout
+    // Cloud workspaces and regular tasks: use configured layout
     return getCurrentLayoutPanels(panelConfig);
-  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+  }, [panelConfig, isLocalWorkspaceTask]);
 
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
@@ -846,13 +832,9 @@ function TaskDetailPage() {
       return panels.filter((p) => p !== "gitDiff" && p !== "browser");
     }
 
-    // For cloud workspaces, exclude gitDiff (browser is used)
-    if (isCloudWorkspaceTask) {
-      return panels.filter((p) => p !== "gitDiff");
-    }
-
+    // Cloud workspaces and regular tasks have access to all panels
     return panels;
-  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+  }, [panelConfig, isLocalWorkspaceTask]);
 
   const activePanelPositions = useMemo(
     () => getActivePanelPositions(effectiveLayoutMode),
@@ -889,12 +871,15 @@ function TaskDetailPage() {
       setBrowserStatus: handleBrowserStatusChange,
       browserPlaceholder,
       isMorphProvider,
+      isBrowserSupported,
       isBrowserBusy,
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
       TaskRunTerminalPane,
       TaskRunGitDiffPanel,
+      TaskRunMemoryPanel,
+      TaskRunSummaryPanel,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
@@ -923,6 +908,7 @@ function TaskDetailPage() {
       handleBrowserStatusChange,
       browserPlaceholder,
       isMorphProvider,
+      isBrowserSupported,
       isBrowserBusy,
       handlePanelClose,
       teamSlugOrId,
@@ -947,6 +933,7 @@ function TaskDetailPage() {
           }
           onToggleAutoSync={linkedLocalWorkspace ? handleToggleAutoSync : undefined}
           autoSyncEnabled={autoSyncEnabled}
+          linkedLocalWorkspace={linkedLocalWorkspace}
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}
@@ -954,6 +941,14 @@ function TaskDetailPage() {
           config={panelConfig}
           onChange={handlePanelConfigChange}
         />
+        {shouldRenderAgentTeamPanel && selectedRunId ? (
+          <div className="px-1 pb-1">
+            <AgentTeamPanel
+              teamSlugOrId={teamSlugOrId}
+              parentRunId={selectedRunId}
+            />
+          </div>
+        ) : null}
         <div className="relative flex flex-1 min-h-0 w-full h-full p-1">
           {expandedPanel ? (
             <div

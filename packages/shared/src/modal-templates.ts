@@ -147,13 +147,18 @@ export const getModalGpuTemplates = (): readonly ModalTemplatePreset[] => {
 };
 
 /**
- * GPUs available without approval. Higher-end GPUs (L40S, A100, H100, H200, B200)
- * require contacting founders@manaflow.ai for enablement.
+ * All GPUs are now available without approval.
  */
 export const MODAL_AVAILABLE_GPUS = new Set([
   "T4",
   "L4",
   "A10G",
+  "L40S",
+  "A100",
+  "A100-80GB",
+  "H100",
+  "H200",
+  "B200",
 ]);
 
 /**

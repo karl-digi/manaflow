@@ -2,7 +2,7 @@ import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration"
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
-import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toGenericVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import { clearEnvironmentDraft } from "@/state/environment-draft-store";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
@@ -52,19 +52,16 @@ function NewSnapshotVersionPage() {
   }, [urlInstanceId]);
 
   const derivedBrowserUrl = useMemo(() => {
-    if (urlInstanceId) {
-      const hostId = urlInstanceId.replace(/_/g, "-");
-      const workspaceUrl = `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-      return toMorphVncUrl(workspaceUrl) ?? undefined;
-    }
+    // Prefer urlVscodeUrl as it contains the correct domain (works for both Morph and PVE LXC)
     if (urlVscodeUrl) {
-      return toMorphVncUrl(urlVscodeUrl) ?? undefined;
+      return toGenericVncUrl(urlVscodeUrl) ?? undefined;
     }
+    // Fall back to derivedVscodeUrl (only for Morph instances without explicit vscodeUrl)
     if (derivedVscodeUrl) {
-      return toMorphVncUrl(derivedVscodeUrl) ?? undefined;
+      return toGenericVncUrl(derivedVscodeUrl) ?? undefined;
     }
     return undefined;
-  }, [urlInstanceId, urlVscodeUrl, derivedVscodeUrl]);
+  }, [urlVscodeUrl, derivedVscodeUrl]);
 
   const environmentQuery = useQuery({
     ...getApiEnvironmentsByIdOptions({

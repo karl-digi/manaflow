@@ -8,7 +8,7 @@ export const ErrorSchema = z
     message: z.string().openapi({
       example: "Bad Request",
     }),
-    details: z.any().optional().openapi({
+    details: z.record(z.string(), z.unknown()).optional().openapi({
       example: {
         field: "email",
         issue: "Invalid email format",

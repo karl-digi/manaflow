@@ -1,27 +1,29 @@
-import type { AgentConfig } from "./agentConfig";
-import { AGENT_CONFIGS } from "./agentConfig";
+import { AGENT_CATALOG, type AgentCatalogEntry } from "./agent-catalog";
 
 export type ApiKeyModelsByEnv = Record<string, string[]>;
 
+/**
+ * Compute a mapping from environment variable names to agent names that require them.
+ */
 export function computeApiKeyModelsByEnv(
-  agentConfigs: readonly AgentConfig[]
+  entries: readonly AgentCatalogEntry[]
 ): ApiKeyModelsByEnv {
   const map = new Map<string, Set<string>>();
-  for (const config of agentConfigs) {
-    const envVars = config.apiKeys?.map((k) => k.envVar) ?? [];
+  for (const entry of entries) {
+    const envVars = entry.requiredApiKeys;
     if (envVars.length === 0) continue;
-    const label = config.name; // show full agent name
-    for (const env of envVars) {
-      if (!map.has(env)) map.set(env, new Set<string>());
-      map.get(env)!.add(label);
+    const label = entry.name; // show full agent name
+    for (const envVar of envVars) {
+      if (!map.has(envVar)) map.set(envVar, new Set<string>());
+      map.get(envVar)!.add(label);
     }
   }
   const out: ApiKeyModelsByEnv = {};
-  for (const [env, labels] of map.entries()) {
-    out[env] = Array.from(labels).sort((a, b) => a.localeCompare(b));
+  for (const [envVar, labels] of map.entries()) {
+    out[envVar] = Array.from(labels).sort((a, b) => a.localeCompare(b));
   }
   return out;
 }
 
 export const API_KEY_MODELS_BY_ENV: ApiKeyModelsByEnv =
-  computeApiKeyModelsByEnv(AGENT_CONFIGS);
+  computeApiKeyModelsByEnv(AGENT_CATALOG);

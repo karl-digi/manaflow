@@ -1,3 +1,8 @@
+/**
+ * Types and utilities for managing pull request state across task runs.
+ */
+
+/** The state of a pull request for a single task run */
 export type RunPullRequestState =
   | "none"
   | "draft"
@@ -6,6 +11,7 @@ export type RunPullRequestState =
   | "closed"
   | "unknown";
 
+/** The overall merge status of a task (derived from all PRs) */
 export type TaskMergeStatus =
   | "none"
   | "pr_draft"
@@ -13,26 +19,44 @@ export type TaskMergeStatus =
   | "pr_merged"
   | "pr_closed";
 
+/** Stored information about a pull request */
 export interface StoredPullRequestInfo {
+  /** Full repository name (e.g., "owner/repo") */
   repoFullName: string;
+  /** URL to the pull request */
   url?: string;
+  /** Pull request number */
   number?: number;
+  /** Current state of the pull request */
   state: RunPullRequestState;
+  /** Whether the PR is a draft */
   isDraft?: boolean;
 }
 
+/** Result of a pull request action (create, sync, etc.) */
 export interface PullRequestActionResult extends StoredPullRequestInfo {
+  /** Error message if the action failed */
   error?: string;
 }
 
+/** Aggregated summary of pull request state across all repos */
 export interface AggregatePullRequestSummary {
+  /** Overall state based on all PRs */
   state: RunPullRequestState;
+  /** Whether any PR is a draft */
   isDraft: boolean;
+  /** URL of the first PR with a URL */
   url?: string;
+  /** Number of the first PR with a number */
   number?: number;
+  /** Task-level merge status */
   mergeStatus: TaskMergeStatus;
 }
 
+/**
+ * Priority order for PR states when aggregating.
+ * Lower index = higher priority.
+ */
 const STATE_PRIORITY: RunPullRequestState[] = [
   "open",
   "draft",
@@ -41,10 +65,19 @@ const STATE_PRIORITY: RunPullRequestState[] = [
   "none",
 ];
 
+/**
+ * Normalizes a repository name by trimming whitespace.
+ */
 function normalizeRepoName(repoFullName: string): string {
   return repoFullName.trim();
 }
 
+/**
+ * Sorts pull request info records by repository name alphabetically.
+ *
+ * @param records - Array of records with repoFullName property
+ * @returns Sorted copy of the array
+ */
 export function sortPullRequestInfos<T extends { repoFullName: string }>(
   records: readonly T[]
 ): T[] {
@@ -55,6 +88,13 @@ export function sortPullRequestInfos<T extends { repoFullName: string }>(
   );
 }
 
+/**
+ * Aggregates pull request state across multiple repositories into a summary.
+ * Uses state priority to determine the overall state when PRs have different states.
+ *
+ * @param records - Array of pull request info records
+ * @returns Aggregated summary of PR state
+ */
 export function aggregatePullRequestState(
   records: readonly StoredPullRequestInfo[]
 ): AggregatePullRequestSummary {
@@ -118,6 +158,15 @@ export function aggregatePullRequestState(
   };
 }
 
+/**
+ * Reconciles existing PR records with new updates, producing a merged result.
+ * Handles merging state from multiple sources and extracting errors.
+ *
+ * @param options.existing - Current stored PR records
+ * @param options.updates - New PR action results to merge in
+ * @param options.repoFullNames - Optional list of all repo names to include
+ * @returns Merged records, aggregate summary, and any errors
+ */
 export function reconcilePullRequestRecords({
   existing,
   updates,
@@ -195,6 +244,14 @@ export function reconcilePullRequestRecords({
   };
 }
 
+/**
+ * Determines if an incoming PR state should replace the current state.
+ * Based on state priority (open > draft > closed > unknown > none).
+ *
+ * @param incoming - The new state to evaluate
+ * @param current - The existing state
+ * @returns True if incoming state has higher priority than current
+ */
 export function isBetterState(
   incoming: RunPullRequestState,
   current: RunPullRequestState

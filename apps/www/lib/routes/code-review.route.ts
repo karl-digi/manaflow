@@ -45,7 +45,7 @@ const CodeReviewJobSchema = z.object({
   sandboxInstanceId: z.string().nullable(),
   errorCode: z.string().nullable(),
   errorDetail: z.string().nullable(),
-  codeReviewOutput: z.record(z.string(), z.any()).nullable(),
+  codeReviewOutput: z.record(z.string(), z.unknown()).nullable(),
 });
 
 const FileDiffSchema = z.object({
@@ -214,9 +214,8 @@ codeReviewRouter.openapi(
       request: c.req.raw,
     });
 
-    if (backgroundTask) {
-      void backgroundTask;
-    }
+    // Fire-and-forget background task - errors are logged within startCodeReviewJob
+    void backgroundTask;
 
     return c.json(
       {
@@ -351,7 +350,7 @@ codeReviewRouter.post("/code-review/simple", async (c) => {
 
       await enqueue({ type: "complete" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Review stream failed unexpectedly";
       const isAbortError =
         message.includes("Stream aborted") || message.includes("aborted");
       if (isAbortError) {

@@ -1,0 +1,763 @@
+# TanStack Query
+
+TanStack Query (formerly React Query) is an asynchronous state management library designed to simplify fetching, caching, synchronizing, and updating server state in web applications. It provides a powerful, protocol-agnostic data fetching solution that works seamlessly with REST, GraphQL, or any Promise-based API, eliminating the need for manual cache management while offering automatic background refetching, pagination, infinite scroll support, and optimistic updates.
+
+The library is framework-agnostic at its core (`@tanstack/query-core`) with official adapters for React, Vue, Solid, Svelte, Angular, and Preact. It handles complex data synchronization scenarios including dependent queries, parallel queries, query invalidation, and offline support. TanStack Query's smart caching strategy with configurable stale times and garbage collection makes it ideal for building responsive, data-driven applications that feel instantaneous to users.
+
+## QueryClient
+
+The QueryClient is the central cache manager that all queries and mutations interact with. It provides methods for prefetching, invalidating, and manually updating cached data.
+
+```tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+// Create a client with default options
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      gcTime: 1000 * 60 * 30, // 30 minutes (garbage collection)
+      retry: 3,
+      refetchOnWindowFocus: true,
+    },
+    mutations: {
+      retry: 1,
+    },
+  },
+})
+
+// Wrap your app with the provider
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <YourApp />
+    </QueryClientProvider>
+  )
+}
+```
+
+## useQuery
+
+The primary hook for fetching and caching data. It automatically handles loading states, errors, caching, and background refetching based on the provided query key and fetch function.
+
+```tsx
+import { useQuery } from '@tanstack/react-query'
+
+function TodoList() {
+  const {
+    data,
+    isPending,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ['todos'],
+    queryFn: async () => {
+      const response = await fetch('/api/todos')
+      if (!response.ok) throw new Error('Network response was not ok')
+      return response.json()
+    },
+    staleTime: 1000 * 60, // Consider data fresh for 1 minute
+    refetchInterval: 1000 * 30, // Refetch every 30 seconds
+  })
+
+  if (isPending) return <span>Loading...</span>
+  if (isError) return <span>Error: {error.message}</span>
+
+  return (
+    <div>
+      {isFetching && <span>Updating...</span>}
+      <ul>
+        {data.map((todo) => (
+          <li key={todo.id}>{todo.title}</li>
+        ))}
+      </ul>
+      <button onClick={() => refetch()}>Refresh</button>
+    </div>
+  )
+}
+```
+
+## useQuery with Query Keys
+
+Query keys uniquely identify cached data and support hierarchical structures. Changes to the key automatically trigger new fetches, enabling dependent and parameterized queries.
+
+```tsx
+import { useQuery } from '@tanstack/react-query'
+
+function TodoDetail({ todoId }) {
+  // Query key as array with parameters
+  const { data, isPending } = useQuery({
+    queryKey: ['todos', todoId],
+    queryFn: async () => {
+      const response = await fetch(`/api/todos/${todoId}`)
+      return response.json()
+    },
+    // Only fetch when todoId is truthy
+    enabled: !!todoId,
+  })
+
+  // Query key with object for complex filters
+  const { data: filteredTodos } = useQuery({
+    queryKey: ['todos', { status: 'completed', page: 1 }],
+    queryFn: async ({ queryKey }) => {
+      const [, { status, page }] = queryKey
+      const response = await fetch(`/api/todos?status=${status}&page=${page}`)
+      return response.json()
+    },
+  })
+
+  if (isPending) return <span>Loading...</span>
+  return <div>{data.title}</div>
+}
+```
+
+## useMutation
+
+Used for creating, updating, or deleting data. Mutations provide callbacks for handling success, error, and settlement states, making them ideal for optimistic updates and cache invalidation.
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+
+function AddTodo() {
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: async (newTodo) => {
+      const response = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTodo),
+      })
+      if (!response.ok) throw new Error('Failed to create todo')
+      return response.json()
+    },
+    onSuccess: (data) => {
+      // Invalidate and refetch todos list
+      queryClient.invalidateQueries({ queryKey: ['todos'] })
+      console.log('Todo created:', data)
+    },
+    onError: (error) => {
+      console.error('Error creating todo:', error.message)
+    },
+    onSettled: () => {
+      // Runs on both success and error
+      console.log('Mutation completed')
+    },
+    retry: 3,
+  })
+
+  return (
+    <div>
+      <button
+        onClick={() => mutation.mutate({ title: 'New Todo', completed: false })}
+        disabled={mutation.isPending}
+      >
+        {mutation.isPending ? 'Adding...' : 'Add Todo'}
+      </button>
+      {mutation.isError && <p>Error: {mutation.error.message}</p>}
+      {mutation.isSuccess && <p>Todo added!</p>}
+    </div>
+  )
+}
+```
+
+## useMutation with Async/Await
+
+The `mutateAsync` function returns a Promise, enabling try/catch handling and sequential operations.
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+
+function TodoForm() {
+  const queryClient = useQueryClient()
+
+  const createTodo = useMutation({
+    mutationFn: async (newTodo) => {
+      const response = await fetch('/api/todos', {
+        method: 'POST',
+        body: JSON.stringify(newTodo),
+      })
+      return response.json()
+    },
+  })
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const formData = new FormData(e.target)
+
+    try {
+      const result = await createTodo.mutateAsync({
+        title: formData.get('title'),
+        completed: false,
+      })
+      console.log('Created todo with id:', result.id)
+      await queryClient.invalidateQueries({ queryKey: ['todos'] })
+      e.target.reset()
+    } catch (error) {
+      console.error('Failed to create todo:', error)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input name="title" required />
+      <button type="submit" disabled={createTodo.isPending}>
+        {createTodo.isPending ? 'Saving...' : 'Create'}
+      </button>
+    </form>
+  )
+}
+```
+
+## Query Invalidation
+
+Manually mark queries as stale and trigger refetches. Invalidation supports partial key matching and predicate functions for fine-grained control.
+
+```tsx
+import { useQueryClient } from '@tanstack/react-query'
+
+function CacheControls() {
+  const queryClient = useQueryClient()
+
+  const invalidateAll = () => {
+    // Invalidate all queries
+    queryClient.invalidateQueries()
+  }
+
+  const invalidateTodos = () => {
+    // Invalidate all queries starting with 'todos'
+    queryClient.invalidateQueries({ queryKey: ['todos'] })
+  }
+
+  const invalidateExact = () => {
+    // Invalidate only exact match
+    queryClient.invalidateQueries({
+      queryKey: ['todos', { status: 'completed' }],
+      exact: true,
+    })
+  }
+
+  const invalidateWithPredicate = () => {
+    // Custom predicate for complex matching
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        query.queryKey[0] === 'todos' &&
+        query.queryKey[1]?.priority === 'high',
+    })
+  }
+
+  const refetchActive = async () => {
+    // Refetch all active queries matching key
+    await queryClient.refetchQueries({
+      queryKey: ['todos'],
+      type: 'active',
+    })
+  }
+
+  return (
+    <div>
+      <button onClick={invalidateAll}>Invalidate All</button>
+      <button onClick={invalidateTodos}>Invalidate Todos</button>
+      <button onClick={invalidateExact}>Invalidate Exact</button>
+      <button onClick={refetchActive}>Refetch Active</button>
+    </div>
+  )
+}
+```
+
+## useInfiniteQuery
+
+Handles paginated and infinite scroll data fetching. Manages multiple pages of data with built-in support for loading more content in either direction.
+
+```tsx
+import { useInfiniteQuery } from '@tanstack/react-query'
+
+function InfiniteProjectList() {
+  const {
+    data,
+    error,
+    fetchNextPage,
+    fetchPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+    status,
+  } = useInfiniteQuery({
+    queryKey: ['projects'],
+    queryFn: async ({ pageParam }) => {
+      const response = await fetch(`/api/projects?cursor=${pageParam}&limit=10`)
+      return response.json()
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    getPreviousPageParam: (firstPage) => firstPage.prevCursor ?? undefined,
+    maxPages: 5, // Limit stored pages for memory optimization
+  })
+
+  if (status === 'pending') return <p>Loading...</p>
+  if (status === 'error') return <p>Error: {error.message}</p>
+
+  return (
+    <div>
+      <button
+        onClick={() => fetchPreviousPage()}
+        disabled={!hasPreviousPage || isFetchingPreviousPage}
+      >
+        {isFetchingPreviousPage ? 'Loading...' : 'Load Previous'}
+      </button>
+
+      {data.pages.map((page, i) => (
+        <div key={i}>
+          {page.data.map((project) => (
+            <p key={project.id}>{project.name}</p>
+          ))}
+        </div>
+      ))}
+
+      <button
+        onClick={() => fetchNextPage()}
+        disabled={!hasNextPage || isFetchingNextPage}
+      >
+        {isFetchingNextPage ? 'Loading more...' : hasNextPage ? 'Load More' : 'No more data'}
+      </button>
+    </div>
+  )
+}
+```
+
+## Optimistic Updates
+
+Update the UI immediately before the mutation completes, then rollback on error. This pattern provides instant feedback for better user experience.
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+
+function OptimisticTodoList() {
+  const queryClient = useQueryClient()
+
+  const updateTodo = useMutation({
+    mutationFn: async (updatedTodo) => {
+      const response = await fetch(`/api/todos/${updatedTodo.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updatedTodo),
+      })
+      return response.json()
+    },
+    onMutate: async (newTodo, context) => {
+      // Cancel outgoing refetches to prevent overwriting optimistic update
+      await context.client.cancelQueries({ queryKey: ['todos', newTodo.id] })
+
+      // Snapshot previous value for rollback
+      const previousTodo = context.client.getQueryData(['todos', newTodo.id])
+
+      // Optimistically update cache
+      context.client.setQueryData(['todos', newTodo.id], newTodo)
+
+      // Return context for rollback
+      return { previousTodo }
+    },
+    onError: (err, newTodo, result, context) => {
+      // Rollback on error
+      context.client.setQueryData(['todos', newTodo.id], result.previousTodo)
+    },
+    onSettled: (data, error, variables, result, context) => {
+      // Always refetch to ensure cache consistency
+      context.client.invalidateQueries({ queryKey: ['todos', variables.id] })
+    },
+  })
+
+  const handleToggle = (todo) => {
+    updateTodo.mutate({ ...todo, completed: !todo.completed })
+  }
+
+  return (
+    <ul>
+      {todos.map((todo) => (
+        <li key={todo.id}>
+          <input
+            type="checkbox"
+            checked={todo.completed}
+            onChange={() => handleToggle(todo)}
+          />
+          {todo.title}
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+## Prefetching
+
+Load data before it's needed to eliminate loading states. Useful for hover states, route transitions, or predictive loading patterns.
+
+```tsx
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+function ArticleList({ articles }) {
+  const queryClient = useQueryClient()
+
+  const prefetchArticle = async (articleId) => {
+    await queryClient.prefetchQuery({
+      queryKey: ['article', articleId],
+      queryFn: async () => {
+        const response = await fetch(`/api/articles/${articleId}`)
+        return response.json()
+      },
+      staleTime: 1000 * 60 * 5, // Consider fresh for 5 minutes
+    })
+  }
+
+  return (
+    <ul>
+      {articles.map((article) => (
+        <li
+          key={article.id}
+          onMouseEnter={() => prefetchArticle(article.id)}
+          onFocus={() => prefetchArticle(article.id)}
+        >
+          <a href={`/articles/${article.id}`}>{article.title}</a>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// Prefetch in event handlers or route loaders
+async function prefetchRouteData(queryClient, articleId) {
+  await queryClient.prefetchQuery({
+    queryKey: ['article', articleId],
+    queryFn: () => fetchArticle(articleId),
+  })
+}
+```
+
+## useSuspenseQuery
+
+Integrates with React Suspense for declarative loading states. Data is guaranteed to be defined when the component renders, simplifying TypeScript types.
+
+```tsx
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { Suspense } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
+import { QueryErrorResetBoundary } from '@tanstack/react-query'
+
+function TodoListSuspense() {
+  // data is guaranteed to be defined (no undefined check needed)
+  const { data } = useSuspenseQuery({
+    queryKey: ['todos'],
+    queryFn: async () => {
+      const response = await fetch('/api/todos')
+      return response.json()
+    },
+  })
+
+  return (
+    <ul>
+      {data.map((todo) => (
+        <li key={todo.id}>{todo.title}</li>
+      ))}
+    </ul>
+  )
+}
+
+function App() {
+  return (
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundary
+          onReset={reset}
+          fallbackRender={({ resetErrorBoundary, error }) => (
+            <div>
+              <p>Error: {error.message}</p>
+              <button onClick={resetErrorBoundary}>Retry</button>
+            </div>
+          )}
+        >
+          <Suspense fallback={<div>Loading todos...</div>}>
+            <TodoListSuspense />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+    </QueryErrorResetBoundary>
+  )
+}
+```
+
+## setQueryData
+
+Directly update cached data without refetching. Useful for synchronous updates when you already have the data available.
+
+```tsx
+import { useQueryClient } from '@tanstack/react-query'
+
+function DirectCacheUpdate() {
+  const queryClient = useQueryClient()
+
+  // Set data directly
+  const setTodos = (todos) => {
+    queryClient.setQueryData(['todos'], todos)
+  }
+
+  // Update with function (access previous data)
+  const addTodo = (newTodo) => {
+    queryClient.setQueryData(['todos'], (oldTodos) => {
+      if (!oldTodos) return [newTodo]
+      return [...oldTodos, newTodo]
+    })
+  }
+
+  // Update specific item
+  const updateTodo = (updatedTodo) => {
+    queryClient.setQueryData(['todos'], (oldTodos) =>
+      oldTodos?.map((todo) =>
+        todo.id === updatedTodo.id ? updatedTodo : todo
+      )
+    )
+  }
+
+  // Remove item
+  const removeTodo = (todoId) => {
+    queryClient.setQueryData(['todos'], (oldTodos) =>
+      oldTodos?.filter((todo) => todo.id !== todoId)
+    )
+  }
+
+  // Get current cached data
+  const getTodos = () => {
+    return queryClient.getQueryData(['todos'])
+  }
+
+  // Ensure data exists (fetch if missing)
+  const ensureTodos = async () => {
+    return queryClient.ensureQueryData({
+      queryKey: ['todos'],
+      queryFn: fetchTodos,
+    })
+  }
+}
+```
+
+## Dependent Queries
+
+Fetch data that depends on the result of another query. Use the `enabled` option to control when queries execute.
+
+```tsx
+import { useQuery } from '@tanstack/react-query'
+
+function UserPosts({ userId }) {
+  // First query: fetch user
+  const { data: user, isPending: isUserPending } = useQuery({
+    queryKey: ['user', userId],
+    queryFn: async () => {
+      const response = await fetch(`/api/users/${userId}`)
+      return response.json()
+    },
+  })
+
+  // Dependent query: fetch posts only after user is loaded
+  const { data: posts, isPending: isPostsPending } = useQuery({
+    queryKey: ['posts', user?.id],
+    queryFn: async () => {
+      const response = await fetch(`/api/users/${user.id}/posts`)
+      return response.json()
+    },
+    // Only run when user data is available
+    enabled: !!user?.id,
+  })
+
+  if (isUserPending) return <div>Loading user...</div>
+  if (isPostsPending) return <div>Loading posts...</div>
+
+  return (
+    <div>
+      <h1>{user.name}'s Posts</h1>
+      <ul>
+        {posts.map((post) => (
+          <li key={post.id}>{post.title}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+```
+
+## Parallel Queries
+
+Fetch multiple independent queries simultaneously using multiple `useQuery` hooks or `useQueries` for dynamic query lists.
+
+```tsx
+import { useQuery, useQueries } from '@tanstack/react-query'
+
+// Multiple useQuery hooks run in parallel automatically
+function Dashboard() {
+  const usersQuery = useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers,
+  })
+
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: fetchProjects,
+  })
+
+  const statsQuery = useQuery({
+    queryKey: ['stats'],
+    queryFn: fetchStats,
+  })
+
+  const isLoading = usersQuery.isPending || projectsQuery.isPending || statsQuery.isPending
+
+  if (isLoading) return <div>Loading dashboard...</div>
+
+  return (
+    <div>
+      <UsersList users={usersQuery.data} />
+      <ProjectsList projects={projectsQuery.data} />
+      <StatsPanel stats={statsQuery.data} />
+    </div>
+  )
+}
+
+// Dynamic parallel queries with useQueries
+function MultipleUserProfiles({ userIds }) {
+  const userQueries = useQueries({
+    queries: userIds.map((userId) => ({
+      queryKey: ['user', userId],
+      queryFn: () => fetchUserById(userId),
+      staleTime: 1000 * 60 * 5,
+    })),
+    combine: (results) => ({
+      data: results.map((result) => result.data),
+      pending: results.some((result) => result.isPending),
+      error: results.find((result) => result.error)?.error,
+    }),
+  })
+
+  if (userQueries.pending) return <div>Loading users...</div>
+  if (userQueries.error) return <div>Error: {userQueries.error.message}</div>
+
+  return (
+    <ul>
+      {userQueries.data.map((user) => (
+        <li key={user?.id}>{user?.name}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+## queryOptions Helper
+
+Create reusable, type-safe query configurations that can be shared across components and used with QueryClient methods.
+
+```tsx
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
+
+// Define reusable query options
+const todosQueryOptions = queryOptions({
+  queryKey: ['todos'],
+  queryFn: async () => {
+    const response = await fetch('/api/todos')
+    return response.json()
+  },
+  staleTime: 1000 * 60 * 5,
+})
+
+const todoQueryOptions = (todoId: number) =>
+  queryOptions({
+    queryKey: ['todos', todoId],
+    queryFn: async () => {
+      const response = await fetch(`/api/todos/${todoId}`)
+      return response.json()
+    },
+    enabled: !!todoId,
+  })
+
+// Use in components
+function TodoList() {
+  const { data } = useQuery(todosQueryOptions)
+  return <ul>{data?.map((todo) => <li key={todo.id}>{todo.title}</li>)}</ul>
+}
+
+function TodoDetail({ id }) {
+  const { data } = useQuery(todoQueryOptions(id))
+  return <div>{data?.title}</div>
+}
+
+// Use with QueryClient methods
+function PrefetchExample() {
+  const queryClient = useQueryClient()
+
+  const prefetchTodos = () => {
+    queryClient.prefetchQuery(todosQueryOptions)
+  }
+
+  const prefetchTodo = (id: number) => {
+    queryClient.prefetchQuery(todoQueryOptions(id))
+  }
+
+  const invalidateTodos = () => {
+    queryClient.invalidateQueries(todosQueryOptions)
+  }
+}
+```
+
+## Global Query Defaults
+
+Set default options for specific query keys using `setQueryDefaults`. Useful for centralizing configuration.
+
+```tsx
+import { QueryClient } from '@tanstack/react-query'
+
+const queryClient = new QueryClient()
+
+// Set defaults for all 'todos' queries
+queryClient.setQueryDefaults(['todos'], {
+  queryFn: async () => {
+    const response = await fetch('/api/todos')
+    return response.json()
+  },
+  staleTime: 1000 * 60 * 5,
+  gcTime: 1000 * 60 * 30,
+})
+
+// Set defaults for mutations
+queryClient.setMutationDefaults(['addTodo'], {
+  mutationFn: async (newTodo) => {
+    const response = await fetch('/api/todos', {
+      method: 'POST',
+      body: JSON.stringify(newTodo),
+    })
+    return response.json()
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['todos'] })
+  },
+})
+
+// Now components can use simplified syntax
+function SimpleTodoList() {
+  // No need to specify queryFn - uses default
+  const { data } = useQuery({ queryKey: ['todos'] })
+
+  // Uses default mutationFn and onSuccess
+  const { mutate } = useMutation({ mutationKey: ['addTodo'] })
+
+  return (
+    <div>
+      <ul>{data?.map((todo) => <li key={todo.id}>{todo.title}</li>)}</ul>
+      <button onClick={() => mutate({ title: 'New Todo' })}>Add</button>
+    </div>
+  )
+}
+```
+
+## Summary
+
+TanStack Query excels at managing server state in modern web applications by providing a declarative, cache-first approach to data fetching. The library handles common challenges like deduplicating requests, background updates, stale-while-revalidate patterns, pagination, and optimistic updates out of the box. Its query key system enables precise cache invalidation, while mutations with callbacks provide flexible patterns for keeping UI synchronized with server state.
+
+The library integrates seamlessly with React Suspense for cleaner loading states, supports prefetching for instant navigation experiences, and offers fine-grained control over caching behavior through stale times and garbage collection. Whether building a simple CRUD application or complex real-time dashboards, TanStack Query provides the tools needed to deliver responsive user experiences while reducing boilerplate code. The framework-agnostic core means the same patterns work across React, Vue, Solid, Svelte, and Angular, making it a versatile choice for teams working with multiple frontend technologies.

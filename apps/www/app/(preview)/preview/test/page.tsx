@@ -76,11 +76,14 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
     }
   }
 
-  // If we still don't have an access token, redirect to sign-in
+  // If we still don't have an access token, clear the broken session and
+  // redirect to sign-in. We must clear cookies first via an API route because
+  // Stack Auth sees the stale cookies and auto-bounces from /handler/sign-in
+  // back to the app, causing an infinite redirect loop.
   if (!accessToken) {
-    console.error("[PreviewTestPage] No access token available after retry, redirecting to sign-in");
+    console.error("[PreviewTestPage] No access token available after retry, clearing session");
     const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent("/preview/test")}`;
-    return redirect(signInUrl);
+    return redirect(`/api/auth/reset-session?returnTo=${encodeURIComponent(signInUrl)}`);
   }
 
   const searchTeam = (() => {

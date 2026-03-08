@@ -1215,8 +1215,8 @@ export function MonacoGitDiffViewerWithSidebar({
         }
         try {
           onFileToggle?.(filePath, !wasExpanded);
-        } catch {
-          // ignore
+        } catch (error) {
+          console.error("[monaco-git-diff-viewer-with-sidebar] onFileToggle callback failed", error);
         }
         return next;
       });

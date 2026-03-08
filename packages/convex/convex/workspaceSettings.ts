@@ -3,6 +3,20 @@ import { resolveTeamIdLoose } from "../_shared/team";
 import { internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 
+/**
+ * Sanitize branch prefix to prevent shell injection.
+ * Only allows safe git-ref characters: alphanumeric, forward slash, hyphen, underscore, dot.
+ * Strips any other characters and limits length.
+ */
+function sanitizeBranchPrefix(prefix: string): string {
+  // Remove any characters that aren't safe for git refs and shell interpolation
+  // Allowed: a-z, A-Z, 0-9, /, -, _, .
+  const sanitized = prefix
+    .replace(/[^a-zA-Z0-9/_.-]/g, "")
+    .substring(0, 50); // Limit length
+  return sanitized;
+}
+
 export const get = authQuery({
   args: { teamSlugOrId: v.string() },
   handler: async (ctx, args) => {
@@ -24,6 +38,12 @@ export const update = authMutation({
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
     autoSyncEnabled: v.optional(v.boolean()),
+    bypassAnthropicProxy: v.optional(v.boolean()),
+    branchPrefix: v.optional(v.string()),
+    worktreeMode: v.optional(
+      v.union(v.literal("legacy"), v.literal("codex-style"))
+    ),
+    codexWorktreePathPattern: v.optional(v.string()),
     heatmapModel: v.optional(v.string()),
     heatmapThreshold: v.optional(v.number()),
     heatmapTooltipLanguage: v.optional(v.string()),
@@ -50,6 +70,10 @@ export const update = authMutation({
         worktreePath?: string;
         autoPrEnabled?: boolean;
         autoSyncEnabled?: boolean;
+        bypassAnthropicProxy?: boolean;
+        branchPrefix?: string;
+        worktreeMode?: "legacy" | "codex-style";
+        codexWorktreePathPattern?: string;
         heatmapModel?: string;
         heatmapThreshold?: number;
         heatmapTooltipLanguage?: string;
@@ -68,6 +92,18 @@ export const update = authMutation({
       }
       if (args.autoSyncEnabled !== undefined) {
         updates.autoSyncEnabled = args.autoSyncEnabled;
+      }
+      if (args.bypassAnthropicProxy !== undefined) {
+        updates.bypassAnthropicProxy = args.bypassAnthropicProxy;
+      }
+      if (args.branchPrefix !== undefined) {
+        updates.branchPrefix = sanitizeBranchPrefix(args.branchPrefix);
+      }
+      if (args.worktreeMode !== undefined) {
+        updates.worktreeMode = args.worktreeMode;
+      }
+      if (args.codexWorktreePathPattern !== undefined) {
+        updates.codexWorktreePathPattern = args.codexWorktreePathPattern;
       }
       if (args.heatmapModel !== undefined) {
         updates.heatmapModel = args.heatmapModel;
@@ -88,6 +124,10 @@ export const update = authMutation({
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
         autoSyncEnabled: args.autoSyncEnabled,
+        bypassAnthropicProxy: args.bypassAnthropicProxy,
+        branchPrefix: args.branchPrefix !== undefined ? sanitizeBranchPrefix(args.branchPrefix) : undefined,
+        worktreeMode: args.worktreeMode,
+        codexWorktreePathPattern: args.codexWorktreePathPattern,
         heatmapModel: args.heatmapModel,
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,

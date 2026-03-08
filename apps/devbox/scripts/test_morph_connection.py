@@ -4,7 +4,7 @@
 """
 scripts/test_morph_connection.py
 
-Test Morph Cloud API connectivity and basic operations.
+Test Morph Cloud API connectivity and basic operations for devsh.
 
 This script verifies:
 1. MORPH_API_KEY is set and valid
@@ -161,13 +161,13 @@ def test_list_snapshots(client, verbose=False):
             if len(snapshots) > 5:
                 print(f"    ... and {len(snapshots) - 5} more")
 
-        # Look for cmux devbox base snapshot
+        # Look for devsh base snapshot
         cmux_snapshots = [
             s for s in snapshots
             if 'cmux' in str(getattr(s, 'digest', '')).lower()
         ]
         if cmux_snapshots:
-            log_info(f"Found {len(cmux_snapshots)} cmux devbox snapshot(s)")
+            log_info(f"Found {len(cmux_snapshots)} devsh snapshot(s)")
             for s in cmux_snapshots:
                 print(f"    - {s.id}: {getattr(s, 'digest', 'no digest')}")
 
@@ -313,7 +313,7 @@ def main():
         # Determine snapshot to use
         snapshot_id = args.snapshot
         if not snapshot_id:
-            # Try to find a cmux devbox snapshot
+            # Try to find a devsh snapshot
             snapshots = client.snapshots.list()
             cmux_snapshots = [
                 s for s in snapshots
@@ -321,7 +321,7 @@ def main():
             ]
             if cmux_snapshots:
                 snapshot_id = cmux_snapshots[0].id
-                log_info(f"Using cmux devbox snapshot: {snapshot_id}")
+                log_info(f"Using devsh snapshot: {snapshot_id}")
             elif snapshots:
                 snapshot_id = snapshots[0].id
                 log_info(f"Using first available snapshot: {snapshot_id}")

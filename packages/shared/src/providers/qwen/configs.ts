@@ -12,9 +12,8 @@ import {
 
 export const QWEN_OPENROUTER_CODER_FREE_CONFIG: AgentConfig = {
   name: "qwen/qwen3-coder:free",
-  command: "bunx",
+  command: "qwen",
   args: [
-    "@qwen-code/qwen-code",
     "--telemetry",
     "--telemetry-target=local",
     "--telemetry-otlp-endpoint=",
@@ -41,9 +40,8 @@ export const QWEN_OPENROUTER_CODER_FREE_CONFIG: AgentConfig = {
 
 export const QWEN_MODEL_STUDIO_CODER_PLUS_CONFIG: AgentConfig = {
   name: "qwen/qwen3-coder-plus",
-  command: "bunx",
+  command: "qwen",
   args: [
-    "@qwen-code/qwen-code",
     "--telemetry",
     "--telemetry-target=local",
     "--telemetry-otlp-endpoint=",
@@ -67,3 +65,8 @@ export const QWEN_MODEL_STUDIO_CODER_PLUS_CONFIG: AgentConfig = {
   checkRequirements: checkQwenModelStudioRequirements,
   completionDetector: startQwenCompletionDetector,
 };
+
+export const QWEN_AGENT_CONFIGS: AgentConfig[] = [
+  QWEN_OPENROUTER_CODER_FREE_CONFIG,
+  QWEN_MODEL_STUDIO_CODER_PLUS_CONFIG,
+];

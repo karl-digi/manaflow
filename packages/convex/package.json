@@ -9,6 +9,7 @@
     "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "test": "vitest run",
     "deploy:prod": "convex deploy --env-file ../../.env.production",
+    "deploy": "convex deploy --env-file ../../.env",
     "setup": "bun run scripts/setup.ts",
     "setup0": "CONVEX_DEPLOYMENT= CONVEX_AGENT_MODE=anonymous bunx convex dev --configure new --dev-deployment local --project cmux_local --once --run seed"
   },
@@ -28,11 +29,13 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.18",
+    "@ai-sdk/google": "^2.0.18",
     "@ai-sdk/gateway": "^1.0.28",
     "@ai-sdk/openai": "^2.0.19",
     "@ai-sdk/provider-utils": "^3.0.9",
     "@cmux/e2b-client": "workspace:*",
     "@cmux/morphcloud-openapi-client": "workspace:*",
+    "@cmux/pve-lxc-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@convex-dev/migrations": "^0.2.9",
     "@octokit/request": "^10.0.7",
@@ -46,6 +49,7 @@
     "octokit": "^5.0.5",
     "socket.io-client": "^4.8.1",
     "svix": "^1.75.0",
+    "undici": "^6.21.3",
     "zod": "^4.1.5"
   },
   "devDependencies": {

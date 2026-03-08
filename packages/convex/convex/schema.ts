@@ -1,5 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+  devboxProviderValidator,
+  runtimeProviderValidator,
+  snapshotProviderValidator,
+} from "../_shared/provider-validators";
 
 const convexSchema = defineSchema({
   teams: defineTable({
@@ -124,6 +129,14 @@ const convexSchema = defineSchema({
       ),
     ), // State of crown evaluation workflow
     crownEvaluationError: v.optional(v.string()), // Error message if crown evaluation failed
+    /** Stored evaluation data for retry (JSON string with prompt, candidates, etc.) */
+    crownEvaluationRetryData: v.optional(v.string()),
+    /** Number of times the user has retried crown evaluation */
+    crownEvaluationRetryCount: v.optional(v.number()),
+    /** Timestamp of the last retry attempt */
+    crownEvaluationLastRetryAt: v.optional(v.number()),
+    /** True when refreshing a succeeded evaluation (vs retrying a failed one) */
+    crownEvaluationIsRefreshing: v.optional(v.boolean()),
     mergeStatus: v.optional(
       v.union(
         v.literal("none"), // No PR activity yet
@@ -163,21 +176,34 @@ const convexSchema = defineSchema({
     screenshotFileName: v.optional(v.string()),
     screenshotCommitSha: v.optional(v.string()),
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+    /** Denormalized: ID of the selected task run (crowned run, or latest non-archived run) */
+    selectedTaskRunId: v.optional(v.id("taskRuns")),
+    // GitHub Projects v2 linkage (Phase 2: Task <-> Project Linkage)
+    githubProjectId: v.optional(v.string()), // Project node ID (PVT_xxx)
+    githubProjectItemId: v.optional(v.string()), // Project item node ID (PVTI_xxx)
+    githubProjectInstallationId: v.optional(v.number()), // GitHub App installation ID
+    githubProjectOwner: v.optional(v.string()), // Project owner login (org or user)
+    githubProjectOwnerType: v.optional(v.string()), // "organization" or "user"
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_archived", ["teamId", "userId", "isArchived"])
     .index("by_team_user_created", ["teamId", "userId", "createdAt"])
     .index("by_team_user_merge_updated", ["teamId", "userId", "mergeStatus", "updatedAt"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
+    .index("by_team_user_active", ["teamId", "userId", "isArchived", "isPreview", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
     .index("by_team_preview", ["teamId", "isPreview"])
-    .index("by_linked_cloud_task_run", ["linkedFromCloudTaskRunId"]),
+    .index("by_linked_cloud_task_run", ["linkedFromCloudTaskRunId"])
+    .index("by_crown_status", ["crownEvaluationStatus", "updatedAt"])
+    .index("by_github_project_item", ["githubProjectItemId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
     parentRunId: v.optional(v.id("taskRuns")), // For tree structure
+    startingCommitSha: v.optional(v.string()), // Commit SHA when run started (for diff baseline)
     prompt: v.string(), // The prompt that will be passed to claude
     agentName: v.optional(v.string()), // Name of the agent that ran this task (e.g., "claude/sonnet-4")
     summary: v.optional(v.string()), // Markdown summary of the run
@@ -270,12 +296,7 @@ const convexSchema = defineSchema({
     // VSCode instance information
     vscode: v.optional(
       v.object({
-        provider: v.union(
-          v.literal("docker"),
-          v.literal("morph"),
-          v.literal("daytona"),
-          v.literal("other")
-        ), // Extensible for future providers
+        provider: runtimeProviderValidator, // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
         status: v.union(
           v.literal("starting"),
@@ -294,6 +315,8 @@ const convexSchema = defineSchema({
         ),
         url: v.optional(v.string()), // The VSCode URL
         workspaceUrl: v.optional(v.string()), // The workspace URL
+        vncUrl: v.optional(v.string()), // The VNC websocket URL for browser preview
+        xtermUrl: v.optional(v.string()), // The xterm terminal backend URL
         startedAt: v.optional(v.number()),
         stoppedAt: v.optional(v.number()),
         lastAccessedAt: v.optional(v.number()), // Track when user last accessed the container
@@ -322,6 +345,35 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    // Auto-discovered git repos in the sandbox (for custom environments where user clones repos)
+    discoveredRepos: v.optional(v.array(v.string())), // GitHub repos found in sandbox (e.g., ["owner/repo"])
+    // Orchestration head agent fields (Phase 1)
+    isOrchestrationHead: v.optional(v.boolean()), // Whether this run is an orchestration head agent
+    orchestrationId: v.optional(v.string()), // Unique orchestration ID for this head agent session
+    // PTY session tracking for terminal attachment/reconnection
+    ptySessionId: v.optional(v.string()), // cmux-pty session ID or tmux session name
+    ptyBackend: v.optional(v.union(v.literal("cmux-pty"), v.literal("tmux"))), // Which backend manages the terminal
+    // Autopilot mode (Phase 6: Long-Running Sessions)
+    autopilotConfig: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        totalMinutes: v.number(), // Total autopilot duration in minutes
+        turnMinutes: v.number(), // Minutes per turn
+        wrapUpMinutes: v.number(), // Time before deadline to wrap up
+        startedAt: v.number(), // When autopilot started (epoch ms)
+        lastHeartbeat: v.optional(v.number()), // Last heartbeat timestamp (epoch ms)
+      })
+    ),
+    autopilotStatus: v.optional(
+      v.union(
+        v.literal("running"),
+        v.literal("paused"),
+        v.literal("wrap-up"),
+        v.literal("completed"),
+        v.literal("stopped")
+      )
+    ),
+    codexThreadId: v.optional(v.string()), // Codex CLI thread-id for session resume
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])
@@ -598,14 +650,30 @@ const convexSchema = defineSchema({
     updatedAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
+    // Codex OAuth token refresh tracking (only used when envVar === "CODEX_AUTH_JSON")
+    tokenExpiresAt: v.optional(v.number()), // Epoch ms from parsed expires_at
+    lastSuccessfulRefreshAt: v.optional(v.number()), // Epoch ms of last successful refresh
+    lastRefreshAttemptAt: v.optional(v.number()), // Last refresh attempt timestamp
+    lastRefreshError: v.optional(v.string()), // Error from last failed refresh
+    refreshFailureCount: v.optional(v.number()), // Consecutive failures for backoff
   })
     .index("by_envVar", ["envVar"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_team", ["teamId"]),
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
     autoSyncEnabled: v.optional(v.boolean()), // Auto-sync local workspace to cloud (default: true)
+    bypassAnthropicProxy: v.optional(v.boolean()), // When true, Claude connects directly to custom Anthropic base URL
     nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
+    alwaysForcePush: v.optional(v.boolean()), // Legacy field - kept for schema compatibility
+    // Git settings
+    branchPrefix: v.optional(v.string()), // Prefix for generated branch names (default: "dev/")
+    // Worktree mode settings (Codex-style)
+    worktreeMode: v.optional(
+      v.union(v.literal("legacy"), v.literal("codex-style"))
+    ), // "legacy" = ~/cmux/<repo>/origin/, "codex-style" = use existing local repos
+    codexWorktreePathPattern: v.optional(v.string()), // Base path for codex-style worktrees (default: ~/.cmux/worktrees/). ShortId and repoName are appended automatically.
     // Heatmap review settings
     heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-haiku-4-5", "cmux-heatmap-2")
     heatmapThreshold: v.optional(v.number()), // Score threshold for filtering (0-1, default: 0)
@@ -621,6 +689,59 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+
+  // Per-team model enable/disable preferences
+  // Uses blacklist pattern: disabledModels array lists agent names to hide
+  // Default behavior: all models enabled (empty disabledModels array)
+  modelPreferences: defineTable({
+    disabledModels: v.array(v.string()), // Array of agent names to hide, e.g. ["claude/haiku-4.5"]
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
+
+  // Per-team model visibility overrides
+  // Uses blacklist pattern: hiddenModels array lists globally enabled models hidden for a team
+  // Default behavior: all globally enabled models are visible (empty hiddenModels array)
+  teamModelVisibility: defineTable({
+    teamId: v.string(),
+    hiddenModels: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.string()),
+  }).index("by_team", ["teamId"]),
+
+  // Source repo mappings for Codex-style worktrees
+  // Maps projects to local repo paths per user
+  sourceRepoMappings: defineTable({
+    projectFullName: v.string(), // e.g., "owner/repo"
+    localRepoPath: v.string(), // e.g., "/Users/karlchow/Desktop/code/cmux"
+    lastVerifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_team_user_project", ["teamId", "userId", "projectFullName"])
+    .index("by_team_user", ["teamId", "userId"]),
+
+  // Worktree registry for tracking active worktrees (settings page)
+  worktreeRegistry: defineTable({
+    worktreePath: v.string(),
+    sourceRepoPath: v.string(),
+    projectFullName: v.string(),
+    branchName: v.string(),
+    shortId: v.string(),
+    mode: v.union(v.literal("legacy"), v.literal("codex-style")),
+    taskRunIds: v.optional(v.array(v.id("taskRuns"))),
+    lastUsedAt: v.number(),
+    createdAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_worktree_path", ["worktreePath"]),
   workspaceConfigs: defineTable({
     projectFullName: v.string(),
     maintenanceScript: v.optional(v.string()),
@@ -703,10 +824,21 @@ const convexSchema = defineSchema({
     createdAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
+    /** Whether this evaluation was produced by fallback due to AI service failure */
+    isFallback: v.optional(v.boolean()),
+    /** Human-readable note about the evaluation process (e.g., fallback details) */
+    evaluationNote: v.optional(v.string()),
+    /** True if all candidates had empty or placeholder diffs at evaluation time */
+    hadEmptyDiffs: v.optional(v.boolean()),
+    /** Number of auto-refresh attempts (max 2 to prevent infinite loops) */
+    autoRefreshCount: v.optional(v.number()),
+    /** Timestamp of last auto-refresh attempt */
+    lastAutoRefreshAt: v.optional(v.number()),
   })
     .index("by_task", ["taskId"])
     .index("by_winner", ["winnerRunId"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_empty_diffs", ["hadEmptyDiffs", "evaluatedAt"]),
   containerSettings: defineTable({
     maxRunningContainers: v.optional(v.number()), // Max containers to keep running (default: 5)
     reviewPeriodMinutes: v.optional(v.number()), // Minutes to keep container after task completion (default: 60)
@@ -813,7 +945,9 @@ const convexSchema = defineSchema({
     name: v.string(), // Human-friendly environment name
     teamId: v.string(), // Team that owns this environment
     userId: v.string(), // User who created the environment
-    morphSnapshotId: v.string(), // Morph snapshot identifier
+    snapshotId: v.optional(v.string()), // Canonical snapshot identifier (snapshot_*)
+    snapshotProvider: v.optional(snapshotProviderValidator),
+    templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     dataVaultKey: v.string(), // Key for StackAuth DataBook (stores encrypted env vars)
     selectedRepos: v.optional(v.array(v.string())), // List of repository full names
     description: v.optional(v.string()), // Optional description
@@ -830,7 +964,10 @@ const convexSchema = defineSchema({
   environmentSnapshotVersions: defineTable({
     environmentId: v.id("environments"),
     teamId: v.string(),
-    morphSnapshotId: v.string(),
+    morphSnapshotId: v.optional(v.string()), // Legacy field for backfill
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(snapshotProviderValidator),
+    templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     version: v.number(),
     createdAt: v.number(),
     createdByUserId: v.string(),
@@ -841,7 +978,7 @@ const convexSchema = defineSchema({
     .index("by_environment_version", ["environmentId", "version"])
     .index("by_environment_createdAt", ["environmentId", "createdAt"])
     .index("by_team_createdAt", ["teamId", "createdAt"])
-    .index("by_team_snapshot", ["teamId", "morphSnapshotId"]),
+    .index("by_team_snapshot", ["teamId", "snapshotId"]),
 
   // Webhook deliveries for idempotency and auditing
   webhookDeliveries: defineTable({
@@ -1047,6 +1184,7 @@ const convexSchema = defineSchema({
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
     .index("by_team_repo_pr", ["teamId", "repoFullName", "triggeringPrNumber", "updatedAt"])
+    .index("by_installation_checkRunId", ["installationId", "checkRunId"])
     .index("by_checkRunId", ["checkRunId"])
     .index("by_headSha", ["headSha", "updatedAt"]),
 
@@ -1182,6 +1320,7 @@ const convexSchema = defineSchema({
     .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
 
   // Track Morph instance activity for cleanup cron decisions
+  // DEPRECATED: Use sandboxInstanceActivity for new code (provider-agnostic)
   morphInstanceActivity: defineTable({
     instanceId: v.string(), // Morph instance ID (morphvm_xxx)
     lastPausedAt: v.optional(v.number()), // When instance was last paused by cron
@@ -1189,6 +1328,30 @@ const convexSchema = defineSchema({
     stoppedAt: v.optional(v.number()), // When instance was permanently stopped
   }).index("by_instanceId", ["instanceId"]),
 
+  // Unified sandbox instance activity tracking (provider-agnostic)
+  // Supports: morph, e2b, pve-lxc, docker, daytona, and future providers
+  sandboxInstanceActivity: defineTable({
+    instanceId: v.string(), // Instance ID (morphvm_xxx, pvelxc-xxx, etc.)
+    provider: runtimeProviderValidator,
+    vmid: v.optional(v.number()), // PVE VMID
+    hostname: v.optional(v.string()), // PVE hostname (instanceId for new instances)
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(snapshotProviderValidator),
+    templateVmid: v.optional(v.number()),
+    // Activity timestamps
+    lastPausedAt: v.optional(v.number()), // When instance was last paused by cron
+    lastResumedAt: v.optional(v.number()), // When instance was last resumed via UI
+    stoppedAt: v.optional(v.number()), // When instance was permanently stopped/deleted
+    // Metadata for tracking
+    teamId: v.optional(v.string()), // Team that owns this instance
+    userId: v.optional(v.string()), // User that created this instance
+    createdAt: v.optional(v.number()), // When the activity record was created
+  })
+    .index("by_instanceId", ["instanceId"])
+    .index("by_vmid", ["vmid"])
+    .index("by_provider", ["provider"])
+    .index("by_provider_stopped", ["provider", "stoppedAt"]) // For cleanup queries
+    .index("by_team", ["teamId"]),
   // User-owned devbox instances (standalone sandboxes not tied to task runs)
   devboxInstances: defineTable({
     devboxId: v.string(), // Friendly ID (cr_xxxxxxxx) for CLI users
@@ -1218,7 +1381,7 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
+    provider: devboxProviderValidator, // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
@@ -1271,17 +1434,289 @@ const convexSchema = defineSchema({
     .index("by_instanceId", ["instanceId"])
     .index("by_team_status", ["teamId", "status", "createdAt"]),
 
-  // CloudRouter subscription tiers for concurrency limits
-  cloudRouterSubscription: defineTable({
-    userId: v.string(),
-    subscriptionType: v.union(
-      v.literal("low"), // 50 concurrent sandboxes
-      v.literal("mid"), // 100 concurrent sandboxes
-      v.literal("high") // 500 concurrent sandboxes
+  // Provider override configurations for custom proxies and endpoints
+  // Enables teams to customize base URLs, API formats, and fallback chains
+  providerOverrides: defineTable({
+    teamId: v.string(),
+    providerId: v.string(), // e.g., "anthropic", "openai", "custom-proxy"
+    baseUrl: v.optional(v.string()),
+    apiFormat: v.optional(
+      v.union(
+        v.literal("anthropic"),
+        v.literal("openai"),
+        v.literal("bedrock"),
+        v.literal("vertex"),
+        v.literal("passthrough")
+      )
     ),
+    apiKeyEnvVar: v.optional(v.string()),
+    customHeaders: v.optional(v.record(v.string(), v.string())),
+    fallbacks: v.optional(
+      v.array(
+        v.object({
+          modelName: v.string(),
+          priority: v.number(),
+        })
+      )
+    ),
+    enabled: v.boolean(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_team_provider", ["teamId", "providerId"])
+    .index("by_team", ["teamId"]),
+
+  // Global model catalog for dynamic discovery and admin management
+  // Stores both curated models (from AGENT_CATALOG) and discovered models (from provider APIs)
+  models: defineTable({
+    name: v.string(), // Stable ID, e.g. "claude/opus-4.6", "opencode/gpt-5-nano"
+    displayName: v.string(), // Human-readable label, e.g. "Opus 4.6"
+    vendor: v.string(), // Vendor for grouping, e.g. "anthropic", "openai", "opencode"
+    source: v.union(v.literal("curated"), v.literal("discovered")), // Origin of the model
+    discoveredFrom: v.optional(v.string()), // Discovery source, e.g. "opencode-zen"
+    discoveredAt: v.optional(v.number()), // When the model was discovered
+    requiredApiKeys: v.array(v.string()), // Environment variables required, e.g. ["ANTHROPIC_API_KEY"]
+    tier: v.union(v.literal("free"), v.literal("paid")), // Pricing tier
+    tags: v.array(v.string()), // Tags for filtering, e.g. ["reasoning", "free", "latest"]
+    enabled: v.boolean(), // System-global enabled state for true deprecation/removal
+    sortOrder: v.number(), // For drag-drop reordering
+    disabled: v.optional(v.boolean()), // Model-level disabled flag (different from enabled)
+    disabledReason: v.optional(v.string()), // Reason shown when disabled
+    variants: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          displayName: v.string(),
+          description: v.optional(v.string()),
+        })
+      )
+    ), // Thinking/reasoning mode variants
+    defaultVariant: v.optional(v.string()), // Default variant ID
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_name", ["name"])
+    .index("by_vendor", ["vendor"])
+    .index("by_enabled", ["enabled", "sortOrder"])
+    .index("by_source", ["source"]),
+
+  // Agent memory snapshots - synced from sandbox memory files on agent completion
+  // Stores knowledge, daily logs, tasks, and mailbox content for each task run
+  agentMemorySnapshots: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    userId: v.string(),
+    agentName: v.optional(v.string()),
+    memoryType: v.union(
+      v.literal("knowledge"),
+      v.literal("daily"),
+      v.literal("tasks"),
+      v.literal("mailbox"),
+      v.literal("events")
+    ),
+    content: v.string(),
+    fileName: v.optional(v.string()),
+    date: v.optional(v.string()), // YYYY-MM-DD for daily logs
+    truncated: v.optional(v.boolean()),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId", "memoryType"])
+    .index("by_team_type", ["teamId", "memoryType", "createdAt"])
+    .index("by_team_created", ["teamId", "createdAt"]),
+
+  // Provider health tracking for circuit breaker and resilience patterns
+  // Tracks latency, success rate, and circuit state per provider
+  providerHealth: defineTable({
+    providerId: v.string(), // Provider ID (e.g., "anthropic", "openai", "openrouter")
+    status: v.union(
+      v.literal("healthy"),
+      v.literal("degraded"),
+      v.literal("unhealthy")
+    ),
+    circuitState: v.union(
+      v.literal("closed"),
+      v.literal("open"),
+      v.literal("half-open")
+    ),
+    failureCount: v.number(),
+    successRate: v.number(), // 0.0 to 1.0
+    latencyP50: v.number(), // Median latency in ms
+    latencyP99: v.number(), // 99th percentile latency in ms
+    totalRequests: v.number(),
+    lastCheck: v.number(), // Timestamp of last health check
+    lastError: v.optional(v.string()), // Most recent error message
+    teamId: v.optional(v.string()), // Optional team scope (null = global)
+  })
+    .index("by_provider", ["providerId"])
+    .index("by_team_provider", ["teamId", "providerId"])
+    .index("by_status", ["status", "lastCheck"]),
+
+  // Task queue for multi-agent orchestration
+  // Enables priority-based task assignment and dependency management
+  orchestrationTasks: defineTable({
+    taskId: v.optional(v.id("tasks")), // Link to main task (optional for standalone orchestration)
+    taskRunId: v.optional(v.id("taskRuns")), // Link to task run (optional)
+    teamId: v.string(),
+    userId: v.string(),
+    priority: v.number(), // 0 = highest priority
+    status: v.union(
+      v.literal("pending"), // Waiting to be assigned
+      v.literal("assigned"), // Assigned to an agent
+      v.literal("running"), // Currently executing
+      v.literal("completed"), // Successfully completed
+      v.literal("failed"), // Failed with error
+      v.literal("cancelled") // Cancelled by user or system
+    ),
+    assignedAgentName: v.optional(v.string()), // Agent assigned to this task
+    assignedSandboxId: v.optional(v.string()), // Sandbox instance running this task
+    dependencies: v.optional(v.array(v.id("orchestrationTasks"))), // Tasks that must complete first
+    dependents: v.optional(v.array(v.id("orchestrationTasks"))), // Tasks waiting on this one
+    prompt: v.string(), // Task description/prompt
+    result: v.optional(v.string()), // Task result (when completed)
+    errorMessage: v.optional(v.string()), // Error message (when failed)
+    parentTaskId: v.optional(v.id("orchestrationTasks")), // For sub-task hierarchy
+    metadata: v.optional(v.record(v.string(), v.any())), // Additional context
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    assignedAt: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    // Retry tracking for background worker
+    retryCount: v.optional(v.number()), // Current retry attempt
+    lastRetryAt: v.optional(v.number()), // Timestamp of last retry
+    nextRetryAfter: v.optional(v.number()), // When to retry next (ms since epoch)
+  })
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_team_status_priority", ["teamId", "status", "priority"])
+    .index("by_assigned_agent", ["assignedAgentName", "status"])
+    .index("by_parent", ["parentTaskId", "createdAt"])
+    .index("by_task_run", ["taskRunId"])
+    .index("by_status_started", ["status", "startedAt"])
+    .index("by_status", ["status", "createdAt"]),
+
+  // Agent orchestration messages for inter-agent communication
+  // Messages sent via orchestrate sendMessage mutation are stored here
+  // and synced to running sandboxes via MAILBOX.json updates
+  agentOrchestrateMessages: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    userId: v.string(),
+    messageId: v.string(), // Unique message ID (msg_xxx)
+    messageType: v.union(
+      v.literal("handoff"),
+      v.literal("request"),
+      v.literal("status")
+    ),
+    senderName: v.string(), // Agent name or user identifier
+    recipientName: v.optional(v.string()), // Agent name or "*" for broadcast
+    content: v.string(), // Message content
+    read: v.boolean(),
+    timestamp: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId", "createdAt"])
+    .index("by_task_run_unread", ["taskRunId", "read", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_recipient", ["recipientName", "read", "createdAt"]),
+
+  // Projects for grouping related tasks and tracking aggregate progress
+  // Supports plan storage, Obsidian integration, and progress metrics
+  projects: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    // Project goals (high-level objectives)
+    goals: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          title: v.string(),
+          completed: v.boolean(),
+        })
+      )
+    ),
+    // Project status
+    status: v.union(
+      v.literal("planning"),
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("completed"),
+      v.literal("archived")
+    ),
+    // Progress metrics (denormalized for efficient queries)
+    totalTasks: v.optional(v.number()),
+    completedTasks: v.optional(v.number()),
+    failedTasks: v.optional(v.number()),
+    // External linkages
+    obsidianNotePath: v.optional(v.string()), // Path to linked Obsidian note
+    githubProjectId: v.optional(v.string()), // GitHub Projects v2 node ID
+    // Orchestration plan (stored inline for fast access)
+    plan: v.optional(
+      v.object({
+        orchestrationId: v.string(),
+        headAgent: v.string(),
+        description: v.optional(v.string()),
+        tasks: v.array(
+          v.object({
+            id: v.string(),
+            prompt: v.string(),
+            agentName: v.string(),
+            status: v.string(),
+            dependsOn: v.optional(v.array(v.string())),
+            priority: v.optional(v.number()),
+            orchestrationTaskId: v.optional(v.string()),
+          })
+        ),
+        updatedAt: v.string(), // ISO timestamp
+      })
+    ),
+    // Count of currently running/assigned orchestration tasks
+    runningTasks: v.optional(v.number()),
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_team", ["teamId", "updatedAt"])
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_team_user", ["teamId", "userId", "updatedAt"]),
+
+  // MCP server configurations (central, cloud-based MCP management)
+  // Users configure MCP servers in the web UI; these are injected into sandboxes
+  // at startup. Borrows the per-agent enable pattern from cc-switch.
+  mcpServerConfigs: defineTable({
+    // Human-readable name (used as key in agent config, e.g. "context7")
+    name: v.string(),
+    // Display name shown in UI (e.g. "Context7 Documentation")
+    displayName: v.string(),
+    // MCP server transport config. Older records may omit type and should be treated as stdio.
+    type: v.optional(v.union(v.literal("stdio"), v.literal("http"), v.literal("sse"))),
+    command: v.optional(v.string()),
+    args: v.optional(v.array(v.string())),
+    url: v.optional(v.string()),
+    headers: v.optional(v.record(v.string(), v.string())),
+    // Optional environment variables for this MCP server
+    envVars: v.optional(v.record(v.string(), v.string())),
+    description: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    // Per-agent enable flags (following cc-switch pattern)
+    enabledClaude: v.boolean(),
+    enabledCodex: v.boolean(),
+    enabledGemini: v.boolean(),
+    enabledOpencode: v.boolean(),
+    // Scope: global applies to all tasks, workspace scopes to a specific repo
+    scope: v.union(v.literal("global"), v.literal("workspace")),
+    // For workspace scope: the repo full name (e.g. "owner/repo")
+    projectFullName: v.optional(v.string()),
+    // Ownership
+    userId: v.string(),
+    teamId: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_team", ["teamId"])
+    .index("by_team_scope", ["teamId", "scope"])
+    .index("by_team_project", ["teamId", "projectFullName"]),
 });
 
 export default convexSchema;

@@ -1,5 +1,5 @@
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
-import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
+import { NewGitDiffViewer } from "@/components/git-diff-view/git-diff-viewer";
 import type { DiffViewerControls, StreamFileState, StreamFileStatus } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -33,6 +33,7 @@ import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPr
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import z from "zod";
 
+const EMPTY_DIFFS: ReplaceDiffEntry[] = [];
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 const PR_SYNC_GRACE_MS = 1500;
@@ -758,7 +759,16 @@ export function PullRequestDetailView({
 
     const allPassing = runs.every((run) => {
       const conclusion = run.conclusion;
-      return typeof conclusion === "string" && RUN_PASSING_CONCLUSIONS.has(conclusion);
+      // If conclusion is explicitly a passing value, it passes
+      if (typeof conclusion === "string" && RUN_PASSING_CONCLUSIONS.has(conclusion)) {
+        return true;
+      }
+      // If status is completed but conclusion is undefined/missing, treat as passing
+      // This handles checks that complete without setting a conclusion (e.g., Vercel Preview)
+      if (run.status === "completed" && conclusion === undefined) {
+        return true;
+      }
+      return false;
     });
 
     if (!allPassing) {
@@ -1027,8 +1037,8 @@ export function PullRequestDetailView({
                       onHeatmapColorsChange={handleHeatmapColorsChange}
                     />
                   ) : (
-                    <MonacoGitDiffViewer
-                      diffs={diffQuery.data ?? []}
+                    <NewGitDiffViewer
+                      diffs={diffQuery.data ?? EMPTY_DIFFS}
                       onControlsChange={handleDiffControlsChange}
                     />
                   )

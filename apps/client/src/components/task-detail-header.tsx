@@ -1,6 +1,7 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { useSidebarOptional } from "@/contexts/sidebar/SidebarContext";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -10,9 +11,11 @@ import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { TaskRunWithChildren } from "@/types/task";
 import { Skeleton } from "@heroui/react";
 import { useClipboard } from "@mantine/hooks";
+import { ErrorBoundary } from "@sentry/react";
 import {
   useMutation,
   useQueries,
+  useQueryClient,
   type DefaultError,
 } from "@tanstack/react-query";
 import {
@@ -34,6 +37,7 @@ import {
   Copy,
   Crown,
   ExternalLink,
+  FolderKanban,
   FolderOpen,
   GitBranch,
   GitMerge,
@@ -49,6 +53,7 @@ import {
   type CSSProperties,
 } from "react";
 import { toast } from "sonner";
+import CmuxLogoMark from "./logo/cmux-logo-mark";
 import {
   SocketMutationError,
   type MergeBranchResponse,
@@ -76,6 +81,11 @@ interface TaskDetailHeaderProps {
   onToggleAutoSync?: () => void;
   autoSyncEnabled?: boolean;
   teamSlugOrId: string;
+  /** Linked local workspace for cloud tasks - use its worktreePath for "Open with VS Code" */
+  linkedLocalWorkspace?: {
+    task?: { worktreePath?: string | null } | null;
+    taskRun?: { worktreePath?: string | null } | null;
+  } | null;
 }
 
 const ENABLE_MERGE_BUTTON = false;
@@ -86,6 +96,40 @@ type RepoDiffTarget = {
   headRef?: string;
 };
 
+function isValidHttpsUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeGithubOwner(owner: unknown): string | null {
+  if (typeof owner !== "string") {
+    return null;
+  }
+  const trimmedOwner = owner.trim();
+  if (!trimmedOwner) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(trimmedOwner)) {
+    return null;
+  }
+  if (trimmedOwner.startsWith("-") || trimmedOwner.endsWith("-")) {
+    return null;
+  }
+  return trimmedOwner;
+}
+
+function openHttpsUrlInNewTab(url: string | null | undefined): boolean {
+  if (!url || !isValidHttpsUrl(url)) {
+    return false;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+  return true;
+}
+
 function AdditionsAndDeletions({
   repos,
   defaultBaseRef,
@@ -95,6 +139,9 @@ function AdditionsAndDeletions({
   defaultBaseRef?: string;
   defaultHeadRef?: string;
 }) {
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const repoConfigs = useMemo(() => {
     const normalizedDefaults = {
       base: normalizeGitRef(defaultBaseRef),
@@ -153,6 +200,35 @@ function AdditionsAndDeletions({
     return Boolean(query.error);
   });
 
+  // useCallback must be called before any early returns to comply with React's rules of hooks
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    const toastId = toast.loading("Refreshing git diff...");
+    try {
+      // Fetch fresh data with forceRefresh to bypass SWR cache window
+      await Promise.all(
+        repoConfigs.map((config) =>
+          queryClient.fetchQuery(
+            gitDiffQueryOptions({
+              repoFullName: config.repoFullName,
+              baseRef: config.baseRef,
+              headRef: config.headRef ?? "",
+              forceRefresh: true,
+            })
+          )
+        )
+      );
+      // Also invalidate other git-diff queries to ensure consistency
+      await queryClient.invalidateQueries({ queryKey: ["git-diff"] });
+      toast.success("Git diff refreshed", { id: toastId });
+    } catch (error) {
+      console.error("[AdditionsAndDeletions] Failed to refresh git diff:", error);
+      toast.error("Failed to refresh git diff", { id: toastId });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [queryClient, repoConfigs]);
+
   if (!isLoading && firstError?.error) {
     return (
       <div className="flex items-center gap-2 text-[11px] ml-2 shrink-0">
@@ -196,11 +272,27 @@ function AdditionsAndDeletions({
           </span>
         )}
       </Skeleton>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={isLoading || isRefreshing}
+        className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Refresh git diff"
+        title="Refresh git diff"
+        style={isElectron ? { WebkitAppRegion: "no-drag" } as React.CSSProperties : undefined}
+      >
+        <RefreshCw
+          className={cn(
+            "w-3.5 h-3.5",
+            isRefreshing && "animate-spin"
+          )}
+        />
+      </button>
     </div>
   );
 }
 
-export function TaskDetailHeader({
+function TaskDetailHeaderContent({
   task,
   taskRuns,
   selectedRun,
@@ -214,7 +306,9 @@ export function TaskDetailHeader({
   onToggleAutoSync,
   autoSyncEnabled = true,
   teamSlugOrId,
+  linkedLocalWorkspace,
 }: TaskDetailHeaderProps) {
+  const sidebar = useSidebarOptional();
   const navigate = useNavigate();
   const location = useLocation();
   const clipboard = useClipboard({ timeout: 2000 });
@@ -225,23 +319,79 @@ export function TaskDetailHeader({
     setAgentMenuOpen(open);
   }, []);
   const taskTitle = task?.pullRequestTitle || task?.text;
+  const githubProjectOwner = useMemo(
+    () => normalizeGithubOwner(task?.githubProjectOwner),
+    [task?.githubProjectOwner],
+  );
+  const githubProjectUrl = useMemo(() => {
+    if (!githubProjectOwner) {
+      return null;
+    }
+    const pathPrefix =
+      task?.githubProjectOwnerType === "organization" ? "orgs" : "users";
+    const candidateUrl = `https://github.com/${pathPrefix}/${githubProjectOwner}/projects`;
+    return isValidHttpsUrl(candidateUrl) ? candidateUrl : null;
+  }, [githubProjectOwner, task?.githubProjectOwnerType]);
   const handleCopyBranch = () => {
     if (selectedRun?.newBranch) {
       clipboard.copy(selectedRun.newBranch);
     }
   };
-  const worktreePath = useMemo(
-    () => selectedRun?.worktreePath || task?.worktreePath || null,
-    [selectedRun?.worktreePath, task?.worktreePath],
-  );
+  // Compute worktreePath for "Open with VS Code" button
+  // IMPORTANT: Cloud task paths like /root/workspace are NOT accessible locally
+  // Only return a path for:
+  // 1. Linked local workspaces (preferred - opens local worktree for cloud task)
+  // 2. Local workspace tasks (isLocalWorkspace=true, path is on local filesystem)
+  const worktreePath = useMemo(() => {
+    // Priority 1: If there's a linked local workspace, use its path
+    // This allows opening local worktree when viewing a cloud task
+    if (linkedLocalWorkspace) {
+      return (
+        linkedLocalWorkspace.taskRun?.worktreePath ||
+        linkedLocalWorkspace.task?.worktreePath ||
+        null
+      );
+    }
+    // Priority 2: For local workspace tasks, the path is on local filesystem
+    if (task?.isLocalWorkspace) {
+      return selectedRun?.worktreePath || task?.worktreePath || null;
+    }
+    // For cloud tasks without linked local workspace, return null
+    // The /root/workspace path is inside the cloud sandbox, not accessible locally
+    return null;
+  }, [
+    linkedLocalWorkspace,
+    task?.isLocalWorkspace,
+    selectedRun?.worktreePath,
+    task?.worktreePath,
+  ]);
 
+  // Find parent run if this is a child run (for comparing against parent's branch)
+  const parentRun = useMemo(() => {
+    if (!selectedRun?.parentRunId || !taskRuns) return null;
+    return taskRuns.find((run) => run._id === selectedRun.parentRunId) ?? null;
+  }, [selectedRun?.parentRunId, taskRuns]);
+
+  // Determine base ref for diff comparison with priority:
+  // 1. Parent run's branch (for child runs)
+  // 2. Starting commit SHA (for new tasks in custom environments)
+  // 3. Task's base branch (explicit user choice)
   const normalizedBaseBranch = useMemo(() => {
+    // Priority 1: Parent run's branch (for child runs)
+    if (parentRun?.newBranch) {
+      return normalizeGitRef(parentRun.newBranch);
+    }
+    // Priority 2: Starting commit SHA (for new tasks in custom environments)
+    if (selectedRun?.startingCommitSha) {
+      return selectedRun.startingCommitSha; // Direct SHA, no normalization needed
+    }
+    // Priority 3: Task's base branch (explicit user choice)
     const candidate = task?.baseBranch;
     if (candidate && candidate.trim()) {
       return normalizeGitRef(candidate);
     }
-    return normalizeGitRef("main");
-  }, [task?.baseBranch]);
+    return undefined;
+  }, [parentRun?.newBranch, selectedRun?.startingCommitSha, task?.baseBranch]);
   const normalizedHeadBranch = useMemo(
     () => normalizeGitRef(selectedRun?.newBranch),
     [selectedRun?.newBranch],
@@ -257,14 +407,27 @@ export function TaskDetailHeader({
 
   const repoFullNames = useMemo(() => {
     const names = new Set<string>();
-    if (task?.projectFullName?.trim()) {
-      names.add(task.projectFullName.trim());
+    const projectName = task?.projectFullName?.trim();
+    // Skip environment-based project names (format: env:<environmentId>)
+    if (projectName && !projectName.startsWith("env:")) {
+      names.add(projectName);
     }
     for (const repo of environmentRepos) {
-      names.add(repo);
+      const trimmed = repo?.trim();
+      // Skip environment references in selectedRepos as well
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
+    }
+    // Add discovered repos from sandbox (for custom environments)
+    for (const repo of selectedRun?.discoveredRepos ?? []) {
+      const trimmed = repo?.trim();
+      if (trimmed && !trimmed.startsWith("env:")) {
+        names.add(trimmed);
+      }
     }
     return Array.from(names);
-  }, [task?.projectFullName, environmentRepos]);
+  }, [task?.projectFullName, environmentRepos, selectedRun?.discoveredRepos]);
 
   const repoDiffTargets = useMemo<RepoDiffTarget[]>(() => {
     const baseRef = normalizedBaseBranch || undefined;
@@ -279,6 +442,8 @@ export function TaskDetailHeader({
   const dragStyle = isElectron
     ? ({ WebkitAppRegion: "drag" } as CSSProperties)
     : undefined;
+  const showElectronSidebarToggleNoDragHole =
+    isElectron && Boolean(sidebar?.isHidden) && Boolean(teamSlugOrId);
 
   const hasExpandActions = Boolean(onExpandAll || onExpandAllChecks);
   const hasCollapseActions = Boolean(onCollapseAll || onCollapseAllChecks);
@@ -296,9 +461,29 @@ export function TaskDetailHeader({
 
   return (
     <div
-      className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70"
+      className="relative bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70"
       style={dragStyle}
     >
+      {showElectronSidebarToggleNoDragHole ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-3 flex items-center"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          <div className="w-[80px]" />
+          <div className="flex items-center gap-1.5 invisible">
+            <CmuxLogoMark height={20} />
+            <span className="text-xs font-semibold tracking-wide whitespace-nowrap">
+              cmux-next
+            </span>
+          </div>
+          <div className="ml-2 flex items-center gap-1">
+            <div className="w-[25px] h-[25px]" />
+            <div className="w-[25px] h-[25px]" />
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-1">
         {/* Title row */}
         <div className="col-start-1 row-start-1 flex items-center gap-2 relative min-w-0">
@@ -496,6 +681,19 @@ export function TaskDetailHeader({
             </span>
           )}
 
+          {githubProjectOwner && githubProjectUrl && (
+            <a
+              href={githubProjectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:hover:bg-violet-900/50 transition-colors select-none shrink-0"
+              title={`GitHub Project: ${githubProjectOwner}`}
+            >
+              <FolderKanban className="w-3 h-3" />
+              {githubProjectOwner}
+            </a>
+          )}
+
           {taskRuns && taskRuns.length > 0 && selectedRun && (
             <>
               <span className="text-neutral-500 dark:text-neutral-600 select-none">
@@ -596,6 +794,26 @@ export function TaskDetailHeader({
   );
 }
 
+function TaskDetailHeaderErrorFallback() {
+  return (
+    <div className="relative bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70">
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        Header failed to render.
+      </p>
+    </div>
+  );
+}
+
+export function TaskDetailHeader(props: TaskDetailHeaderProps) {
+  // Key the ErrorBoundary by task/run ID so it resets when context changes
+  const resetKey = `${props.task?._id ?? "no-task"}-${props.selectedRun?._id ?? "no-run"}`;
+  return (
+    <ErrorBoundary key={resetKey} fallback={<TaskDetailHeaderErrorFallback />}>
+      <TaskDetailHeaderContent {...props} />
+    </ErrorBoundary>
+  );
+}
+
 function SocketActions({
   selectedRun,
   taskRunId,
@@ -622,13 +840,15 @@ function SocketActions({
     const names = new Set<string>();
     for (const target of repoDiffTargets) {
       const trimmed = target.repoFullName?.trim();
-      if (trimmed) {
+      // Skip environment-based project names (format: env:<environmentId>)
+      if (trimmed && !trimmed.startsWith("env:")) {
         names.add(trimmed);
       }
     }
     for (const pr of pullRequests) {
       const trimmed = pr.repoFullName?.trim();
-      if (trimmed) {
+      // Skip environment references in pull requests as well
+      if (trimmed && !trimmed.startsWith("env:")) {
         names.add(trimmed);
       }
     }
@@ -671,9 +891,10 @@ function SocketActions({
   ) => {
     prs.forEach((pr) => {
       // Open GitHub URL directly in new tab if available
-      if (pr.url) {
-        window.open(pr.url, '_blank', 'noopener,noreferrer');
-      } else if (pr.repoFullName && pr.number) {
+      if (openHttpsUrlInNewTab(pr.url)) {
+        return;
+      }
+      if (pr.repoFullName && pr.number) {
         // Fallback to internal viewer if URL not available
         const [owner = "", repo = ""] = pr.repoFullName.split("/", 2);
         navigate({
@@ -928,7 +1149,42 @@ function SocketActions({
   };
 
   const handleViewPRs = () => {
-    const existing = pullRequests.filter((pr) => pr.url);
+    const existing: Array<{
+      url?: string | null;
+      repoFullName?: string;
+      number?: number;
+    }> = pullRequests
+      .filter(
+        (pr) =>
+          Boolean(pr.url) || (Boolean(pr.repoFullName) && Boolean(pr.number)),
+      )
+      .map((pr) => ({
+        url: pr.url,
+        repoFullName: pr.repoFullName,
+        number: pr.number,
+      }));
+
+    const aggregatedUrl = selectedRun?.pullRequestUrl?.trim();
+    if (
+      aggregatedUrl &&
+      aggregatedUrl !== "pending" &&
+      !existing.some((pr) => (pr.url ?? "").trim() === aggregatedUrl)
+    ) {
+      existing.push({ url: aggregatedUrl });
+    }
+
+    const aggregatedNumber = selectedRun?.pullRequestNumber;
+    if (aggregatedNumber && repoFullNames.length === 1) {
+      const repoFullName = repoFullNames[0];
+      if (
+        repoFullName &&
+        !existing.some(
+          (pr) => pr.repoFullName === repoFullName && pr.number === aggregatedNumber,
+        )
+      ) {
+        existing.push({ repoFullName, number: aggregatedNumber });
+      }
+    }
     if (existing.length > 0) {
       navigateToPrs(existing);
       return;
@@ -955,7 +1211,14 @@ function SocketActions({
   const isMerging =
     mergePrMutation.isPending || mergeBranchMutation.isPending;
 
-  const hasAnyRemotePr = pullRequests.some((pr) => pr.url);
+  const hasAnyRemotePr =
+    pullRequests.some(
+      (pr) =>
+        Boolean(pr.url) || (Boolean(pr.repoFullName) && Boolean(pr.number)),
+    ) ||
+    (Boolean(selectedRun?.pullRequestUrl?.trim()) &&
+      selectedRun?.pullRequestUrl?.trim() !== "pending") ||
+    (Boolean(selectedRun?.pullRequestNumber) && repoFullNames.length === 1);
 
   const renderRepoDropdown = () => (
     <Dropdown.Root>
@@ -969,7 +1232,10 @@ function SocketActions({
           "disabled:opacity-60 disabled:cursor-not-allowed",
         )}
         disabled={repoFullNames.every(
-          (repoName) => !pullRequestMap.get(repoName)?.url,
+          (repoName) => {
+            const pr = pullRequestMap.get(repoName);
+            return !(pr?.url || (pr?.repoFullName && pr?.number));
+          },
         )}
       >
         <ChevronDown className="w-3.5 h-3.5" />
@@ -980,16 +1246,19 @@ function SocketActions({
             <Dropdown.Arrow />
             {repoFullNames.map((repoName) => {
               const pr = pullRequestMap.get(repoName);
-              const hasUrl = Boolean(pr?.url);
+              const hasPrTarget = Boolean(
+                pr?.url || (pr?.repoFullName && pr?.number),
+              );
               return (
                 <Dropdown.Item
                   key={repoName}
-                  disabled={!hasUrl}
+                  disabled={!hasPrTarget}
                   onClick={() => {
                     // Open GitHub URL directly in new tab if available
-                    if (pr?.url) {
-                      window.open(pr.url, '_blank', 'noopener,noreferrer');
-                    } else if (pr?.repoFullName && pr?.number) {
+                    if (openHttpsUrlInNewTab(pr?.url)) {
+                      return;
+                    }
+                    if (pr?.repoFullName && pr?.number) {
                       // Fallback to internal viewer if URL not available
                       const [owner = "", repo = ""] =
                         pr.repoFullName.split("/", 2);

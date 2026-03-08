@@ -1,0 +1,19 @@
+{
+  "extends": "./electron-builder.json",
+  "appId": "com.karlorz.cmux",
+  "productName": "cmux-next",
+  "protocols": [
+    {
+      "name": "cmux-next",
+      "schemes": [
+        "cmux-next"
+      ]
+    }
+  ],
+  "extraResources": [
+    {
+      "from": "electron/app-update.next.yml",
+      "to": "app-update.next.yml"
+    }
+  ]
+}

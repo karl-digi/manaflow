@@ -151,9 +151,9 @@ export function OpenEditorSplitButton({
           socket.emit(
             "open-in-editor",
             { editor, path: worktreePath },
-            (response: { success: boolean; error?: string }) => {
-              if (response.success) resolve();
-              else reject(new Error(response.error || "Failed to open editor"));
+            (response?: { success?: boolean; error?: string }) => {
+              if (response?.success) resolve();
+              else reject(new Error(response?.error || "Failed to open editor"));
             }
           );
         } else {

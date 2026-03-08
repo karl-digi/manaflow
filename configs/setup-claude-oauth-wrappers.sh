@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup wrapper scripts for claude/npx/bunx to support OAuth token injection.
+# Setup wrapper scripts for claude/npx to support OAuth token injection.
 # This allows cmux to inject CLAUDE_CODE_OAUTH_TOKEN at runtime without needing
 # to set it as an environment variable (which doesn't work due to OAuth check timing).
 set -eux
@@ -15,8 +15,8 @@ export PATH="/root/.bun/bin:$PATH"
 # Find the real claude binary location
 CLAUDE_PATH="$(which claude 2>/dev/null || true)"
 if [ -z "$CLAUDE_PATH" ]; then
-    echo "claude not found in PATH, skipping wrapper setup"
-    exit 0
+    echo "ERROR: claude not found in PATH - install-global-cli may have failed"
+    exit 1
 fi
 
 echo "Found claude at: $CLAUDE_PATH"
@@ -47,32 +47,8 @@ exec "$CLAUDE_DIR/claude-real" "\$@"
 WRAPPER
 chmod +x "$CLAUDE_DIR/claude"
 
-# Setup bunx wrapper if bunx exists (used by cmux to run claude-code)
-BUNX_PATH="$(which bunx 2>/dev/null || true)"
-if [ -n "$BUNX_PATH" ]; then
-    echo "Found bunx at: $BUNX_PATH"
-    BUNX_DIR="$(dirname "$BUNX_PATH")"
-
-    # Only wrap if it's a symlink (not already wrapped)
-    if [ -L "$BUNX_PATH" ]; then
-        mv "$BUNX_DIR/bunx" "$BUNX_DIR/bunx-real"
-        cat > "$BUNX_DIR/bunx" << WRAPPER
-#!/bin/bash
-# If running claude-code (with or without version suffix), source env vars
-case "\$1" in
-    @anthropic-ai/claude-code|@anthropic-ai/claude-code@*|claude-code|claude-code@*)
-        if [ -f /etc/claude-code/env ]; then
-            set -a
-            source /etc/claude-code/env
-            set +a
-        fi
-        ;;
-esac
-exec "$BUNX_DIR/bunx-real" "\$@"
-WRAPPER
-        chmod +x "$BUNX_DIR/bunx"
-    fi
-fi
+# Note: bunx is NOT wrapped because wrapping breaks Bun's argv[0] detection
+# (bunx-real doesn't trigger x-mode, causing "Script not found" errors)
 
 # Setup npx wrapper if npx exists
 NPX_PATH="$(which npx 2>/dev/null || true)"

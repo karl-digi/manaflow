@@ -1,0 +1,64 @@
+@import "@git-diff-view/react/styles/diff-view.css";
+
+.cmux-git-diff-view .diff-tailwindcss-wrapper {
+  font-family: var(
+    --font-mono,
+    "JetBrains Mono",
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace
+  );
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.cmux-git-diff-view .diff-tailwindcss-wrapper[data-theme="light"] .diff-style-root {
+  --diff-border--: rgb(229 229 229);
+  --diff-add-content--: rgb(226 252 237);
+  --diff-del-content--: rgb(252 208 204);
+  --diff-add-lineNumber--: rgb(212 250 229);
+  --diff-del-lineNumber--: rgb(254 227 223);
+  --diff-plain-content--: rgb(255 255 255);
+  --diff-expand-content--: rgb(250 250 250);
+  --diff-plain-lineNumber--: rgb(250 250 250);
+  --diff-expand-lineNumber--: rgb(250 250 250);
+  --diff-plain-lineNumber-color--: rgb(115 115 115);
+  --diff-expand-lineNumber-color--: rgb(115 115 115);
+  --diff-hunk-content--: rgb(236 245 255);
+  --diff-hunk-lineNumber--: rgb(219 234 254);
+  --diff-hunk-lineNumber-hover--: rgb(37 99 235);
+  --diff-add-content-highlight--: rgb(172 246 202);
+  --diff-del-content-highlight--: rgb(255 184 179);
+  --diff-add-widget--: rgb(37 99 235);
+  --diff-add-widget-color--: rgb(255 255 255);
+  --diff-empty-content--: rgb(250 250 250);
+  --diff-hunk-content-color--: rgb(107 114 128);
+}
+
+.cmux-git-diff-view .diff-tailwindcss-wrapper[data-theme="dark"] .diff-style-root {
+  --diff-border--: rgb(63 63 70);
+  --diff-add-content--: rgba(34, 197, 94, 0.22);
+  --diff-del-content--: rgba(248, 81, 73, 0.25);
+  --diff-add-lineNumber--: rgba(34, 197, 94, 0.3);
+  --diff-del-lineNumber--: rgba(248, 81, 73, 0.3);
+  --diff-plain-content--: rgb(23 23 23);
+  --diff-expand-content--: rgb(38 38 38);
+  --diff-plain-lineNumber--: rgb(38 38 38);
+  --diff-expand-lineNumber--: rgb(38 38 38);
+  --diff-plain-lineNumber-color--: rgb(161 161 170);
+  --diff-expand-lineNumber-color--: rgb(161 161 170);
+  --diff-hunk-content--: rgb(29 39 59);
+  --diff-hunk-lineNumber--: rgb(30 58 138);
+  --diff-hunk-lineNumber-hover--: rgb(96 165 250);
+  --diff-add-content-highlight--: rgba(34, 197, 94, 0.35);
+  --diff-del-content-highlight--: rgba(248, 81, 73, 0.35);
+  --diff-add-widget--: rgb(59 130 246);
+  --diff-add-widget-color--: rgb(255 255 255);
+  --diff-empty-content--: rgb(38 38 38);
+  --diff-hunk-content-color--: rgb(161 161 170);
+}

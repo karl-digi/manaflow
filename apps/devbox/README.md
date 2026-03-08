@@ -1,8 +1,8 @@
-# cmux devbox (DevBox Agent) CLI
+# devsh (DevBox Agent) CLI
 
-cmux devbox is a command-line tool that creates isolated, reproducible cloud development environments for AI coding agents. It provides workspace management, service orchestration, file operations, code intelligence, and browser automation capabilities—all running in Morph Cloud VMs.
+devsh is a command-line tool that creates isolated, reproducible cloud development environments for AI coding agents. It provides workspace management, service orchestration, file operations, code intelligence, and browser automation capabilities—all running in Morph Cloud VMs.
 
-> **Architecture**: Everything runs in the cloud. The CLI on your local machine communicates with Morph Cloud VMs that contain your dev environment, browser automation (via Chrome DevTools Protocol), VS Code (code-server), and VNC access. The CLI is a single Go binary with no external dependencies.
+> **Architecture**: Everything runs in the cloud. The devsh CLI on your local machine communicates with Morph Cloud VMs that contain your dev environment, browser automation (via Chrome DevTools Protocol), VS Code (code-server), and VNC access. The CLI is a single Go binary with no external dependencies.
 
 ---
 
@@ -41,7 +41,7 @@ cmux devbox is a command-line tool that creates isolated, reproducible cloud dev
 │                              LOCAL MACHINE                                       │
 │                                                                                  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐ │
-│  │                         cmux devbox CLI (single Go binary)                        │ │
+│  │                             devsh CLI (single Go binary)                          │ │
 │  │                                                                            │ │
 │  │  Morph API Client (pure Go)         CDP Browser Client (chromedp)        │ │
 │  │  ├─ StartInstance(snapshot_id)      ├─ Connect(cdp_url)                  │ │
@@ -115,8 +115,8 @@ cmux devbox is a command-line tool that creates isolated, reproducible cloud dev
 
 ```bash
 # Clone the repository
-git clone https://github.com/anthropics/cmux-devbox-cli.git
-cd cmux-devbox-cli/dba
+git clone https://github.com/anthropics/devsh-cli.git
+cd devsh-cli/dba
 
 # Build the CLI
 make build
@@ -125,7 +125,7 @@ make build
 export PATH="$PWD/bin:$PATH"
 
 # Verify installation
-./bin/cmux-devbox --help
+./bin/devsh --help
 ```
 
 ---
@@ -186,7 +186,7 @@ cmux computer start --from=my-checkpoint -w ws_abc123
 export MORPH_API_KEY="your-api-key-here"
 
 # Optional - Override base snapshot
-export cmux devbox_BASE_SNAPSHOT="snapshot_3namut0l"
+export DEVSH_BASE_SNAPSHOT="snapshot_3namut0l"
 ```
 
 ### Config File (Optional)

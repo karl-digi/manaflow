@@ -1,0 +1,713 @@
+# Manaflow (cmux)
+
+Manaflow is an open-source alternative to Claude Code web/Codex Cloud/Devin that enables parallel execution of AI coding agents (Claude Code, Codex CLI, Gemini CLI, Amp, Opencode) across multiple tasks. Each agent runs in an isolated VS Code workspace backed by Morph cloud sandboxes or local Docker containers, with full git diff views, terminal access, and dev server preview capabilities built-in.
+
+The platform provides a comprehensive web application and CLI for orchestrating coding agents, managing environments with custom snapshots, integrating with GitHub for pull request workflows, and performing AI-powered code reviews with heatmap diff visualization. Built with a monorepo architecture using Bun, the system consists of an Electron desktop client, a Next.js web application with Hono API routes, Convex for real-time data persistence, and Rust-based sandbox orchestration.
+
+## Sandbox Management API
+
+The sandbox API enables creation, management, and control of isolated VS Code environments powered by Morph cloud instances. Each sandbox provides a full development environment with VSCode server, terminal access, and configurable exposed ports.
+
+### Start a Sandbox Environment
+
+Creates and provisions a new sandbox instance with optional repository cloning and environment configuration.
+
+```bash
+# Start a sandbox with a GitHub repository
+curl -X POST "https://api.manaflow.com/api/sandboxes/start" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "repoUrl": "https://github.com/owner/repo",
+    "branch": "main",
+    "newBranch": "feature/my-feature",
+    "ttlSeconds": 3600,
+    "depth": 1,
+    "metadata": {
+      "purpose": "feature-development"
+    }
+  }'
+
+# Response
+{
+  "instanceId": "morphvm_abc123",
+  "vscodeUrl": "https://sandbox-abc123.morph.so",
+  "workerUrl": "https://worker-abc123.morph.so",
+  "provider": "morph",
+  "vscodePersisted": true
+}
+```
+
+### Prewarm Sandbox for Fast Startup
+
+Pre-provisions a sandbox with repository already cloned for instant task startup when users begin typing prompts.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/sandboxes/prewarm" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "repoUrl": "https://github.com/owner/repo",
+    "branch": "main"
+  }'
+
+# Response
+{
+  "id": "prewarm_xyz789",
+  "alreadyExists": false
+}
+```
+
+### Get Sandbox Status
+
+Retrieves current status and URLs for a running sandbox instance.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/sandboxes/morphvm_abc123/status" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "running": true,
+  "vscodeUrl": "https://sandbox-abc123.morph.so",
+  "workerUrl": "https://worker-abc123.morph.so",
+  "provider": "morph"
+}
+```
+
+### Get SSH Connection Details
+
+Returns SSH credentials for connecting to a sandbox directly from terminal.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/sandboxes/morphvm_abc123/ssh?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "morphInstanceId": "morphvm_abc123",
+  "sshCommand": "ssh access_token_xyz@ssh.cloud.morph.so",
+  "accessToken": "access_token_xyz",
+  "user": "root",
+  "status": "running"
+}
+```
+
+### Stop/Pause a Sandbox
+
+Gracefully stops a sandbox, cleaning up running processes before pausing.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/sandboxes/morphvm_abc123/stop" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Returns 204 No Content on success
+```
+
+### Resume a Paused Sandbox
+
+Resumes a previously paused sandbox instance.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/sandboxes/morphvm_abc123/resume?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "resumed": true
+}
+```
+
+### Apply Environment Variables
+
+Injects environment variables into a running sandbox using envctl.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/sandboxes/morphvm_abc123/env" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "envVarsContent": "DATABASE_URL=postgres://...\nAPI_KEY=secret123"
+  }'
+
+# Response
+{
+  "applied": true
+}
+```
+
+### Run Maintenance and Dev Scripts
+
+Executes maintenance and development scripts in managed tmux sessions.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/sandboxes/morphvm_abc123/run-scripts" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "maintenanceScript": "npm install && npm run build",
+    "devScript": "npm run dev"
+  }'
+
+# Response
+{
+  "started": true
+}
+```
+
+## Environment Management API
+
+Environments are reusable sandbox configurations with pre-configured snapshots, environment variables, maintenance scripts, and exposed ports.
+
+### Create Environment
+
+Creates a new environment from a running Morph instance with encrypted environment variables.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/environments" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "name": "Node.js Production",
+    "morphInstanceId": "morphvm_abc123",
+    "envVarsContent": "NODE_ENV=production\nDATABASE_URL=postgres://...",
+    "selectedRepos": ["owner/repo1", "owner/repo2"],
+    "description": "Production-ready Node.js environment",
+    "maintenanceScript": "npm ci --production",
+    "devScript": "npm start",
+    "exposedPorts": [3000, 5432]
+  }'
+
+# Response
+{
+  "id": "env_abc123",
+  "snapshotId": "snapshot_xyz789"
+}
+```
+
+### List Environments
+
+Lists all environments for a team.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/environments?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+[
+  {
+    "id": "env_abc123",
+    "name": "Node.js Production",
+    "morphSnapshotId": "snapshot_xyz789",
+    "dataVaultKey": "env_key_abc",
+    "selectedRepos": ["owner/repo1"],
+    "description": "Production-ready Node.js environment",
+    "maintenanceScript": "npm ci --production",
+    "devScript": "npm start",
+    "exposedPorts": [3000, 5432],
+    "createdAt": 1699999999999,
+    "updatedAt": 1699999999999
+  }
+]
+```
+
+### Get Environment Variables
+
+Retrieves decrypted environment variables for an environment.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/environments/env_abc123/vars?teamSlugOrId=my-team" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "envVarsContent": "NODE_ENV=production\nDATABASE_URL=postgres://..."
+}
+```
+
+### Update Environment Metadata
+
+Updates environment name, description, and scripts.
+
+```bash
+curl -X PATCH "https://api.manaflow.com/api/environments/env_abc123" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "name": "Node.js Staging",
+    "description": "Updated staging environment",
+    "maintenanceScript": "npm ci",
+    "devScript": "npm run dev"
+  }'
+
+# Response
+{
+  "id": "env_abc123",
+  "name": "Node.js Staging",
+  "morphSnapshotId": "snapshot_xyz789",
+  ...
+}
+```
+
+### Update Exposed Ports
+
+Updates the list of exposed ports for an environment, optionally applying to a running instance.
+
+```bash
+curl -X PATCH "https://api.manaflow.com/api/environments/env_abc123/ports" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "ports": [3000, 8080, 9229],
+    "morphInstanceId": "morphvm_abc123"
+  }'
+
+# Response
+{
+  "exposedPorts": [3000, 8080, 9229],
+  "services": [
+    {"port": 3000, "url": "https://port-3000-abc123.morph.so"},
+    {"port": 8080, "url": "https://port-8080-abc123.morph.so"}
+  ]
+}
+```
+
+### Create Snapshot Version
+
+Creates a new snapshot version from a running instance for version control of environments.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/environments/env_abc123/snapshots" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "morphInstanceId": "morphvm_abc123",
+    "label": "v1.2.0 - Added Redis support",
+    "activate": true,
+    "maintenanceScript": "npm ci && npm run build"
+  }'
+
+# Response
+{
+  "snapshotVersionId": "snapver_xyz",
+  "snapshotId": "snapshot_new123",
+  "version": 3
+}
+```
+
+### Activate Snapshot Version
+
+Switches the active snapshot version for an environment (rollback capability).
+
+```bash
+curl -X POST "https://api.manaflow.com/api/environments/env_abc123/snapshots/snapver_xyz/activate" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team"
+  }'
+
+# Response
+{
+  "morphSnapshotId": "snapshot_xyz789",
+  "version": 2
+}
+```
+
+## Morph Instance Management API
+
+Provides direct control over Morph VM instances for task runs and development workflows.
+
+### Setup Morph Instance
+
+Creates or reuses a Morph instance with optional repository cloning and GitHub authentication.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/morph/setup-instance" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "selectedRepos": ["owner/repo1", "owner/repo2"],
+    "ttlSeconds": 1800,
+    "snapshotId": "cmux-snapshot-claude-code"
+  }'
+
+# Response
+{
+  "instanceId": "morphvm_abc123",
+  "vscodeUrl": "https://sandbox-abc123.morph.so/?folder=/root/workspace",
+  "clonedRepos": ["owner/repo1", "owner/repo2"],
+  "removedRepos": []
+}
+```
+
+### Resume Task Run Instance
+
+Resumes a paused Morph instance backing a task run.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/morph/task-runs/taskrun_abc123/resume" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team"
+  }'
+
+# Response
+{
+  "resumed": true
+}
+```
+
+### Check Task Run Paused Status
+
+Checks if a task run's backing instance is paused or stopped.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/morph/task-runs/taskrun_abc123/is-paused" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team"
+  }'
+
+# Response
+{
+  "paused": false,
+  "stopped": false
+}
+```
+
+### Refresh GitHub Authentication
+
+Re-authenticates GitHub CLI inside a running Morph VM with a fresh token.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/morph/task-runs/taskrun_abc123/refresh-github-auth" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team"
+  }'
+
+# Response
+{
+  "refreshed": true
+}
+```
+
+### List Morph Instances
+
+Lists all Morph instances owned by the user or their teams.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/morph/instances?teamId=team_abc123" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+[
+  {
+    "id": "morphvm_abc123",
+    "status": "running",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "metadata": {
+      "app": "cmux-dev",
+      "userId": "user_xyz",
+      "teamId": "team_abc123"
+    }
+  }
+]
+```
+
+## Code Review API
+
+AI-powered code review with heatmap visualization highlighting risky code changes.
+
+### Start Code Review
+
+Initiates an automated code review for a pull request or commit comparison.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/code-review/start" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teamSlugOrId": "my-team",
+    "githubLink": "https://github.com/owner/repo/pull/123",
+    "prNumber": 123,
+    "headCommitRef": "abc123def456",
+    "baseCommitRef": "789xyz012abc",
+    "heatmapModel": "anthropic-haiku-4-5",
+    "tooltipLanguage": "en"
+  }'
+
+# Response
+{
+  "job": {
+    "jobId": "job_abc123",
+    "teamId": "team_xyz",
+    "repoFullName": "owner/repo",
+    "repoUrl": "https://github.com/owner/repo",
+    "prNumber": 123,
+    "commitRef": "abc123def456",
+    "headCommitRef": "abc123def456",
+    "baseCommitRef": "789xyz012abc",
+    "jobType": "pull_request",
+    "state": "pending",
+    "createdAt": 1699999999999,
+    "updatedAt": 1699999999999
+  },
+  "deduplicated": false
+}
+```
+
+### Simple Code Review (Streaming)
+
+Performs a lightweight code review on provided file diffs with Server-Sent Events streaming.
+
+```bash
+curl -X POST "https://api.manaflow.com/api/code-review/simple?model=anthropic-haiku-4-5&tooltipLanguage=en" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fileDiffs": [
+      {
+        "filePath": "src/index.ts",
+        "diffText": "@@ -1,5 +1,10 @@\n+import { newFeature } from \"./feature\";\n..."
+      }
+    ],
+    "diffLabel": "feature-branch-review"
+  }'
+
+# SSE Response Stream
+data: {"type":"status","message":"starting"}
+data: {"type":"file","filePath":"src/index.ts"}
+data: {"type":"line","filePath":"src/index.ts","changeType":"addition","diffLine":1,"codeLine":"import { newFeature } from \"./feature\";","score":0.3,"scoreNormalized":0.3}
+data: {"type":"file-complete","filePath":"src/index.ts","status":"completed"}
+data: {"type":"complete"}
+```
+
+## GitHub Integration API
+
+Integration with GitHub for repository management, pull requests, and CI/CD status.
+
+### List GitHub Repositories
+
+Lists repositories accessible via a GitHub App installation.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/integrations/github/repos?team=my-team&installationId=12345&search=api&page=1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "repos": [
+    {
+      "name": "api-server",
+      "full_name": "owner/api-server",
+      "private": true,
+      "updated_at": "2024-01-15T10:30:00Z",
+      "pushed_at": "2024-01-15T09:00:00Z"
+    }
+  ]
+}
+```
+
+### List Pull Requests
+
+Lists pull requests across a GitHub App installation with search and filtering.
+
+```bash
+curl -X GET "https://api.manaflow.com/api/integrations/github/prs?team=my-team&installationId=12345&state=open&q=bugfix&page=1&per_page=20" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Response
+{
+  "total_count": 15,
+  "pullRequests": [
+    {
+      "id": 123456789,
+      "number": 42,
+      "title": "Fix critical bugfix in authentication",
+      "state": "open",
+      "user": {
+        "login": "developer",
+        "id": 12345,
+        "avatar_url": "https://avatars.githubusercontent.com/u/12345"
+      },
+      "repository_full_name": "owner/repo",
+      "html_url": "https://github.com/owner/repo/pull/42",
+      "created_at": "2024-01-14T10:00:00Z",
+      "updated_at": "2024-01-15T08:30:00Z",
+      "comments": 5
+    }
+  ]
+}
+```
+
+## Convex Database Schema
+
+The application uses Convex for real-time data persistence with the following key tables and TypeScript integration.
+
+### Task and TaskRun Entities
+
+```typescript
+// packages/convex/convex/schema.ts
+
+// Tasks represent coding work items
+const tasks = defineTable({
+  text: v.string(),
+  isCompleted: v.boolean(),
+  projectFullName: v.optional(v.string()),
+  baseBranch: v.optional(v.string()),
+  generatedBranchName: v.optional(v.string()),
+  userId: v.string(),
+  teamId: v.string(),
+  environmentId: v.optional(v.id("environments")),
+  mergeStatus: v.optional(v.union(
+    v.literal("none"),
+    v.literal("pr_draft"),
+    v.literal("pr_open"),
+    v.literal("pr_merged"),
+    v.literal("pr_closed")
+  )),
+})
+  .index("by_team_user", ["teamId", "userId"])
+  .index("by_team_user_created", ["teamId", "userId", "createdAt"]);
+
+// TaskRuns represent individual agent executions
+const taskRuns = defineTable({
+  taskId: v.id("tasks"),
+  prompt: v.string(),
+  agentName: v.optional(v.string()),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("running"),
+    v.literal("completed"),
+    v.literal("failed"),
+    v.literal("skipped")
+  ),
+  vscode: v.optional(v.object({
+    provider: v.union(v.literal("docker"), v.literal("morph"), v.literal("daytona")),
+    containerName: v.optional(v.string()),
+    status: v.union(v.literal("starting"), v.literal("running"), v.literal("stopped")),
+    url: v.optional(v.string()),
+    workspaceUrl: v.optional(v.string()),
+  })),
+  pullRequestUrl: v.optional(v.string()),
+  pullRequestState: v.optional(v.union(
+    v.literal("none"),
+    v.literal("draft"),
+    v.literal("open"),
+    v.literal("merged"),
+    v.literal("closed")
+  )),
+})
+  .index("by_task", ["taskId", "createdAt"])
+  .index("by_vscode_container_name", ["vscode.containerName"]);
+```
+
+### Environment Configuration
+
+```typescript
+// Environments store reusable sandbox configurations
+const environments = defineTable({
+  name: v.string(),
+  teamId: v.string(),
+  userId: v.string(),
+  morphSnapshotId: v.string(),
+  dataVaultKey: v.string(), // StackAuth DataVault for encrypted env vars
+  selectedRepos: v.optional(v.array(v.string())),
+  maintenanceScript: v.optional(v.string()),
+  devScript: v.optional(v.string()),
+  exposedPorts: v.optional(v.array(v.number())),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_team", ["teamId", "createdAt"])
+  .index("by_team_user", ["teamId", "userId"]);
+
+// Snapshot versions for environment rollback
+const environmentSnapshotVersions = defineTable({
+  environmentId: v.id("environments"),
+  teamId: v.string(),
+  morphSnapshotId: v.string(),
+  version: v.number(),
+  createdByUserId: v.string(),
+  label: v.optional(v.string()),
+  maintenanceScript: v.optional(v.string()),
+  devScript: v.optional(v.string()),
+})
+  .index("by_environment_version", ["environmentId", "version"]);
+```
+
+## Development Setup
+
+### Local Development
+
+```bash
+# Clone and install dependencies
+git clone https://github.com/manaflow-ai/manaflow.git
+cd manaflow
+bun install
+
+# Start all services
+./scripts/dev.sh
+
+# Optional: rebuild Docker with fresh build
+./scripts/dev.sh --force-docker-build
+
+# Run type checking
+bun run typecheck
+
+# Run linting and checks
+bun run check
+bun run lint
+
+# Run tests
+bun run test
+```
+
+### Service Logs
+
+```bash
+# Logs are written to logs/ directory during development
+tail -f logs/convex-dev.log    # Convex development server
+tail -f logs/server.log        # Backend dev server
+tail -f logs/client.log        # Frontend Vite dev server
+tail -f logs/docker-compose.log # Docker Compose stack
+```
+
+### Convex Development
+
+```bash
+# Query Convex data during development
+cd packages/convex
+bunx convex data sessions --format jsonl | rg "pattern"
+bunx convex data taskRuns --format jsonl | rg "morphvm_"
+```
+
+### Morph Sandbox CLI
+
+```bash
+# Execute commands in Morph instances
+uvx --env-file .env morphcloud instance exec morphvm_q11mhv3p "ls"
+
+# Build/update snapshots
+uv run --env-file .env ./scripts/snapshot.py
+```
+
+## Summary
+
+Manaflow serves as a comprehensive platform for parallel AI coding agent orchestration, enabling development teams to run multiple Claude Code, Codex, Gemini CLI, and other coding agents simultaneously in isolated cloud sandboxes. The primary use cases include: accelerating feature development through parallel agent execution, managing reusable development environments with snapshot versioning, integrating AI-powered code reviews into pull request workflows, and providing real-time monitoring of agent workspaces through embedded VS Code and VNC preview.
+
+The platform integrates deeply with GitHub for repository management, pull request workflows, and CI/CD status tracking. Through its Hono-based REST API, developers can programmatically manage sandboxes, environments, and code reviews. The Convex real-time database enables instant updates across the web client, desktop Electron app, and CLI tools. Whether deploying via the macOS desktop app, web interface at manaflow.com, or programmatic API access, Manaflow provides a unified experience for orchestrating AI coding agents at scale.

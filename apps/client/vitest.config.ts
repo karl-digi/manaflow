@@ -22,13 +22,16 @@ const testImportMetaEnv = {
 export default defineConfig({
   plugins: [
     tsconfigPaths({
-      // Only scan from apps/client to avoid dev-docs submodules with unresolved tsconfig extends
+      // Only scan from apps/client to avoid walking synced dev-docs documentation files
       root: import.meta.dirname,
     }),
   ],
   test: {
     environment: "node",
     env: testClientEnv,
+    // Setup file runs before any test imports, which is critical for
+    // @t3-oss/env-core validation that happens at import time
+    setupFiles: ["./vitest.setup.ts"],
   },
   define: {
     "import.meta.env": JSON.stringify(testImportMetaEnv),

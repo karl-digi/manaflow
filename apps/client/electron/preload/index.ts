@@ -1,9 +1,19 @@
 import * as Sentry from "@sentry/electron/renderer";
+import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
 
-Sentry.init();
+// Only initialize Sentry in the renderer if DSN is configured.
+// This matches the main process behavior in bootstrap.ts and prevents
+// "sentry-ipc://" fetch errors when the main process hasn't initialized Sentry.
+if (SENTRY_ELECTRON_DSN) {
+  Sentry.init();
+}
 
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  MCP_HOST_CONFIG_IPC_CHANNELS,
+  type HostMcpFileResult,
+} from "../main/mcp-host-config";
 import type {
   ElectronDevToolsMode,
   ElectronWebContentsEvent,
@@ -213,6 +223,14 @@ const cmuxAPI = {
           }
         | { ok: false; error: string }
       >,
+  },
+  mcpHostConfig: {
+    readClaudeJson: () =>
+      ipcRenderer.invoke(MCP_HOST_CONFIG_IPC_CHANNELS.readClaudeJson) as Promise<HostMcpFileResult>,
+    readCodexToml: () =>
+      ipcRenderer.invoke(MCP_HOST_CONFIG_IPC_CHANNELS.readCodexToml) as Promise<HostMcpFileResult>,
+    readOpencodeJson: () =>
+      ipcRenderer.invoke(MCP_HOST_CONFIG_IPC_CHANNELS.readOpencodeJson) as Promise<HostMcpFileResult>,
   },
   webContentsView: {
     create: (options: {

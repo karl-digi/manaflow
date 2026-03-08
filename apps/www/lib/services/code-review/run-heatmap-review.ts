@@ -240,10 +240,13 @@ export async function runHeatmapReview(
     });
 
     // Create the base model instance based on provider
-    const baseModelInstance: LanguageModel =
+    // Type assertion needed: @ai-sdk/amazon-bedrock and @ai-sdk/openai return V2|V3,
+    // but ai's LanguageModel type expects V2. The runtime behavior is compatible.
+    const baseModelInstance = (
       effectiveModelConfig.provider === "anthropic"
         ? bedrock(effectiveModelConfig.model)
-        : openai(effectiveModelConfig.model);
+        : openai(effectiveModelConfig.model)
+    ) as LanguageModel;
 
     // Wrap model with PostHog tracing if client is available
     // Cast needed due to posthog-node version mismatch between @posthog/ai peer dep and direct dep

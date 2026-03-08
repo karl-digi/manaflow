@@ -132,62 +132,51 @@ githubPrsFileContentsBatchRouter.openapi(
       }
     }
 
-    const results: Array<z.infer<typeof FileResp>> = [];
-    const maxConcurrency = 6;
-    let inFlight = 0;
-    let i = 0;
-    await new Promise<void>((resolve) => {
-      const runNext = () => {
-        while (inFlight < maxConcurrency && i < files.length) {
-          const file = files[i++];
-          inFlight++;
-          (async () => {
-            const resp: z.infer<typeof FileResp> = { path: file.path };
-            if (which === "both" || which === "head") {
-              const h = headTreeMap.get(file.path);
-              if (h) {
-                if (h.size === undefined || h.size <= maxFileBytes) {
-                  const blob = await fetchBlob(h.sha);
-                  if (blob) resp.head = blob;
-                  else resp.truncatedHead = true;
-                } else {
-                  resp.truncatedHead = true;
-                  resp.headSize = h.size;
-                }
-              } else {
-                resp.truncatedHead = true;
-              }
-            }
-            if (which === "both" || which === "base") {
-              const basePath = file.previous_filename ?? file.path;
-              const b = baseTreeMap.get(basePath);
-              if (b) {
-                if (b.size === undefined || b.size <= maxFileBytes) {
-                  const blob = await fetchBlob(b.sha);
-                  if (blob) resp.base = blob;
-                  else resp.truncatedBase = true;
-                } else {
-                  resp.truncatedBase = true;
-                  resp.baseSize = b.size;
-                }
-              } else {
-                resp.truncatedBase = true;
-              }
-            }
-            results.push(resp);
-          })()
-            .catch(() => {
-              // ignore
-            })
-            .finally(() => {
-              inFlight--;
-              if (results.length === files.length) resolve();
-              else runNext();
-            });
+    // Process files with bounded concurrency using a semaphore pattern
+    async function processFile(file: z.infer<typeof FileReq>): Promise<z.infer<typeof FileResp>> {
+      const resp: z.infer<typeof FileResp> = { path: file.path };
+      if (which === "both" || which === "head") {
+        const h = headTreeMap.get(file.path);
+        if (h) {
+          if (h.size === undefined || h.size <= maxFileBytes) {
+            const blob = await fetchBlob(h.sha);
+            if (blob) resp.head = blob;
+            else resp.truncatedHead = true;
+          } else {
+            resp.truncatedHead = true;
+            resp.headSize = h.size;
+          }
+        } else {
+          resp.truncatedHead = true;
         }
-      };
-      runNext();
-    });
+      }
+      if (which === "both" || which === "base") {
+        const basePath = file.previous_filename ?? file.path;
+        const b = baseTreeMap.get(basePath);
+        if (b) {
+          if (b.size === undefined || b.size <= maxFileBytes) {
+            const blob = await fetchBlob(b.sha);
+            if (blob) resp.base = blob;
+            else resp.truncatedBase = true;
+          } else {
+            resp.truncatedBase = true;
+            resp.baseSize = b.size;
+          }
+        } else {
+          resp.truncatedBase = true;
+        }
+      }
+      return resp;
+    }
+
+    // Use Promise.all with chunked processing for bounded concurrency
+    const maxConcurrency = 6;
+    const results: Array<z.infer<typeof FileResp>> = [];
+    for (let i = 0; i < files.length; i += maxConcurrency) {
+      const chunk = files.slice(i, i + maxConcurrency);
+      const chunkResults = await Promise.all(chunk.map(processFile));
+      results.push(...chunkResults);
+    }
 
     return c.json({
       repoFullName: `${owner}/${repo}`,

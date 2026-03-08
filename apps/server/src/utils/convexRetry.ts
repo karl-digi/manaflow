@@ -23,8 +23,8 @@ export async function retryOnOptimisticConcurrency<T>(
       await sleep(delay + jitter);
     }
   }
-  // Should be unreachable
-  throw { message: "retryOnOptimisticConcurrency exhausted unexpectedly" };
+  // Should be unreachable - loop always returns or throws
+  throw new Error("retryOnOptimisticConcurrency exhausted unexpectedly");
 }
 
 function sleep(ms: number): Promise<void> {

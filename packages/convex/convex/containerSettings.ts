@@ -61,16 +61,34 @@ export const update = authMutation({
       .first();
     const now = Date.now();
 
+    // Destructure to exclude teamSlugOrId from being stored in the document
+    const {
+      teamSlugOrId: _teamSlugOrId,
+      maxRunningContainers,
+      reviewPeriodMinutes,
+      autoCleanupEnabled,
+      stopImmediatelyOnCompletion,
+      minContainersToKeep,
+    } = args;
+
+    const settingsData = {
+      maxRunningContainers,
+      reviewPeriodMinutes,
+      autoCleanupEnabled,
+      stopImmediatelyOnCompletion,
+      minContainersToKeep,
+    };
+
     if (existing) {
       await ctx.db.patch(existing._id, {
-        ...args,
+        ...settingsData,
         userId,
         teamId,
         updatedAt: now,
       });
     } else {
       await ctx.db.insert("containerSettings", {
-        ...args,
+        ...settingsData,
         userId,
         teamId,
         createdAt: now,

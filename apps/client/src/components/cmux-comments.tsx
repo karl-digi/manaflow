@@ -233,14 +233,15 @@ function CommentMarker({ comment, onClick, teamSlugOrId }: CommentMarkerProps) {
           // Old CSS selector - try to handle it
           try {
             el = document.querySelector(comment.nodeId) as HTMLElement;
-          } catch (_e) {
+          } catch (selectorError) {
             // Try escaping for old Tailwind classes
             const escapedSelector = comment.nodeId.replace(/([:])/g, "\\$1");
             try {
               el = document.querySelector(escapedSelector) as HTMLElement;
-            } catch (_e2) {
+            } catch (escapedError) {
               console.warn(
-                `Could not find element with CSS selector: ${comment.nodeId}`
+                `Could not find element with CSS selector: ${comment.nodeId}`,
+                { selectorError, escapedError }
               );
             }
           }
@@ -733,7 +734,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
     const hostname = window.location.hostname;
     const port = window.location.port;
     const isLocalhost5173 = hostname === "localhost" && port === "5173";
-    const isElectronApp = hostname === "manaflow.local";
+    const isElectronApp = hostname === "cmux.local" || hostname === "manaflow.local";
     if (forceShow) {
       return true;
     }

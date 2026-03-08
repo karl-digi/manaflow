@@ -1,0 +1,47 @@
+# Docker Compose for cmux server
+# Optimized for Coolify deployment
+#
+# Usage:
+#   Local testing:  docker compose up --build
+#   Coolify:        Deploy via Coolify UI with this file
+#
+# Environment variables can be set via:
+#   - Coolify UI (recommended for production)
+#   - .env file in same directory (for local testing)
+
+services:
+  cmux-server:
+    build:
+      context: ../..
+      dockerfile: apps/server/Dockerfile
+    container_name: cmux-server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-9776}:9776"
+    environment:
+      - NODE_ENV=production
+      - PORT=9776
+      # Required: Convex deployment URL
+      - NEXT_PUBLIC_CONVEX_URL=${NEXT_PUBLIC_CONVEX_URL}
+      # Required: Client origin(s) for CORS - comma-separated for multiple origins
+      # Example: "https://cmux-client.example.com,https://cmux.example.com"
+      - CMUX_ALLOWED_SOCKET_ORIGINS=${CMUX_ALLOWED_SOCKET_ORIGINS}
+      # Optional: WWW app origin for API calls
+      - NEXT_PUBLIC_WWW_ORIGIN=${NEXT_PUBLIC_WWW_ORIGIN:-}
+      # Optional: Convex HTTP actions URL
+      - CONVEX_SITE_URL=${CONVEX_SITE_URL:-}
+      # Optional: Enable web-only mode (no local Docker features)
+      - NEXT_PUBLIC_WEB_MODE=${NEXT_PUBLIC_WEB_MODE:-true}
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const net = require('net'); const s = net.createConnection(9776, 'localhost'); s.on('connect', () => process.exit(0)); s.on('error', () => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M

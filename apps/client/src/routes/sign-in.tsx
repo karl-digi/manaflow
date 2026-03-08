@@ -6,9 +6,22 @@ import z from "zod";
 export const Route = createFileRoute("/sign-in")({
   validateSearch: z.object({
     after_auth_return_to: z.string().optional(),
+    force: z.boolean().optional(),
   }),
   beforeLoad: async ({ search }) => {
     const user = await stackClientApp.getUser();
+
+    if (search.force) {
+      if (user) {
+        try {
+          await user.signOut();
+        } catch (error) {
+          console.error("Forced sign out failed", error);
+        }
+      }
+      return;
+    }
+
     if (user) {
       const after_auth_redirect_to = search.after_auth_return_to || "/";
       throw redirect({ to: after_auth_redirect_to });

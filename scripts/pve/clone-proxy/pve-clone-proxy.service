@@ -1,0 +1,24 @@
+[Unit]
+Description=cmux PVE LXC clone serialization proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/default/pve-clone-proxy
+WorkingDirectory=/opt/pve-clone-proxy
+ExecStart=/usr/local/bin/pve-clone-proxy
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15s
+
+# Reduce surface area; relax if the proxy needs broader access on the host.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

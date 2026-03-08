@@ -23,8 +23,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
-import { DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID } from "@cmux/shared";
 import clsx from "clsx";
+import type { SandboxConfig } from "@cmux/shared";
 import {
   FrameworkPresetSelect,
   getFrameworkPresetConfig,
@@ -84,6 +84,8 @@ type PreviewConfigureClientProps = {
   initialMaintenanceScript?: string | null;
   initialDevScript?: string | null;
   startAtConfigureEnvironment?: boolean;
+  sandboxConfig: SandboxConfig;
+  initialSnapshotId: MachinePresetId;
 };
 
 function normalizeVncUrl(url: string): string | null {
@@ -103,7 +105,11 @@ function resolveMorphHostId(
   workspaceUrl?: string
 ): string | null {
   if (instanceId && instanceId.trim().length > 0) {
-    return instanceId.trim().toLowerCase().replace(/_/g, "-");
+    const normalized = instanceId.trim().toLowerCase();
+    if (!isMorphInstanceId(normalized)) {
+      return null;
+    }
+    return normalized.replace(/_/g, "-");
   }
 
   if (!workspaceUrl) {
@@ -120,7 +126,7 @@ function resolveMorphHostId(
     }
 
     const proxyMatch = url.hostname.match(
-      /^(?:manaflow|cmux)-([^-]+)-[a-z0-9-]+-\d+\.(?:manaflow|cmux)\.(?:app|dev|sh|local|localhost)$/i
+      /^(?:manaflow|cmux)-([^-]+)-[a-z0-9-]+-\d+\.(?:manaflow|cmux)\.(?:app|com|dev|sh|local|localhost)$/i
     );
     if (proxyMatch && proxyMatch[1]) {
       return `morphvm-${proxyMatch[1].toLowerCase()}`;
@@ -130,6 +136,10 @@ function resolveMorphHostId(
   }
 
   return null;
+}
+
+function isMorphInstanceId(value: string): boolean {
+  return value.startsWith("morphvm_") || value.startsWith("morphvm-");
 }
 
 function deriveVncUrl(
@@ -417,6 +427,8 @@ export function PreviewConfigureClient({
   initialMaintenanceScript,
   initialDevScript,
   startAtConfigureEnvironment = false,
+  sandboxConfig,
+  initialSnapshotId,
 }: PreviewConfigureClientProps) {
   const initialEnvPrefilled = useMemo(
     () =>
@@ -480,7 +492,7 @@ export function PreviewConfigureClient({
   const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
   const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<MachinePresetId>(
-    DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID
+    initialSnapshotId
   );
   const [maintenanceScript, setMaintenanceScript] = useState("");
   const [devScript, setDevScript] = useState("");
@@ -724,7 +736,7 @@ export function PreviewConfigureClient({
           repoUrl: `https://github.com/${repo}`,
           branch: "main",
           ttlSeconds: 3600,
-          snapshotId: selectedSnapshotId,
+          ...(selectedSnapshotId ? { snapshotId: selectedSnapshotId } : {}),
         }),
       });
 
@@ -786,7 +798,7 @@ export function PreviewConfigureClient({
           try {
             el.scrollIntoView({ block: "nearest" });
           } catch (_e) {
-            void 0;
+            // scrollIntoView may not be available in all environments - safe to ignore
           }
         }, 0);
         setPendingFocusIndex(null);
@@ -932,7 +944,7 @@ export function PreviewConfigureClient({
         body: JSON.stringify({
           teamSlugOrId: resolvedTeamSlugOrId,
           name: envName,
-          morphInstanceId: instance.instanceId,
+          instanceId: instance.instanceId,
           envVarsContent,
           selectedRepos: [repo],
           maintenanceScript: requestMaintenanceScript,
@@ -946,7 +958,7 @@ export function PreviewConfigureClient({
         throw new Error(await envResponse.text());
       }
 
-      const envData = await envResponse.json();
+      const envData = (await envResponse.json()) as { id: string };
       const environmentId = envData.id;
 
       const previewResponse = await fetch("/api/preview/configs", {
@@ -1227,9 +1239,6 @@ export function PreviewConfigureClient({
             background="#000000"
             scaleViewport
             autoConnect
-            autoReconnect
-            reconnectDelay={1000}
-            maxReconnectDelay={30000}
             focusOnClick
             onStatusChange={setVncStatus}
             loadingFallback={vncLoadingFallback}
@@ -1547,6 +1556,8 @@ export function PreviewConfigureClient({
 
         {/* Machine Size Preset */}
         <MachinePresetSelect
+          provider={sandboxConfig.provider}
+          presets={sandboxConfig.presets}
           value={selectedSnapshotId}
           onValueChange={setSelectedSnapshotId}
         />

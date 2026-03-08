@@ -233,9 +233,19 @@ function VSCodeComponent() {
     void webviewActions.focus();
   }, [iframeStatus, webviewActions, workspaceUrl]);
 
+  // Only auto-focus on initial load, not every iframeStatus change (RC-8)
+  const hasInitiallyFocusedRef = useRef(false);
   useEffect(() => {
-    focusWebviewIfReady();
-  }, [focusWebviewIfReady]);
+    if (iframeStatus === "loaded" && !hasInitiallyFocusedRef.current) {
+      hasInitiallyFocusedRef.current = true;
+      focusWebviewIfReady();
+    }
+  }, [focusWebviewIfReady, iframeStatus]);
+
+  // Reset initial focus tracking when workspace URL genuinely changes
+  useEffect(() => {
+    hasInitiallyFocusedRef.current = false;
+  }, [workspaceUrl]);
 
   const handleElectronWindowFocus = useCallback(() => {
     void (async () => {

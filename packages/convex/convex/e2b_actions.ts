@@ -46,25 +46,30 @@ export const startInstance = internalAction({
     envs: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (_ctx, args) => {
-    const client = getE2BClient();
+    try {
+      const client = getE2BClient();
 
-    const instance = await client.instances.start({
-      templateId: args.templateId ?? DEFAULT_E2B_TEMPLATE_ID,
-      ttlSeconds: args.ttlSeconds ?? 60 * 60,
-      metadata: args.metadata,
-      envs: args.envs,
-    });
+      const instance = await client.instances.start({
+        templateId: args.templateId ?? DEFAULT_E2B_TEMPLATE_ID,
+        ttlSeconds: args.ttlSeconds ?? 60 * 60,
+        metadata: args.metadata,
+        envs: args.envs,
+      });
 
-    const { jupyterUrl, vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
+      const { jupyterUrl, vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
 
-    return {
-      instanceId: instance.id,
-      status: "running",
-      jupyterUrl,
-      vscodeUrl,
-      workerUrl,
-      vncUrl,
-    };
+      return {
+        instanceId: instance.id,
+        status: "running",
+        jupyterUrl,
+        vscodeUrl,
+        workerUrl,
+        vncUrl,
+      };
+    } catch (error) {
+      console.error("[e2b_actions.startInstance] Failed to start E2B instance:", error);
+      throw error;
+    }
   },
 });
 
@@ -90,7 +95,9 @@ export const getInstance = internalAction({
         workerUrl,
         vncUrl,
       };
-    } catch {
+    } catch (error) {
+      console.error("[e2b_actions.getInstance] Failed to get instance status:", error);
+      // Return stopped status if lookup fails (instance may have been deleted or API error)
       return {
         instanceId: args.instanceId,
         status: "stopped",
@@ -144,12 +151,17 @@ export const extendTimeout = internalAction({
     timeoutMs: v.optional(v.number()),
   },
   handler: async (_ctx, args) => {
-    const client = getE2BClient();
-    const instance = await client.instances.get({ instanceId: args.instanceId });
-    const timeoutMs = args.timeoutMs ?? 60 * 60 * 1000;
-    await instance.setTimeout(timeoutMs);
+    try {
+      const client = getE2BClient();
+      const instance = await client.instances.get({ instanceId: args.instanceId });
+      const timeoutMs = args.timeoutMs ?? 60 * 60 * 1000;
+      await instance.setTimeout(timeoutMs);
 
-    return { extended: true, timeoutMs };
+      return { extended: true, timeoutMs };
+    } catch (error) {
+      console.error("[e2b_actions.extendTimeout] Failed to extend timeout:", error);
+      throw error;
+    }
   },
 });
 
@@ -161,10 +173,15 @@ export const stopInstance = internalAction({
     instanceId: v.string(),
   },
   handler: async (_ctx, args) => {
-    const client = getE2BClient();
-    await client.instances.kill(args.instanceId);
+    try {
+      const client = getE2BClient();
+      await client.instances.kill(args.instanceId);
 
-    return { stopped: true };
+      return { stopped: true };
+    } catch (error) {
+      console.error("[e2b_actions.stopInstance] Failed to stop E2B instance:", error);
+      throw error;
+    }
   },
 });
 

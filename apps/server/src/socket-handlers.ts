@@ -40,7 +40,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import z from "zod";
 import { spawnAllAgents } from "./agentSpawner";
-import { stopContainersForRuns } from "./archiveTask";
+import { resumeContainersForRuns, stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
@@ -50,10 +50,12 @@ import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { localCloudSyncManager } from "./localCloudSync";
 import {
+  DEFAULT_BRANCH_PREFIX,
   generateBranchNamesFromDescription,
   generatePRInfoAndBranchNames,
 } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
+import { editorExists, findEditorExecutable } from "./utils/editorDetection";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
@@ -78,7 +80,7 @@ import {
   getLastVSCodeDetectionResult,
   refreshVSCodeDetection,
 } from "./vscode/serveWeb";
-import { getProjectPaths } from "./workspace";
+import { getProjectPaths, getWorktreePath } from "./workspace";
 import {
   collectRepoFullNamesForRun,
   EMPTY_AGGREGATE,
@@ -94,6 +96,20 @@ const execFileAsync = promisify(execFile);
 interface ExecError extends Error {
   stderr?: string;
   stdout?: string;
+}
+
+/**
+ * Extract error message from an unknown error value.
+ * Provides consistent error message extraction across all socket handlers.
+ */
+function getErrorMessage(error: unknown, fallback = "Unknown error"): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return fallback;
 }
 
 const isWindows = process.platform === "win32";
@@ -188,8 +204,9 @@ function getUserLoginShell(): string {
       if (userShell) {
         return userShell;
       }
-    } catch {
-      // Ignore failures – we'll fall back to other sources.
+    } catch (e) {
+      // Log and fall back to other sources
+      serverLogger.debug("Failed to get user shell from os.userInfo():", e);
     }
 
     const envShell = sanitizeShellPath(process.env.SHELL);
@@ -255,6 +272,7 @@ const GitSocketDiffRequestSchema = z.object({
   maxBytes: z.number().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
+  forceRefresh: z.boolean().optional(),
 });
 
 const IframePreflightRequestSchema = z.object({
@@ -272,6 +290,35 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+/**
+ * Build the PR description body, including the PR Review Summary when available.
+ */
+function buildPrDescription({
+  taskText,
+  title,
+  summary,
+}: {
+  taskText?: string;
+  title: string;
+  summary?: string;
+}): string {
+  const parts: string[] = [];
+
+  // Add task description section
+  if (taskText) {
+    parts.push(`## Task\n\n${taskText}`);
+  } else {
+    parts.push(`## Summary\n\n${title}`);
+  }
+
+  // Add PR Review Summary section if available
+  if (summary && summary.trim().length > 0) {
+    parts.push(summary);
+  }
+
+  return parts.join("\n\n");
 }
 
 export function setupSocketHandlers(
@@ -377,6 +424,7 @@ export function setupSocketHandlers(
             method: fetchMethod,
             redirect: "manual",
           });
+          // Intentionally ignoring errors - body cancellation failures are non-critical
           await response.body?.cancel().catch(() => undefined);
 
           if (response.ok) {
@@ -500,8 +548,24 @@ export function setupSocketHandlers(
         const diffs = await runWithAuth(
           currentAuthToken,
           currentAuthHeaderJson,
-          () =>
-            getGitDiff({
+          async () => {
+            // Fetch GitHub OAuth token for private repo authentication.
+            // This is only needed when fetching from remote (not for local originPathOverride).
+            // The token is passed transiently and never persisted.
+            let authToken: string | undefined;
+            if (!parsed.originPathOverride) {
+              try {
+                const token = await getGitHubOAuthToken();
+                authToken = token ?? undefined;
+              } catch (error) {
+                serverLogger.warn(
+                  "Failed to fetch GitHub OAuth token for git-diff:",
+                  error
+                );
+              }
+            }
+
+            return getGitDiff({
               headRef: parsed.headRef,
               baseRef: parsed.baseRef,
               repoFullName: parsed.repoFullName,
@@ -512,7 +576,10 @@ export function setupSocketHandlers(
               teamSlugOrId: safeTeam,
               lastKnownBaseSha: parsed.lastKnownBaseSha,
               lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
-            })
+              authToken,
+              forceRefresh: parsed.forceRefresh,
+            });
+          }
         );
 
         if (parsed.originPathOverride) {
@@ -536,84 +603,90 @@ export function setupSocketHandlers(
         serverLogger.error("Error in git-diff:", error);
         callback?.({
           ok: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
           diffs: [],
         });
       }
     });
 
     void (async () => {
-      // In web mode, skip detecting local editors entirely
-      if (env.NEXT_PUBLIC_WEB_MODE) {
-        const emptyAvailability: AvailableEditors = {
-          vscode: false,
-          cursor: false,
-          windsurf: false,
-          finder: false,
-          iterm: false,
-          terminal: false,
-          ghostty: false,
-          alacritty: false,
-          xcode: false,
+      try {
+        // In web mode, skip detecting local editors entirely
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          const emptyAvailability: AvailableEditors = {
+            vscode: false,
+            cursor: false,
+            windsurf: false,
+            finder: false,
+            iterm: false,
+            terminal: false,
+            ghostty: false,
+            alacritty: false,
+            xcode: false,
+          };
+          socket.emit("available-editors", emptyAvailability);
+          return;
+        }
+
+        const commandExists = async (cmd: string) => {
+          try {
+            await execAsync(`command -v ${cmd}`);
+            return true;
+          } catch (e) {
+            serverLogger.debug(`Command "${cmd}" not found:`, e);
+            return false;
+          }
         };
-        socket.emit("available-editors", emptyAvailability);
-        return;
+
+        const appExists = async (app: string) => {
+          if (process.platform !== "darwin") return false;
+          try {
+            await execAsync(`open -Ra "${app}"`);
+            return true;
+          } catch (e) {
+            serverLogger.debug(`App "${app}" not found:`, e);
+            return false;
+          }
+        };
+
+        const [
+          vscodeExists,
+          cursorExists,
+          windsurfExists,
+          itermExists,
+          terminalExists,
+          ghosttyCommand,
+          ghosttyApp,
+          alacrittyExists,
+          xcodeExists,
+        ] = await Promise.all([
+          editorExists("vscode"),
+          editorExists("cursor"),
+          editorExists("windsurf"),
+          appExists("iTerm"),
+          appExists("Terminal"),
+          commandExists("ghostty"),
+          appExists("Ghostty"),
+          commandExists("alacritty"),
+          appExists("Xcode"),
+        ]);
+
+        const availability: AvailableEditors = {
+          vscode: vscodeExists,
+          cursor: cursorExists,
+          windsurf: windsurfExists,
+          finder: process.platform === "darwin",
+          iterm: itermExists,
+          terminal: terminalExists,
+          ghostty: ghosttyCommand || ghosttyApp,
+          alacritty: alacrittyExists,
+          xcode: xcodeExists,
+        };
+
+        socket.emit("available-editors", availability);
+      } catch (error) {
+        serverLogger.error("[socket] Failed to detect available editors", error);
       }
-
-      const commandExists = async (cmd: string) => {
-        try {
-          await execAsync(`command -v ${cmd}`);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const appExists = async (app: string) => {
-        if (process.platform !== "darwin") return false;
-        try {
-          await execAsync(`open -Ra "${app}"`);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const [
-        vscodeExists,
-        cursorExists,
-        windsurfExists,
-        itermExists,
-        terminalExists,
-        ghosttyCommand,
-        ghosttyApp,
-        alacrittyExists,
-        xcodeExists,
-      ] = await Promise.all([
-        commandExists("code"),
-        commandExists("cursor"),
-        commandExists("windsurf"),
-        appExists("iTerm"),
-        appExists("Terminal"),
-        commandExists("ghostty"),
-        appExists("Ghostty"),
-        commandExists("alacritty"),
-        appExists("Xcode"),
-      ]);
-
-      const availability: AvailableEditors = {
-        vscode: vscodeExists,
-        cursor: cursorExists,
-        windsurf: windsurfExists,
-        finder: process.platform === "darwin",
-        iterm: itermExists,
-        terminal: terminalExists,
-        ghostty: ghosttyCommand || ghosttyApp,
-        alacritty: alacrittyExists,
-        xcode: xcodeExists,
-      };
-
-      socket.emit("available-editors", availability);
     })();
 
     socket.on("start-task", async (data, callback) => {
@@ -661,10 +734,6 @@ export function setupSocketHandlers(
                 )
               );
             } catch (error) {
-              console.error(
-                "[start-task] Failed to update VSCode status message",
-                error
-              );
               serverLogger.warn(
                 "[start-task] Failed to update VSCode status message",
                 error
@@ -874,9 +943,8 @@ export function setupSocketHandlers(
                   `Successfully pulled Docker image: ${imageName}`
                 );
               } catch (pullError) {
-                console.error("Error auto-pulling Docker image:", pullError);
                 serverLogger.error(
-                  "Error auto-pulling Docker image:",
+                  "[start-task] Error auto-pulling Docker image:",
                   pullError
                 );
                 rt.emit("docker-pull-progress", {
@@ -904,12 +972,8 @@ export function setupSocketHandlers(
               });
             }
           } catch (e) {
-            console.error(
-              "Failed to verify Docker status before start-task",
-              e
-            );
-            serverLogger.warn(
-              "Failed to verify Docker status before start-task",
+            serverLogger.error(
+              "[start-task] Failed to verify Docker status",
               e
             );
             callback({
@@ -930,11 +994,24 @@ export function setupSocketHandlers(
             // Determine number of agents to spawn
             const agentCount = taskData.selectedAgents?.length || 1;
 
+            // Fetch workspace settings for branchPrefix
+            const workspaceSettings = await getConvex().query(
+              api.workspaceSettings.get,
+              { teamSlugOrId: safeTeam }
+            );
+            // Use configured prefix, or default if not set (undefined/null)
+            // Empty string is valid and means no prefix
+            const branchPrefix =
+              workspaceSettings?.branchPrefix !== undefined
+                ? workspaceSettings.branchPrefix
+                : DEFAULT_BRANCH_PREFIX;
+
             // Generate branch names INSTANTLY (~0ms) from task description
             // instead of waiting ~20s for AI-generated names
             const branchNames = generateBranchNamesFromDescription(
               taskData.taskDescription,
-              agentCount
+              agentCount,
+              branchPrefix
             );
             serverLogger.info(
               `[Server] Generated ${branchNames.length} deterministic branch names instantly`
@@ -1068,7 +1145,7 @@ export function setupSocketHandlers(
             serverLogger.error("Error spawning agents for task:", error);
             rt.emit("task-failed", {
               taskId,
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: getErrorMessage(error),
             });
           }
         })();
@@ -1076,7 +1153,7 @@ export function setupSocketHandlers(
         serverLogger.error("Error in start-task:", error);
         callback({
           taskId,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -1180,7 +1257,7 @@ export function setupSocketHandlers(
             variant: null,
             source: null,
             suggestions: ["An error occurred while checking VS Code availability."],
-            errors: [error instanceof Error ? error.message : "Unknown error"],
+            errors: [getErrorMessage(error)],
           });
         }
       }
@@ -1359,20 +1436,56 @@ export function setupSocketHandlers(
                 : descriptorBase;
           }
 
-          const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
-            ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
-            : path.join(os.homedir(), "cmux", "local-workspaces");
-          const resolvedWorkspacePath = path.join(
-            workspaceRoot,
-            workspaceName
+          // Use Codex-style worktree path: ~/.cmux/worktrees/{shortId}/{repoName}/
+          // This integrates with VSCode's Source Control view
+          const effectiveRepoUrl =
+            repoUrl ?? (projectFullName ? `https://github.com/${projectFullName}.git` : "");
+
+          // Look up custom source repo mapping from settings (P1 fix)
+          let mappedLocalRepoPath: string | undefined;
+          if (projectFullName) {
+            try {
+              const mapping = await convex.query(api.sourceRepoMappings.getByProject, {
+                teamSlugOrId,
+                projectFullName,
+              });
+              if (mapping?.localRepoPath) {
+                mappedLocalRepoPath = mapping.localRepoPath;
+                serverLogger.info(
+                  `[create-local-workspace] Using mapped local repo path: ${mappedLocalRepoPath}`
+                );
+              }
+            } catch (mappingError) {
+              serverLogger.warn(
+                "[create-local-workspace] Failed to lookup source repo mapping:",
+                mappingError
+              );
+            }
+          }
+
+          const worktreeInfo = await getWorktreePath(
+            {
+              repoUrl: effectiveRepoUrl,
+              branch: branch || "main",
+              localRepoPath: mappedLocalRepoPath,
+              projectFullName: projectFullName ?? undefined,
+            },
+            teamSlugOrId
           );
+
+          const resolvedWorkspacePath = worktreeInfo.worktreePath;
           workspacePath = resolvedWorkspacePath;
 
-          await fs.mkdir(workspaceRoot, { recursive: true });
+          // Create the worktree directory structure
+          const worktreeParentDir = path.dirname(resolvedWorkspacePath);
+          await fs.mkdir(worktreeParentDir, { recursive: true });
           cleanupWorkspace = async () => {
+            // Intentionally ignoring errors - cleanup is best-effort
             await fs
               .rm(resolvedWorkspacePath, { recursive: true, force: true })
               .catch(() => undefined);
+            // Also try to clean up the parent shortId directory if empty (ignore if non-empty)
+            await fs.rmdir(worktreeParentDir).catch(() => undefined);
           };
 
           const writeEnvVariablesIfPresent = async (): Promise<
@@ -1409,6 +1522,60 @@ export function setupSocketHandlers(
                 serverLogger.info(
                   `[create-local-workspace] Wrote env vars to ${envFile}`
                 );
+
+                // Add .env to .git/info/exclude so it doesn't show in git status
+                // This works even if repo doesn't have .env in .gitignore
+                try {
+                  const gitExcludeFile = path.join(
+                    resolvedWorkspacePath,
+                    ".git",
+                    "info",
+                    "exclude"
+                  );
+                  // For worktrees, .git is a file pointing to the main repo's .git dir
+                  // Check if .git is a file (worktree) or directory (regular repo)
+                  const gitPath = path.join(resolvedWorkspacePath, ".git");
+                  const gitStat = await fs.stat(gitPath);
+
+                  let excludePath: string;
+                  if (gitStat.isFile()) {
+                    // Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
+                    const gitContent = await fs.readFile(gitPath, "utf8");
+                    const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/m);
+                    if (gitdirMatch) {
+                      excludePath = path.join(gitdirMatch[1].trim(), "info", "exclude");
+                    } else {
+                      excludePath = gitExcludeFile;
+                    }
+                  } else {
+                    excludePath = gitExcludeFile;
+                  }
+
+                  // Ensure info directory exists
+                  await fs.mkdir(path.dirname(excludePath), { recursive: true });
+
+                  // Read existing exclude file or create empty
+                  let existingExclude = "";
+                  try {
+                    existingExclude = await fs.readFile(excludePath, "utf8");
+                  } catch (e) {
+                    serverLogger.debug(`Git exclude file doesn't exist at ${excludePath}:`, e);
+                  }
+
+                  // Add .env if not already excluded
+                  if (!existingExclude.includes(".env")) {
+                    const newExclude = existingExclude.trimEnd() + "\n.env\n";
+                    await fs.writeFile(excludePath, newExclude, "utf8");
+                    serverLogger.info(
+                      `[create-local-workspace] Added .env to git exclude: ${excludePath}`
+                    );
+                  }
+                } catch (excludeError) {
+                  serverLogger.warn(
+                    "[create-local-workspace] Failed to add .env to git exclude",
+                    { error: excludeError }
+                  );
+                }
               } catch (error) {
                 serverLogger.warn(
                   "[create-local-workspace] Failed to write saved env vars to disk",
@@ -1476,7 +1643,7 @@ export function setupSocketHandlers(
                 const baseMessage =
                   stderr ||
                   stdout ||
-                  (error instanceof Error ? error.message : String(error));
+                  (getErrorMessage(error));
 
                 const maintenanceErrorMessage = baseMessage
                   ? `Maintenance script failed: ${baseMessage}`
@@ -1554,7 +1721,6 @@ export function setupSocketHandlers(
                   `[create-local-workspace] Failed to fetch base branch ${baseBranchName}`,
                   error
                 );
-                console.error(error);
               }
             }
 
@@ -1573,7 +1739,6 @@ export function setupSocketHandlers(
                     `[create-local-workspace] Failed to create local base branch ${baseBranchName}`,
                     error
                   );
-                  console.error(error);
                 }
               }
             }
@@ -1633,7 +1798,113 @@ export function setupSocketHandlers(
           });
           responded = true;
 
-          if (repoUrl) {
+          // Codex-style: Create worktree from existing local repo
+          if (worktreeInfo.mode === "codex-style" && worktreeInfo.sourceRepoPath) {
+            const repoMgr = RepositoryManager.getInstance();
+            const sourceRepo = worktreeInfo.sourceRepoPath;
+
+            // Fetch latest from origin
+            try {
+              serverLogger.info(
+                `[create-local-workspace] Fetching latest from origin in ${sourceRepo}`
+              );
+              await repoMgr.fetchLatest(sourceRepo, branch);
+            } catch (fetchErr) {
+              serverLogger.warn(
+                `[create-local-workspace] Failed to fetch latest: ${fetchErr}`
+              );
+            }
+
+            // Determine branch for worktree
+            let worktreeBranch = branch;
+            if (!worktreeBranch) {
+              worktreeBranch = await repoMgr.getDefaultBranch(sourceRepo);
+            }
+
+            // Create worktree from local repo
+            serverLogger.info(
+              `[create-local-workspace] Creating worktree at ${resolvedWorkspacePath} from ${sourceRepo} on branch ${worktreeBranch}`
+            );
+
+            try {
+              // Create worktree tracking the same branch as the cloud task (like Codex does)
+              // First, check if a local branch with this name already exists
+              let branchExists = false;
+              try {
+                await execFileAsync(
+                  "git",
+                  ["rev-parse", "--verify", worktreeBranch],
+                  { cwd: sourceRepo }
+                );
+                branchExists = true;
+              } catch (e) {
+                serverLogger.debug(`Branch ${worktreeBranch} doesn't exist locally:`, e);
+              }
+
+              if (branchExists) {
+                // Branch exists locally, create worktree using existing branch
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", resolvedWorkspacePath, worktreeBranch],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree using existing branch ${worktreeBranch}`
+                );
+              } else {
+                // Branch doesn't exist locally, create it tracking the remote
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", "-b", worktreeBranch, resolvedWorkspacePath, `origin/${worktreeBranch}`],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree with new branch ${worktreeBranch} tracking origin/${worktreeBranch}`
+                );
+              }
+            } catch (error) {
+              // If that fails, try detached HEAD as fallback
+              const execErr = isExecError(error) ? error : null;
+              serverLogger.warn(
+                `[create-local-workspace] Failed to create worktree with branch, trying detached: ${execErr?.stderr || error}`
+              );
+              try {
+                await execFileAsync(
+                  "git",
+                  ["worktree", "add", "--detach", resolvedWorkspacePath, `origin/${worktreeBranch}`],
+                  { cwd: sourceRepo }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Created worktree in detached HEAD state at origin/${worktreeBranch}`
+                );
+              } catch (detachErr) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const detachExecErr = isExecError(detachErr) ? detachErr : null;
+                throw new Error(
+                  `Failed to create worktree: ${detachExecErr?.stderr || detachErr}`
+                );
+              }
+            }
+
+            // Verify worktree was created
+            try {
+              await execFileAsync(
+                "git",
+                ["rev-parse", "--verify", "HEAD"],
+                { cwd: resolvedWorkspacePath }
+              );
+            } catch (verifyErr) {
+              if (cleanupWorkspace) {
+                await cleanupWorkspace();
+              }
+              throw new Error(
+                `Worktree creation failed: ${verifyErr instanceof Error ? verifyErr.message : "Unknown error"}`
+              );
+            }
+          } else if (repoUrl) {
+            // Legacy: Clone when no local source repo
             if (cleanupWorkspace) {
               await cleanupWorkspace();
             }
@@ -1643,7 +1914,7 @@ export function setupSocketHandlers(
             }
             cloneArgs.push(repoUrl, resolvedWorkspacePath);
             try {
-              await execFileAsync("git", cloneArgs, { cwd: workspaceRoot });
+              await execFileAsync("git", cloneArgs, { cwd: worktreeParentDir });
             } catch (error) {
               if (cleanupWorkspace) {
                 await cleanupWorkspace();
@@ -1689,7 +1960,6 @@ export function setupSocketHandlers(
                   "[create-local-workspace] Failed to detect default base branch",
                   error
                 );
-                console.error(error);
               }
             }
             if (baseBranchName) {
@@ -1728,6 +1998,28 @@ export function setupSocketHandlers(
             id: taskRunId,
             worktreePath: resolvedWorkspacePath,
           });
+
+          // Register the worktree in the registry for settings page display
+          try {
+            await convex.mutation(api.worktreeRegistry.register, {
+              teamSlugOrId,
+              worktreePath: resolvedWorkspacePath,
+              sourceRepoPath: worktreeInfo.sourceRepoPath || repoUrl || projectFullName || "local",
+              projectFullName: projectFullName || "local",
+              branchName: branch || "main",
+              shortId: worktreeInfo.shortId || workspaceName || "local",
+              mode: worktreeInfo.mode,
+              taskRunId,
+            });
+            serverLogger.info(
+              `[create-local-workspace] Registered worktree in registry: ${resolvedWorkspacePath}`
+            );
+          } catch (regError) {
+            serverLogger.warn(
+              `[create-local-workspace] Failed to register worktree in registry:`,
+              regError
+            );
+          }
 
           await convex.mutation(api.taskRuns.updateStatusPublic, {
             teamSlugOrId,
@@ -1951,7 +2243,10 @@ export function setupSocketHandlers(
           responded = true;
 
           // Spawn Morph instance via www API
-          const { postApiSandboxesStart } = await getWwwOpenApiModule();
+          const {
+            postApiSandboxesStart,
+            postApiSandboxesByIdPublishDevcontainer,
+          } = await getWwwOpenApiModule();
 
           serverLogger.info(
             environmentId
@@ -1984,7 +2279,10 @@ export function setupSocketHandlers(
           }
 
           const sandboxId = data.instanceId;
+          const sandboxProvider = data.provider ?? "morph";
           const vscodeBaseUrl = data.vscodeUrl;
+          const vncUrl = data.vncUrl;
+          const xtermUrl = data.xtermUrl;
           const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
 
           serverLogger.info(
@@ -2002,10 +2300,13 @@ export function setupSocketHandlers(
             teamSlugOrId,
             id: taskRunId,
             vscode: {
-              provider: "morph",
+              provider: sandboxProvider,
+              containerName: sandboxId,
               status: "running",
               url: vscodeBaseUrl,
               workspaceUrl,
+              vncUrl,
+              xtermUrl,
               startedAt: now,
             },
           });
@@ -2022,12 +2323,30 @@ export function setupSocketHandlers(
             status: "running",
           });
 
+          try {
+            await postApiSandboxesByIdPublishDevcontainer({
+              client: getWwwClient(),
+              path: { id: sandboxId },
+              body: { teamSlugOrId, taskRunId },
+            });
+            serverLogger.info(
+              `[create-cloud-workspace] Published forwarded ports for taskRun ${taskRunId}`
+            );
+          } catch (publishError) {
+            serverLogger.warn(
+              `[create-cloud-workspace] Failed to publish forwarded ports for taskRun ${taskRunId} (non-fatal)`,
+              publishError
+            );
+          }
+
           // Emit vscode-spawned event to the client
           rt.emit("vscode-spawned", {
             instanceId: sandboxId,
             url: vscodeBaseUrl,
             workspaceUrl,
-            provider: "morph",
+            vncUrl,
+            xtermUrl,
+            provider: sandboxProvider,
           });
 
           serverLogger.info(
@@ -2097,10 +2416,15 @@ export function setupSocketHandlers(
           return;
         }
 
-        const task = await getConvex().query(api.tasks.getById, {
-          teamSlugOrId: safeTeam,
-          id: run.taskId,
-        });
+        // Parallelize task fetch and GitHub token retrieval since they're independent
+        const [task, githubToken] = await Promise.all([
+          getConvex().query(api.tasks.getById, {
+            teamSlugOrId: safeTeam,
+            id: run.taskId,
+          }),
+          getGitHubOAuthToken(),
+        ]);
+
         if (!task) {
           callback({
             success: false,
@@ -2111,7 +2435,6 @@ export function setupSocketHandlers(
           return;
         }
 
-        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           callback({
             success: false,
@@ -2174,7 +2497,7 @@ export function setupSocketHandlers(
               return toPullRequestActionResult(repoFullName, detail);
             } catch (error) {
               const message =
-                error instanceof Error ? error.message : String(error);
+                getErrorMessage(error);
               return {
                 repoFullName,
                 url: undefined,
@@ -2211,7 +2534,7 @@ export function setupSocketHandlers(
           success: false,
           results: [],
           aggregate: EMPTY_AGGREGATE,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -2298,7 +2621,7 @@ export function setupSocketHandlers(
         serverLogger.error("Error merging branch:", error);
         callback({
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -2320,13 +2643,440 @@ export function setupSocketHandlers(
         serverLogger.error("Error getting full git diff:", error);
         socket.emit("git-full-diff-response", {
           diff: "",
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
 
     // Continue with all other handlers...
     // (I'll include the rest of the handlers in the next message due to length)
+
+    // Scan filesystem for existing worktrees and register them
+    socket.on(
+      "scan-worktrees",
+      async (
+        data: { teamSlugOrId: string },
+        callback: (response: {
+          success: boolean;
+          found: number;
+          registered: number;
+          error?: string;
+        }) => void
+      ) => {
+        // Guard callback in case client didn't provide one
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : (response: { success: boolean; found: number; registered: number; error?: string }) => {
+                serverLogger.info("[scan-worktrees] No callback provided, result:", response);
+              };
+
+        const teamSlugOrId = data.teamSlugOrId || safeTeam;
+        const convex = getConvex();
+
+        try {
+          // Check for custom worktree path setting
+          const settings = await convex.query(api.workspaceSettings.get, {
+            teamSlugOrId,
+          });
+          const customPattern = settings?.codexWorktreePathPattern;
+
+          // Determine base path - use custom pattern or default
+          let worktreeBasePath: string;
+          if (customPattern) {
+            worktreeBasePath = customPattern.replace(/^~/, os.homedir());
+          } else {
+            worktreeBasePath = path.join(os.homedir(), ".cmux", "worktrees");
+          }
+
+          // Check if the worktrees directory exists
+          try {
+            await fs.access(worktreeBasePath);
+          } catch (e) {
+            serverLogger.debug(`Worktree base path doesn't exist at ${worktreeBasePath}:`, e);
+            safeCallback({ success: true, found: 0, registered: 0 });
+            return;
+          }
+
+          // Read all directories in worktree base path (these are shortId dirs)
+          const shortIdEntries = await fs.readdir(worktreeBasePath, {
+            withFileTypes: true,
+          });
+          const shortIdDirs = shortIdEntries.filter((e) => e.isDirectory());
+
+          let found = 0;
+          let registered = 0;
+
+          // Helper to sanitize git URLs (strip credentials)
+          const sanitizeGitUrl = (url: string): string => {
+            try {
+              // Handle SSH URLs (git@github.com:owner/repo.git)
+              if (url.startsWith("git@")) {
+                return url;
+              }
+              // Handle HTTPS URLs that may have credentials
+              const parsed = new URL(url);
+              parsed.username = "";
+              parsed.password = "";
+              return parsed.toString().replace(/\/$/, "");
+            } catch (e) {
+              serverLogger.debug(`Failed to parse URL "${url}":`, e);
+              return url; // Return as-is if parsing fails
+            }
+          };
+
+          // Codex-style worktrees are at ~/.cmux/worktrees/<shortId>/<repoName>/
+          // So we need to iterate into each shortId directory
+          for (const shortIdDir of shortIdDirs) {
+            const shortIdPath = path.join(worktreeBasePath, shortIdDir.name);
+
+            // Check if shortIdPath itself is a git worktree (legacy or direct)
+            const directGitPath = path.join(shortIdPath, ".git");
+            try {
+              await fs.access(directGitPath);
+              // This shortId dir is itself a worktree
+              found++;
+              await registerWorktree(shortIdPath, shortIdDir.name, shortIdDir.name);
+              continue;
+            } catch (e) {
+              serverLogger.debug(`${shortIdPath} is not a direct worktree:`, e);
+            }
+
+            // Read subdirectories (repo name dirs)
+            let repoEntries;
+            try {
+              repoEntries = await fs.readdir(shortIdPath, { withFileTypes: true });
+            } catch (e) {
+              serverLogger.debug(`Failed to read directory ${shortIdPath}:`, e);
+              continue;
+            }
+
+            for (const repoEntry of repoEntries) {
+              if (!repoEntry.isDirectory()) continue;
+
+              const worktreePath = path.join(shortIdPath, repoEntry.name);
+              const gitPath = path.join(worktreePath, ".git");
+
+              try {
+                await fs.access(gitPath);
+              } catch (e) {
+                serverLogger.debug(`${worktreePath} is not a git repo:`, e);
+                continue;
+              }
+
+              found++;
+              await registerWorktree(worktreePath, shortIdDir.name, repoEntry.name);
+            }
+          }
+
+          async function registerWorktree(
+            worktreePath: string,
+            shortId: string,
+            repoName: string
+          ) {
+            // Try to get branch name
+            let branchName = "unknown";
+            try {
+              const { stdout } = await execFileAsync(
+                "git",
+                ["branch", "--show-current"],
+                { cwd: worktreePath }
+              );
+              branchName = stdout.trim() || "unknown";
+            } catch (e) {
+              serverLogger.debug(`Failed to get branch name for ${worktreePath}:`, e);
+            }
+
+            // Try to get remote URL for source repo path (sanitized)
+            let sourceRepoPath = worktreePath;
+            let projectFullName = repoName;
+            try {
+              const { stdout } = await execFileAsync(
+                "git",
+                ["config", "--get", "remote.origin.url"],
+                { cwd: worktreePath }
+              );
+              const rawUrl = stdout.trim();
+              sourceRepoPath = sanitizeGitUrl(rawUrl);
+              // Extract owner/repo from URL (fixed regex to handle dots in repo names)
+              const match = rawUrl.match(
+                /(?:github\.com[:/])([^/]+\/[^/]+?)(?:\.git)?$/
+              );
+              if (match) {
+                projectFullName = match[1].replace(/\.git$/, "");
+              }
+            } catch (e) {
+              serverLogger.debug(`Failed to get remote URL for ${worktreePath}:`, e);
+            }
+
+            // Register the worktree
+            try {
+              await convex.mutation(api.worktreeRegistry.register, {
+                teamSlugOrId,
+                worktreePath,
+                sourceRepoPath,
+                projectFullName,
+                branchName,
+                shortId,
+                mode: "codex-style" as const,
+              });
+              registered++;
+              serverLogger.info(
+                `[scan-worktrees] Registered existing worktree: ${worktreePath}`
+              );
+            } catch (regError) {
+              serverLogger.warn(
+                `[scan-worktrees] Failed to register worktree ${worktreePath}:`,
+                regError
+              );
+            }
+          }
+
+          safeCallback({ success: true, found, registered });
+        } catch (error) {
+          serverLogger.error("[scan-worktrees] Error scanning worktrees:", error);
+          safeCallback({
+            success: false,
+            found: 0,
+            registered: 0,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+    );
+
+    // Delete a worktree from filesystem and registry
+    socket.on(
+      "delete-worktree",
+      async (
+        data: { teamSlugOrId: string; worktreePath: string },
+        callback: (response: { success: boolean; error?: string }) => void
+      ) => {
+        // Guard callback in case client didn't provide one
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : (response: { success: boolean; error?: string }) => {
+                serverLogger.info("[delete-worktree] No callback provided, result:", response);
+              };
+
+        const { teamSlugOrId: teamId, worktreePath } = data;
+        const resolvedTeamId = teamId || safeTeam;
+
+        if (!worktreePath) {
+          safeCallback({ success: false, error: "Worktree path is required" });
+          return;
+        }
+
+        // Security: Ensure the path is within allowed worktree directories
+        const homeDir = os.homedir();
+        const allowedPrefixes = [
+          path.join(homeDir, ".cmux", "worktrees"),
+          path.join(homeDir, "cmux"),
+        ];
+
+        // P2 fix: Include custom worktree path pattern from settings if configured
+        try {
+          const settings = await getConvex().query(api.workspaceSettings.get, {
+            teamSlugOrId: resolvedTeamId,
+          });
+          if (settings?.codexWorktreePathPattern) {
+            // codexWorktreePathPattern is a base path (not a template with placeholders)
+            // ShortId and repoName are appended automatically during worktree creation
+            const customPattern = settings.codexWorktreePathPattern.replace(/\/+$/, ""); // Remove trailing slashes
+            const resolvedCustomPath = path.resolve(customPattern.replace(/^~/, homeDir));
+            if (resolvedCustomPath && !allowedPrefixes.includes(resolvedCustomPath)) {
+              allowedPrefixes.push(resolvedCustomPath);
+            }
+          }
+        } catch (settingsError) {
+          serverLogger.warn("[delete-worktree] Failed to fetch workspace settings for custom path:", settingsError);
+        }
+
+        const normalizedPath = path.resolve(worktreePath);
+        // P1 fix: Proper path boundary check to prevent overmatch
+        // e.g., /home/user/cmuxFoo should NOT match /home/user/cmux prefix
+        const isAllowed = allowedPrefixes.some((prefix) =>
+          normalizedPath === prefix || normalizedPath.startsWith(prefix + path.sep)
+        );
+
+        if (!isAllowed) {
+          serverLogger.warn(
+            `[delete-worktree] Rejected deletion of path outside allowed directories: ${worktreePath}`
+          );
+          safeCallback({
+            success: false,
+            error: "Cannot delete worktrees outside of cmux directories",
+          });
+          return;
+        }
+
+        try {
+          // Check if the worktree path exists
+          try {
+            await fs.access(normalizedPath);
+          } catch (e) {
+            // Path doesn't exist, just remove from registry
+            serverLogger.debug(`[delete-worktree] Path doesn't exist:`, e);
+            serverLogger.info(
+              `[delete-worktree] Path doesn't exist, removing from registry only: ${worktreePath}`
+            );
+            await getConvex().mutation(api.worktreeRegistry.remove, {
+              teamSlugOrId: resolvedTeamId,
+              worktreePath,
+            });
+            safeCallback({ success: true });
+            return;
+          }
+
+          // Check if it's a git worktree and try to remove it properly
+          const gitPath = path.join(normalizedPath, ".git");
+          try {
+            const gitContent = await fs.readFile(gitPath, "utf-8");
+            // If .git is a file (worktree), it contains "gitdir: /path/to/main/.git/worktrees/name"
+            if (gitContent.startsWith("gitdir:")) {
+              const gitdirMatch = gitContent.match(/gitdir:\s*(.+)/);
+              if (gitdirMatch) {
+                // This is a proper git worktree, try to remove it via git
+                const parentGitDir = gitdirMatch[1].trim().replace(/\/worktrees\/[^/]+$/, "");
+                const parentRepoPath = path.dirname(parentGitDir);
+
+                try {
+                  await execFileAsync("git", ["worktree", "remove", "--force", normalizedPath], {
+                    cwd: parentRepoPath,
+                  });
+                  serverLogger.info(
+                    `[delete-worktree] Removed git worktree via git command: ${worktreePath}`
+                  );
+                } catch (gitError) {
+                  serverLogger.warn(
+                    `[delete-worktree] git worktree remove failed, falling back to rm: ${gitError}`
+                  );
+                  // Fall back to manual deletion
+                  await fs.rm(normalizedPath, { recursive: true, force: true });
+                }
+              }
+            }
+          } catch (e) {
+            // .git is a directory (regular clone) or doesn't exist, just delete the folder
+            serverLogger.debug(`[delete-worktree] .git is not a file, deleting folder directly:`, e);
+            await fs.rm(normalizedPath, { recursive: true, force: true });
+            serverLogger.info(
+              `[delete-worktree] Deleted worktree folder: ${worktreePath}`
+            );
+          }
+
+          // Also check if parent shortId directory is now empty and remove it
+          const parentDir = path.dirname(normalizedPath);
+          if (allowedPrefixes.some((prefix) => parentDir.startsWith(prefix) && parentDir !== prefix)) {
+            try {
+              const remaining = await fs.readdir(parentDir);
+              if (remaining.length === 0) {
+                await fs.rmdir(parentDir);
+                serverLogger.info(
+                  `[delete-worktree] Removed empty parent directory: ${parentDir}`
+                );
+              }
+            } catch (e) {
+              serverLogger.debug(`[delete-worktree] Failed to clean up parent directory ${parentDir}:`, e);
+            }
+          }
+
+          // Remove from registry
+          await getConvex().mutation(api.worktreeRegistry.remove, {
+            teamSlugOrId: resolvedTeamId,
+            worktreePath,
+          });
+
+          serverLogger.info(`[delete-worktree] Successfully deleted worktree: ${worktreePath}`);
+          safeCallback({ success: true });
+        } catch (error) {
+          serverLogger.error("[delete-worktree] Error deleting worktree:", error);
+          safeCallback({
+            success: false,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+    );
+
+    // Validate worktree paths exist on filesystem
+    socket.on(
+      "validate-worktrees",
+      async (
+        data: { teamSlugOrId: string; worktreePaths: string[] },
+        callback: (response: {
+          success: boolean;
+          validPaths: string[];
+          invalidPaths: string[];
+          error?: string;
+        }) => void
+      ) => {
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : () => {};
+
+        const { worktreePaths } = data;
+        const validPaths: string[] = [];
+        const invalidPaths: string[] = [];
+
+        for (const worktreePath of worktreePaths) {
+          try {
+            await fs.access(worktreePath);
+            validPaths.push(worktreePath);
+          } catch (e) {
+            serverLogger.debug(`[validate-worktrees] Path doesn't exist: ${worktreePath}:`, e);
+            invalidPaths.push(worktreePath);
+          }
+        }
+
+        safeCallback({
+          success: true,
+          validPaths,
+          invalidPaths,
+        });
+      }
+    );
+
+    // Clean up a task's worktreePath if it doesn't exist on filesystem
+    socket.on(
+      "cleanup-stale-workspace",
+      async (
+        data: { teamSlugOrId: string; taskId: string },
+        callback: (response: { success: boolean; error?: string }) => void
+      ) => {
+        const safeCallback =
+          typeof callback === "function"
+            ? callback
+            : () => {};
+
+        const { teamSlugOrId: teamId, taskId } = data;
+        const resolvedTeamId = teamId || safeTeam;
+
+        if (!taskId) {
+          safeCallback({ success: false, error: "Task ID is required" });
+          return;
+        }
+
+        try {
+          // Clear the worktreePath on the task
+          await getConvex().mutation(api.tasks.updateWorktreePath, {
+            teamSlugOrId: resolvedTeamId,
+            id: taskId as Id<"tasks">,
+            worktreePath: undefined,
+          });
+          serverLogger.info(`[cleanup-stale-workspace] Cleared worktreePath for task ${taskId}`);
+          safeCallback({ success: true });
+        } catch (error) {
+          serverLogger.error("[cleanup-stale-workspace] Error:", error);
+          safeCallback({
+            success: false,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+    );
 
     socket.on("open-in-editor", async (data, callback) => {
       // In web mode, opening local editors is not supported
@@ -2336,83 +3086,97 @@ export function setupSocketHandlers(
       }
 
       try {
-        const { editor, path } = OpenInEditorSchema.parse(data);
+        const { editor, path: filePath } = OpenInEditorSchema.parse(data);
 
         let command: string[];
         switch (editor) {
-          case "vscode":
-            command = ["code", path];
+          case "vscode": {
+            const executable = await findEditorExecutable("vscode");
+            if (!executable) {
+              throw new Error("VS Code is not installed");
+            }
+            command = [executable, filePath];
             break;
-          case "cursor":
-            command = ["cursor", path];
+          }
+          case "cursor": {
+            const executable = await findEditorExecutable("cursor");
+            if (!executable) {
+              throw new Error("Cursor is not installed");
+            }
+            command = [executable, filePath];
             break;
-          case "windsurf":
-            command = ["windsurf", path];
+          }
+          case "windsurf": {
+            const executable = await findEditorExecutable("windsurf");
+            if (!executable) {
+              throw new Error("Windsurf is not installed");
+            }
+            command = [executable, filePath];
             break;
+          }
           case "finder": {
             if (process.platform !== "darwin") {
               throw new Error("Finder is only supported on macOS");
             }
             // Use macOS 'open' to open the folder in Finder
-            command = ["open", path];
+            command = ["open", filePath];
             break;
           }
           case "iterm":
-            command = ["open", "-a", "iTerm", path];
+            command = ["open", "-a", "iTerm", filePath];
             break;
           case "terminal":
-            command = ["open", "-a", "Terminal", path];
+            command = ["open", "-a", "Terminal", filePath];
             break;
           case "ghostty":
-            command = ["open", "-a", "Ghostty", path];
+            command = ["open", "-a", "Ghostty", filePath];
             break;
           case "alacritty":
-            command = ["alacritty", "--working-directory", path];
+            command = ["alacritty", "--working-directory", filePath];
             break;
           case "xcode":
-            command = ["open", "-a", "Xcode", path];
+            command = ["open", "-a", "Xcode", filePath];
             break;
           default:
             throw new Error(`Unknown editor: ${editor}`);
         }
 
-        console.log("command", command);
+        serverLogger.info(`Opening ${filePath} in ${editor} with command:`, command);
 
-        const childProcess = spawn(command[0], command.slice(1));
-
-        childProcess.on("close", (code) => {
-          if (code === 0) {
-            serverLogger.info(`Successfully opened ${path} in ${editor}`);
-            // Send success callback
-            if (callback) {
-              callback({ success: true });
-            }
-          } else {
-            serverLogger.error(
-              `Error opening ${editor}: process exited with code ${code}`
-            );
-            const error = `Failed to open ${editor}: process exited with code ${code}`;
-            socket.emit("open-in-editor-error", { error });
-            // Send error callback
-            if (callback) {
-              callback({ success: false, error });
-            }
-          }
+        const childProcess = spawn(command[0], command.slice(1), {
+          detached: true,
+          stdio: "ignore",
         });
 
+        // Track if we've already responded (to avoid double callback)
+        let responded = false;
+
         childProcess.on("error", (error) => {
-          serverLogger.error(`Error opening ${editor}:`, error);
+          serverLogger.error(`Error spawning ${editor}:`, error);
           const errorMessage = `Failed to open ${editor}: ${error.message}`;
           socket.emit("open-in-editor-error", { error: errorMessage });
-          // Send error callback
-          if (callback) {
+          if (!responded && callback) {
+            responded = true;
             callback({ success: false, error: errorMessage });
           }
         });
+
+        // Unref so the parent process can exit independently
+        childProcess.unref();
+
+        // Respond immediately after spawn - editors like VS Code detach and run independently
+        // Use a short delay to catch immediate spawn errors
+        setTimeout(() => {
+          if (!responded && callback) {
+            responded = true;
+            serverLogger.info(`Successfully spawned ${editor} for ${filePath}`);
+            callback({ success: true });
+          }
+        }, 200);
       } catch (error) {
         serverLogger.error("Error opening editor:", error);
         const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
+          getErrorMessage(error);
         socket.emit("open-in-editor-error", { error: errorMessage });
         // Send error callback
         if (callback) {
@@ -2421,7 +3185,7 @@ export function setupSocketHandlers(
       }
     });
 
-    socket.on("list-files", async (data) => {
+    socket.on("list-files", async (data, callback) => {
       try {
         const {
           repoPath: repoUrl,
@@ -2507,30 +3271,41 @@ export function setupSocketHandlers(
           branchOverride?: string;
         }): Promise<FileInfo[]> => {
           // Use unauthenticated URL for path derivation (consistent folder names)
-          const projectPaths = await getProjectPaths(targetRepoUrl, safeTeam);
+          // Pass projectFullName for auto-detection of local repos
+          const projectPaths = await getProjectPaths(
+            targetRepoUrl,
+            safeTeam,
+            undefined,
+            repoFullName
+          );
 
-          await fs.mkdir(projectPaths.projectPath, { recursive: true });
-          await fs.mkdir(projectPaths.worktreesPath, { recursive: true });
-
-          // Inject GitHub OAuth token for private repo access
-          // Use authenticated URL for git operations, but store clean URL as remote
-          let authenticatedRepoUrl = targetRepoUrl;
-          const githubToken = await getGitHubOAuthToken();
-          if (githubToken && targetRepoUrl.startsWith("https://github.com/")) {
-            authenticatedRepoUrl = targetRepoUrl.replace(
-              "https://github.com/",
-              `https://x-access-token:${githubToken}@github.com/`
+          // Codex-style mode requires an existing local repo
+          // If no local repo found (mode is "legacy" as fallback), notify frontend and return empty
+          if (projectPaths.mode === "legacy") {
+            const repoDisplayName = repoFullName || targetRepoUrl;
+            serverLogger.warn(
+              `[create-local-workspace] No local repository found for ${repoDisplayName}. ` +
+                `Please add a source repo mapping in Settings > Worktrees, or clone the repository locally first.`
             );
+            // Emit event to frontend so it can show a notification/toast
+            socket.emit("local-repo-not-found", {
+              repoFullName: repoDisplayName,
+              message: `No local repository found for "${repoDisplayName}". Please clone the repository locally first, then add a source repo mapping in Settings > Worktrees.`,
+            });
+            return [];
           }
 
-          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
-          // If branchOverride is undefined, ensureRepository auto-detects and fetches default branch
-          await repoManager.ensureRepository(
-            authenticatedRepoUrl,
-            projectPaths.originPath,
-            branchOverride,
-            targetRepoUrl // clean URL for remote storage
+          // Codex-style: originPath points to existing local repo, just fetch latest
+          serverLogger.info(
+            `[create-local-workspace] Using existing local repo at ${projectPaths.originPath}`
           );
+          try {
+            await repoManager.fetchLatest(projectPaths.originPath, branchOverride);
+          } catch (fetchErr) {
+            serverLogger.warn(
+              `[create-local-workspace] Failed to fetch latest: ${fetchErr}`
+            );
+          }
 
           // Get the branch name for worktree path (either override or detected default)
           const baseBranch =
@@ -2545,10 +3320,11 @@ export function setupSocketHandlers(
 
           try {
             await fs.access(worktreeInfo.originPath);
-          } catch {
+          } catch (e) {
             serverLogger.error(
               "Origin directory does not exist:",
-              worktreeInfo.originPath
+              worktreeInfo.originPath,
+              e
             );
             return [];
           }
@@ -2595,7 +3371,8 @@ export function setupSocketHandlers(
           });
 
           if (!environment) {
-            socket.emit("list-files-response", {
+            callback?.({
+              ok: false,
               files: [],
               error: "Environment not found",
             });
@@ -2607,7 +3384,8 @@ export function setupSocketHandlers(
             .filter((repo): repo is string => Boolean(repo));
 
           if (repoFullNames.length === 0) {
-            socket.emit("list-files-response", {
+            callback?.({
+              ok: false,
               files: [],
               error: "This environment has no repositories configured",
             });
@@ -2631,7 +3409,7 @@ export function setupSocketHandlers(
             }
           }
 
-          socket.emit("list-files-response", { files: aggregatedFiles });
+          callback?.({ ok: true, files: aggregatedFiles });
           return;
         }
 
@@ -2640,19 +3418,21 @@ export function setupSocketHandlers(
             targetRepoUrl: repoUrl,
             branchOverride: branch,
           });
-          socket.emit("list-files-response", { files: fileList });
+          callback?.({ ok: true, files: fileList });
           return;
         }
 
-        socket.emit("list-files-response", {
+        callback?.({
+          ok: false,
           files: [],
           error: "Repository information missing",
         });
       } catch (error) {
         serverLogger.error("Error listing files:", error);
-        socket.emit("list-files-response", {
+        callback?.({
+          ok: false,
           files: [],
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -2696,7 +3476,7 @@ export function setupSocketHandlers(
         });
       } catch (error) {
         callback({
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
           processEnv: {
             HOME: process.env.HOME,
             USER: process.env.USER,
@@ -2747,7 +3527,7 @@ export function setupSocketHandlers(
         serverLogger.error("Error fetching repos:", error);
         callback({
           success: false,
-          error: `Failed to fetch GitHub repos: ${error instanceof Error ? error.message : String(error)
+          error: `Failed to fetch GitHub repos: ${getErrorMessage(error)
             }`,
         });
       }
@@ -2766,7 +3546,7 @@ export function setupSocketHandlers(
           selectedAgents,
           commentId,
         } = SpawnFromCommentSchema.parse(data);
-        console.log("spawn-from-comment data", data);
+        serverLogger.debug("[spawn-from-comment] Received data:", data);
 
         // Format the prompt with comment metadata
         const formattedPrompt = `Fix the issue described in this comment:
@@ -2785,7 +3565,7 @@ Please address the issue mentioned in the comment above.`;
         const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
-          projectFullName: "manaflow-ai/manaflow",
+          projectFullName: "manaflow-ai/cmux",
         });
         // Create a comment reply with link to the task
         try {
@@ -2809,15 +3589,15 @@ Please address the issue mentioned in the comment above.`;
         const agentResults = await spawnAllAgents(
           taskId,
           {
-            repoUrl: "https://github.com/manaflow-ai/manaflow.git",
+            repoUrl: "https://github.com/karlorz/cmux.git",
             branch: "main",
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/opus-4.6 and codex/gpt-5.3-codex-xhigh
+            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5.1-codex-high
             selectedAgents: selectedAgents || [
-              "claude/opus-4.6",
-              "codex/gpt-5.3-codex-xhigh",
+              "claude/sonnet-4",
+              "codex/gpt-5.1-codex-high",
             ],
           },
           safeTeam
@@ -2864,7 +3644,7 @@ Please address the issue mentioned in the comment above.`;
         serverLogger.error("Error spawning from comment:", error);
         callback({
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -2888,20 +3668,6 @@ Please address the issue mentioned in the comment above.`;
           return;
         }
 
-        const task = await getConvex().query(api.tasks.getById, {
-          teamSlugOrId: safeTeam,
-          id: run.taskId,
-        });
-        if (!task) {
-          callback({
-            success: false,
-            results: [],
-            aggregate: EMPTY_AGGREGATE,
-            error: "Task not found",
-          });
-          return;
-        }
-
         const branchName = run.newBranch?.trim();
         if (!branchName) {
           callback({
@@ -2913,7 +3679,25 @@ Please address the issue mentioned in the comment above.`;
           return;
         }
 
-        const githubToken = await getGitHubOAuthToken();
+        // Parallelize task fetch and GitHub token retrieval since they're independent
+        const [task, githubToken] = await Promise.all([
+          getConvex().query(api.tasks.getById, {
+            teamSlugOrId: safeTeam,
+            id: run.taskId,
+          }),
+          getGitHubOAuthToken(),
+        ]);
+
+        if (!task) {
+          callback({
+            success: false,
+            results: [],
+            aggregate: EMPTY_AGGREGATE,
+            error: "Task not found",
+          });
+          return;
+        }
+
         if (!githubToken) {
           callback({
             success: false,
@@ -2943,11 +3727,11 @@ Please address the issue mentioned in the comment above.`;
         const title = task.pullRequestTitle || task.text || "cmux changes";
         const truncatedTitle =
           title.length > 72 ? `${title.slice(0, 69)}...` : title;
-        const body =
-          task.text ||
-          `## Summary
-
-${title}`;
+        const body = buildPrDescription({
+          taskText: task.text,
+          title,
+          summary: run.summary,
+        });
 
         const existingByRepo = new Map(
           (run.pullRequests ?? []).map(
@@ -2985,6 +3769,7 @@ ${title}`;
                   baseBranch,
                   body
                 );
+                // Fetch PR detail for additional metadata; fall back to created info if fetch fails
                 detail =
                   (await fetchPrDetail(
                     githubToken,
@@ -3001,7 +3786,7 @@ ${title}`;
               return toPullRequestActionResult(repoFullName, detail);
             } catch (error) {
               const message =
-                error instanceof Error ? error.message : String(error);
+                getErrorMessage(error);
               return {
                 repoFullName,
                 url: undefined,
@@ -3038,7 +3823,7 @@ ${title}`;
           success: false,
           results: [],
           aggregate: EMPTY_AGGREGATE,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -3054,7 +3839,7 @@ ${title}`;
         serverLogger.error("Error checking provider status:", error);
         callback({
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -3108,7 +3893,8 @@ ${title}`;
               });
               callback({ success: true, imageName });
               return;
-            } catch {
+            } catch (e) {
+              serverLogger.debug(`[docker-pull-image] Image not yet available, retrying:`, e);
               await sleep(2_000);
             }
           }
@@ -3252,7 +4038,7 @@ ${title}`;
           phase: "error",
         });
         const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
+          getErrorMessage(error);
 
         // Provide user-friendly error messages
         let userFriendlyError: string;
@@ -3295,15 +4081,12 @@ ${title}`;
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
 
-        // In web mode, skip Docker container operations (managed by cloud provider)
-        if (env.NEXT_PUBLIC_WEB_MODE) {
-          serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
-          callback({ success: true });
-          return;
-        }
-
-        // Stop/pause all containers via helper (handles querying + logging)
-        const results = await stopContainersForRuns(taskId, safeTeam);
+        // Wrap in runWithAuth to propagate auth context to stopCmuxSandbox()
+        const results = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          async () => stopContainersForRuns(taskId, safeTeam)
+        );
 
         try {
           const runsTree = await getConvex().query(api.taskRuns.getByTask, {
@@ -3346,7 +4129,42 @@ ${title}`;
         serverLogger.error("Error archiving task:", error);
         callback({
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
+        });
+      }
+    });
+
+    socket.on("unarchive-task", async (data, callback) => {
+      try {
+        const { taskId } = ArchiveTaskSchema.parse(data);
+
+        // Wrap in runWithAuth to propagate auth context to resumeCmuxSandbox()
+        const results = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          async () => resumeContainersForRuns(taskId, safeTeam)
+        );
+
+        // Log summary
+        const successful = results.filter((r) => r.success).length;
+        const failed = results.filter((r) => !r.success).length;
+
+        if (failed > 0) {
+          serverLogger.warn(
+            `Unarchived task ${taskId}: ${successful} containers resumed, ${failed} failed`
+          );
+        } else {
+          serverLogger.info(
+            `Successfully unarchived task ${taskId}: all ${successful} containers resumed`
+          );
+        }
+
+        callback({ success: true });
+      } catch (error) {
+        serverLogger.error("Error unarchiving task:", error);
+        callback({
+          success: false,
+          error: getErrorMessage(error),
         });
       }
     });
@@ -3396,9 +4214,6 @@ ${title}`;
         serverLogger.info(
           `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
         );
-        console.log(
-          `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
-        );
 
         // Check if sync session exists (use original path for lookup)
         const status = localCloudSyncManager.getStatus(localWorkspacePath);
@@ -3406,7 +4221,7 @@ ${title}`;
         // Always check if we need to reconnect to the cloud workspace
         // This handles server restarts where VSCodeInstance is lost but cloud workspace is still running
         const existingInstance = VSCodeInstance.getInstance(cloudTaskRunId);
-        console.log(
+        serverLogger.debug(
           `[trigger-local-cloud-sync] Reconnect check: existingInstance=${!!existingInstance}, workerConnected=${existingInstance?.isWorkerConnected() ?? "N/A"}`
         );
         if (!existingInstance || !existingInstance.isWorkerConnected()) {
@@ -3496,6 +4311,49 @@ ${title}`;
           }
         }
 
+        // Wait for the worktree directory to exist (handles race condition when
+        // create-local-workspace is still in progress)
+        const maxWaitMs = 30000;
+        const pollIntervalMs = 500;
+        let waited = 0;
+        let dirExists = false;
+
+        while (waited < maxWaitMs) {
+          try {
+            await fs.access(normalizedPath);
+            dirExists = true;
+            break;
+          } catch (e) {
+            // Directory doesn't exist yet, wait and retry
+            if (waited === 0) {
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Waiting for directory to exist: ${normalizedPath}`
+              );
+              serverLogger.debug(`[trigger-local-cloud-sync] Initial access error:`, e);
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+            waited += pollIntervalMs;
+          }
+        }
+
+        if (!dirExists) {
+          serverLogger.warn(
+            `[trigger-local-cloud-sync] Directory still doesn't exist after ${maxWaitMs}ms: ${normalizedPath}`
+          );
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Workspace directory not ready. Please try again.",
+          };
+          callback(response);
+          return;
+        }
+
+        if (waited > 0) {
+          serverLogger.info(
+            `[trigger-local-cloud-sync] Directory exists after ${waited}ms: ${normalizedPath}`
+          );
+        }
+
         if (!status.found) {
           // Start a new sync session if none exists
           serverLogger.info(
@@ -3530,7 +4388,7 @@ ${title}`;
         console.error("[trigger-local-cloud-sync] Error:", error);
         const response: TriggerLocalCloudSyncResponse = {
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         };
         callback(response);
       }

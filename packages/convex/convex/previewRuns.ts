@@ -1,14 +1,11 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
+import { normalizeRepoFullName } from "../_shared/git";
 import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
 import { internalMutation, internalQuery } from "./_generated/server";
-
-function normalizeRepoFullName(value: string): string {
-  return value.trim().replace(/\.git$/i, "").toLowerCase();
-}
 
 export const enqueueFromWebhook = internalMutation({
   args: {
@@ -100,23 +97,29 @@ export const enqueueFromWebhook = internalMutation({
       updatedAt: now,
     });
 
-    // Mark older runs as superseded by this new run
-    for (const oldRun of runsToSupersede) {
-      console.log("[previewRuns] Superseding older preview run", {
-        oldRunId: oldRun._id,
-        oldHeadSha: oldRun.headSha,
-        oldStatus: oldRun.status,
-        newRunId: runId,
-        newHeadSha: args.headSha,
-        prNumber: args.prNumber,
-      });
-      await ctx.db.patch(oldRun._id, {
-        status: "superseded",
-        supersededBy: runId,
-        stateReason: `Superseded by newer commit ${args.headSha.slice(0, 7)}`,
-        completedAt: now,
-        updatedAt: now,
-      });
+    // Mark older runs as superseded by this new run in parallel
+    if (runsToSupersede.length > 0) {
+      for (const oldRun of runsToSupersede) {
+        console.log("[previewRuns] Superseding older preview run", {
+          oldRunId: oldRun._id,
+          oldHeadSha: oldRun.headSha,
+          oldStatus: oldRun.status,
+          newRunId: runId,
+          newHeadSha: args.headSha,
+          prNumber: args.prNumber,
+        });
+      }
+      await Promise.all(
+        runsToSupersede.map((oldRun) =>
+          ctx.db.patch(oldRun._id, {
+            status: "superseded",
+            supersededBy: runId,
+            stateReason: `Superseded by newer commit ${args.headSha.slice(0, 7)}`,
+            completedAt: now,
+            updatedAt: now,
+          })
+        )
+      );
     }
 
     await ctx.db.patch(args.previewConfigId, {
@@ -342,23 +345,29 @@ export const enqueueFromTaskRun = internalMutation({
       updatedAt: now,
     });
 
-    // Mark older runs as superseded by this new run
-    for (const oldRun of runsToSupersede) {
-      console.log("[previewRuns] Superseding older preview run (from taskRun)", {
-        oldRunId: oldRun._id,
-        oldHeadSha: oldRun.headSha,
-        oldStatus: oldRun.status,
-        newRunId: runId,
-        newHeadSha: headSha,
-        prNumber,
-      });
-      await ctx.db.patch(oldRun._id, {
-        status: "superseded",
-        supersededBy: runId,
-        stateReason: `Superseded by newer commit ${headSha.slice(0, 7)}`,
-        completedAt: now,
-        updatedAt: now,
-      });
+    // Mark older runs as superseded by this new run in parallel
+    if (runsToSupersede.length > 0) {
+      for (const oldRun of runsToSupersede) {
+        console.log("[previewRuns] Superseding older preview run (from taskRun)", {
+          oldRunId: oldRun._id,
+          oldHeadSha: oldRun.headSha,
+          oldStatus: oldRun.status,
+          newRunId: runId,
+          newHeadSha: headSha,
+          prNumber,
+        });
+      }
+      await Promise.all(
+        runsToSupersede.map((oldRun) =>
+          ctx.db.patch(oldRun._id, {
+            status: "superseded",
+            supersededBy: runId,
+            stateReason: `Superseded by newer commit ${headSha.slice(0, 7)}`,
+            completedAt: now,
+            updatedAt: now,
+          })
+        )
+      );
     }
 
     await ctx.db.patch(previewConfig._id, {
@@ -641,6 +650,84 @@ export const listByConfig = authQuery({
   },
 });
 
+type PreviewRunDoc = Doc<"previewRuns">;
+
+type EnrichedPreviewRun = PreviewRunDoc & {
+  configRepoFullName?: string;
+  taskId?: Id<"tasks">;
+};
+
+type DbContext = {
+  db: {
+    get: <T extends "previewConfigs" | "taskRuns" | "tasks">(id: Id<T>) => Promise<Doc<T> | null>;
+  };
+};
+
+/**
+ * Batch-enrich preview runs with config repo name and taskId.
+ * Filters out runs whose linked task is archived.
+ * Uses batched lookups to avoid N+1 query patterns.
+ */
+async function enrichPreviewRuns(
+  ctx: DbContext,
+  runs: PreviewRunDoc[],
+  limit?: number
+): Promise<EnrichedPreviewRun[]> {
+  // Batch fetch all configs
+  const configIds = [...new Set(runs.map((r) => r.previewConfigId))];
+  const configs = await Promise.all(configIds.map((id) => ctx.db.get(id)));
+  const configMap = new Map(
+    configIds.map((id, i) => [id, configs[i]])
+  );
+
+  // Batch fetch all taskRuns
+  const taskRunIds = runs.map((r) => r.taskRunId).filter((id): id is Id<"taskRuns"> => id != null);
+  const taskRuns = await Promise.all(taskRunIds.map((id) => ctx.db.get(id)));
+  const taskRunMap = new Map(
+    taskRunIds.map((id, i) => [id, taskRuns[i]])
+  );
+
+  // Batch fetch all tasks (for archive check)
+  const taskIds = [...new Set(
+    taskRuns
+      .filter((tr): tr is Doc<"taskRuns"> => tr != null)
+      .map((tr) => tr.taskId)
+  )];
+  const tasks = await Promise.all(taskIds.map((id) => ctx.db.get(id)));
+  const taskMap = new Map(
+    taskIds.map((id, i) => [id, tasks[i]])
+  );
+
+  const enrichedRuns: EnrichedPreviewRun[] = [];
+
+  for (const run of runs) {
+    if (limit !== undefined && enrichedRuns.length >= limit) break;
+
+    const config = configMap.get(run.previewConfigId);
+    let taskId: Id<"tasks"> | undefined = undefined;
+    let isTaskArchived = false;
+
+    if (run.taskRunId) {
+      const taskRun = taskRunMap.get(run.taskRunId);
+      if (taskRun) {
+        taskId = taskRun.taskId;
+        const task = taskMap.get(taskRun.taskId);
+        isTaskArchived = task?.isArchived === true;
+      }
+    }
+
+    if (isTaskArchived) continue;
+
+    enrichedRuns.push({
+      ...run,
+      configRepoFullName: config?.repoFullName,
+      taskId,
+    });
+  }
+
+  return enrichedRuns;
+}
+
 export const listByTeam = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -655,43 +742,7 @@ export const listByTeam = authQuery({
       .order("desc")
       .take(take * 2); // Fetch extra to account for filtered archived tasks
 
-    // Enrich with config repo name and taskId from linked taskRun
-    // Also filter out runs whose linked task is archived
-    const enrichedRuns: Array<
-      (typeof runs)[number] & {
-        configRepoFullName?: string;
-        taskId?: Id<"tasks">;
-      }
-    > = [];
-
-    for (const run of runs) {
-      if (enrichedRuns.length >= take) break;
-
-      const config = await ctx.db.get(run.previewConfigId);
-      let taskId = undefined;
-      let isTaskArchived = false;
-
-      if (run.taskRunId) {
-        const taskRun = await ctx.db.get(run.taskRunId);
-        if (taskRun) {
-          taskId = taskRun.taskId;
-          // Check if the linked task is archived
-          const task = await ctx.db.get(taskRun.taskId);
-          isTaskArchived = task?.isArchived === true;
-        }
-      }
-
-      // Skip runs whose linked task is archived
-      if (isTaskArchived) continue;
-
-      enrichedRuns.push({
-        ...run,
-        configRepoFullName: config?.repoFullName,
-        taskId,
-      });
-    }
-
-    return enrichedRuns;
+    return enrichPreviewRuns(ctx, runs, take);
   },
 });
 
@@ -711,39 +762,7 @@ export const listByTeamPaginated = authQuery({
       .order("desc")
       .paginate(args.paginationOpts);
 
-    // Enrich with config repo name and taskId from linked taskRun
-    // Also filter out runs whose linked task is archived
-    const enrichedPage: Array<
-      (typeof paginatedResult.page)[number] & {
-        configRepoFullName?: string;
-        taskId?: Id<"tasks">;
-      }
-    > = [];
-
-    for (const run of paginatedResult.page) {
-      const config = await ctx.db.get(run.previewConfigId);
-      let taskId = undefined;
-      let isTaskArchived = false;
-
-      if (run.taskRunId) {
-        const taskRun = await ctx.db.get(run.taskRunId);
-        if (taskRun) {
-          taskId = taskRun.taskId;
-          // Check if the linked task is archived
-          const task = await ctx.db.get(taskRun.taskId);
-          isTaskArchived = task?.isArchived === true;
-        }
-      }
-
-      // Skip runs whose linked task is archived
-      if (isTaskArchived) continue;
-
-      enrichedPage.push({
-        ...run,
-        configRepoFullName: config?.repoFullName,
-        taskId,
-      });
-    }
+    const enrichedPage = await enrichPreviewRuns(ctx, paginatedResult.page);
 
     return {
       ...paginatedResult,

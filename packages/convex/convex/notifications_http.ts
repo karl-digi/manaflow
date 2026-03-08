@@ -1,17 +1,10 @@
 import { v } from "convex/values";
 import { z } from "zod";
+import { jsonResponse } from "../_shared/http-utils";
 import { internal } from "./_generated/api";
 import { httpAction, internalMutation } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
 
 const AgentStoppedRequestSchema = z.object({
   taskRunId: typedZid("taskRuns"),

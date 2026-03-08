@@ -10,6 +10,28 @@ export type Health = {
     uptime: number;
 };
 
+export type SandboxHealth = {
+    status: 'healthy' | 'unhealthy' | 'degraded';
+    /**
+     * Active sandbox provider
+     */
+    provider: string;
+    providerStatus: 'connected' | 'disconnected' | 'error';
+    /**
+     * API latency in milliseconds
+     */
+    latencyMs?: number;
+    /**
+     * Number of templates available
+     */
+    templatesAvailable?: number;
+    /**
+     * Error message if status is unhealthy
+     */
+    error?: string;
+    timestamp: string;
+};
+
 export type AnonymousSignUpResponse = {
     success: boolean;
     userId?: string;
@@ -40,7 +62,9 @@ export type UserList = {
 export type _Error = {
     code: number;
     message: string;
-    details?: unknown;
+    details?: {
+        [key: string]: unknown;
+    };
 };
 
 export type ValidationError = {
@@ -114,6 +138,147 @@ export type GithubRepo = {
 
 export type GithubReposResponse = {
     repos: Array<GithubRepo>;
+};
+
+export type GitHubProject = {
+    id: string;
+    title: string;
+    number: number;
+    url: string;
+    shortDescription: string | null;
+    closed: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ProjectsResponse = {
+    projects: Array<GitHubProject>;
+    /**
+     * True if user needs to re-authorize GitHub with 'project' scope to see all projects
+     */
+    needsReauthorization?: boolean;
+};
+
+export type DraftBatchResult = {
+    title: string;
+    itemId: string | null;
+    error?: string;
+};
+
+export type DraftBatchResponse = {
+    results: Array<DraftBatchResult>;
+};
+
+export type BatchDraftItem = {
+    /**
+     * Draft issue title
+     */
+    title: string;
+    /**
+     * Draft issue body
+     */
+    body?: string;
+};
+
+export type CreateDraftBatchBody = {
+    /**
+     * GitHub Project node ID
+     */
+    projectId: string;
+    items: Array<BatchDraftItem>;
+};
+
+export type ProjectField = {
+    id: string;
+    name: string;
+    dataType: string;
+    options?: Array<{
+        id: string;
+        name: string;
+    }>;
+};
+
+export type ProjectFieldsResponse = {
+    fields: Array<ProjectField>;
+};
+
+export type ProjectItemContent = {
+    id: string;
+    title: string;
+    number?: number;
+    state?: string;
+    url?: string;
+    body?: string;
+    labels?: Array<string>;
+} | null;
+
+export type ProjectItemFieldValues = {
+    [key: string]: string | number | unknown;
+};
+
+export type ProjectItem = {
+    id: string;
+    content: ProjectItemContent;
+    fieldValues: ProjectItemFieldValues;
+};
+
+export type ProjectItemsResponse = {
+    items: Array<ProjectItem>;
+    pageInfo: {
+        hasNextPage: boolean;
+        endCursor: string | null;
+    };
+};
+
+export type ItemResponse = {
+    itemId: string | null;
+};
+
+export type AddItemBody = {
+    /**
+     * GitHub Project node ID
+     */
+    projectId: string;
+    /**
+     * Issue or PR node ID to add
+     */
+    contentId: string;
+};
+
+export type CreateDraftBody = {
+    /**
+     * GitHub Project node ID
+     */
+    projectId: string;
+    /**
+     * Draft issue title
+     */
+    title: string;
+    /**
+     * Draft issue body
+     */
+    body?: string;
+};
+
+export type UpdateFieldBody = {
+    /**
+     * GitHub Project node ID
+     */
+    projectId: string;
+    /**
+     * Project item node ID
+     */
+    itemId: string;
+    /**
+     * Field node ID
+     */
+    fieldId: string;
+    /**
+     * Field value (format depends on field type)
+     */
+    value: {
+        [key: string]: string | number;
+    };
 };
 
 export type FrameworkPreset = 'other' | 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue';
@@ -425,7 +590,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_9qig5lrf' | 'snapshot_a7gvqjip' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_mgmhjyrd' | 'snapshot_fe0cgqlw');
 };
 
 export type InstanceInfo = {
@@ -441,15 +606,540 @@ export type InstanceInfo = {
 
 export type ListInstancesResponse = Array<InstanceInfo>;
 
+export type OrchestrateMessageResponse = {
+    /**
+     * Whether the message was successfully sent
+     */
+    ok: boolean;
+    /**
+     * Confirmation message
+     */
+    message?: string;
+};
+
+export type OrchestrateMessageRequest = {
+    /**
+     * Task run ID (Convex document ID)
+     */
+    taskRunId: string;
+    /**
+     * Message content to send to the agent
+     */
+    message: string;
+    /**
+     * Message type: handoff (transfer work), request (ask to do something), or status (progress update)
+     */
+    messageType: 'handoff' | 'request' | 'status';
+    /**
+     * Team slug or ID (for authorization)
+     */
+    teamSlugOrId: string;
+};
+
+export type TaskStatus = 'pending' | 'assigned' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export type DependencyInfo = {
+    totalDeps: number;
+    completedDeps: number;
+    pendingDeps: number;
+    blockedBy: Array<{
+        _id: string;
+        status: string;
+        prompt: string;
+    }>;
+};
+
+export type OrchestrationTask = {
+    /**
+     * Task ID (Convex document ID)
+     */
+    _id: string;
+    /**
+     * Task prompt
+     */
+    prompt: string;
+    status: TaskStatus;
+    /**
+     * Task priority (lower = higher priority)
+     */
+    priority: number;
+    /**
+     * Assigned agent name
+     */
+    assignedAgentName?: string;
+    /**
+     * Sandbox ID
+     */
+    assignedSandboxId?: string;
+    /**
+     * Creation timestamp
+     */
+    createdAt: number;
+    /**
+     * Last update timestamp
+     */
+    updatedAt?: number;
+    /**
+     * Start timestamp
+     */
+    startedAt?: number;
+    /**
+     * Completion timestamp
+     */
+    completedAt?: number;
+    /**
+     * Error message if failed
+     */
+    errorMessage?: string;
+    /**
+     * Result if completed
+     */
+    result?: string;
+    /**
+     * Dependency task IDs
+     */
+    dependencies?: Array<string>;
+};
+
+export type OrchestrationTaskWithDeps = OrchestrationTask & {
+    dependencyInfo?: DependencyInfo;
+};
+
+export type OrchestrationSummary = {
+    /**
+     * Total number of tasks
+     */
+    totalTasks: number;
+    /**
+     * Count by status
+     */
+    statusCounts: {
+        [key: string]: number;
+    };
+    /**
+     * Number of active agents
+     */
+    activeAgentCount: number;
+    /**
+     * List of active agent names
+     */
+    activeAgents: Array<string>;
+    /**
+     * Recent completed/failed tasks
+     */
+    recentTasks: Array<{
+        _id: string;
+        prompt: string;
+        status: string;
+        assignedAgentName?: string;
+        completedAt?: number;
+        errorMessage?: string;
+    }>;
+};
+
+export type OrchestrationSyncResponse = {
+    tasks: Array<{
+        id: string;
+        prompt: string;
+        agentName: string;
+        status: string;
+        taskRunId?: string;
+        dependsOn?: Array<string>;
+        priority?: number;
+        result?: string;
+        errorMessage?: string;
+        createdAt: string;
+        startedAt?: string;
+        completedAt?: string;
+    }>;
+    messages: Array<{
+        id: string;
+        from: string;
+        to: string;
+        type?: 'handoff' | 'request' | 'status';
+        message: string;
+        timestamp: string;
+        read?: boolean;
+    }>;
+    aggregatedStatus: {
+        total: number;
+        completed: number;
+        running: number;
+        failed: number;
+        pending: number;
+    };
+};
+
+export type ProjectGoal = {
+    /**
+     * Goal ID
+     */
+    id: string;
+    /**
+     * Goal title
+     */
+    title: string;
+    /**
+     * Whether goal is completed
+     */
+    completed: boolean;
+};
+
+export type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'archived';
+
+export type PlanTask = {
+    /**
+     * Task ID
+     */
+    id: string;
+    /**
+     * Task prompt
+     */
+    prompt: string;
+    /**
+     * Agent name
+     */
+    agentName: string;
+    /**
+     * Task status
+     */
+    status: string;
+    /**
+     * Task IDs this depends on
+     */
+    dependsOn?: Array<string>;
+    /**
+     * Task priority
+     */
+    priority?: number;
+    /**
+     * Linked orchestration task ID
+     */
+    orchestrationTaskId?: string;
+};
+
+/**
+ * Embedded orchestration plan
+ */
+export type ProjectPlan = {
+    /**
+     * Orchestration ID
+     */
+    orchestrationId: string;
+    /**
+     * Head agent name
+     */
+    headAgent: string;
+    /**
+     * Plan description
+     */
+    description?: string;
+    /**
+     * Plan tasks
+     */
+    tasks: Array<PlanTask>;
+    /**
+     * Last update timestamp (ISO)
+     */
+    updatedAt: string;
+};
+
+export type Project = {
+    /**
+     * Project ID (Convex document ID)
+     */
+    _id: string;
+    /**
+     * Team ID
+     */
+    teamId: string;
+    /**
+     * User ID who created the project
+     */
+    userId: string;
+    /**
+     * Project name
+     */
+    name: string;
+    /**
+     * Project description
+     */
+    description?: string;
+    /**
+     * Project goals
+     */
+    goals?: Array<ProjectGoal>;
+    status: ProjectStatus;
+    /**
+     * Total task count
+     */
+    totalTasks?: number;
+    /**
+     * Completed task count
+     */
+    completedTasks?: number;
+    /**
+     * Failed task count
+     */
+    failedTasks?: number;
+    /**
+     * Path to linked Obsidian note
+     */
+    obsidianNotePath?: string;
+    /**
+     * GitHub Projects v2 node ID
+     */
+    githubProjectId?: string;
+    plan?: ProjectPlan;
+    /**
+     * Creation timestamp
+     */
+    createdAt: number;
+    /**
+     * Last update timestamp
+     */
+    updatedAt: number;
+};
+
+export type CreateProjectRequest = {
+    /**
+     * Team slug or ID
+     */
+    teamSlugOrId: string;
+    /**
+     * Project name
+     */
+    name: string;
+    /**
+     * Project description
+     */
+    description?: string;
+    /**
+     * Initial goals
+     */
+    goals?: Array<ProjectGoal>;
+    status?: ProjectStatus & unknown;
+    /**
+     * Path to Obsidian note
+     */
+    obsidianNotePath?: string;
+    /**
+     * GitHub Projects node ID
+     */
+    githubProjectId?: string;
+};
+
+export type UpdateProjectRequest = {
+    /**
+     * Project name
+     */
+    name?: string;
+    /**
+     * Project description
+     */
+    description?: string;
+    /**
+     * Project goals
+     */
+    goals?: Array<ProjectGoal>;
+    status?: ProjectStatus & unknown;
+    /**
+     * Path to Obsidian note
+     */
+    obsidianNotePath?: string;
+    /**
+     * GitHub Projects node ID
+     */
+    githubProjectId?: string;
+};
+
+export type UpsertPlanRequest = {
+    /**
+     * Orchestration ID
+     */
+    orchestrationId: string;
+    /**
+     * Head agent name
+     */
+    headAgent: string;
+    /**
+     * Plan description
+     */
+    description?: string;
+    /**
+     * Plan tasks
+     */
+    tasks: Array<PlanTask>;
+};
+
+export type ProjectProgress = {
+    /**
+     * Total tasks
+     */
+    total: number;
+    /**
+     * Completed tasks
+     */
+    completed: number;
+    /**
+     * Running tasks
+     */
+    running: number;
+    /**
+     * Failed tasks
+     */
+    failed: number;
+    /**
+     * Pending tasks
+     */
+    pending: number;
+    /**
+     * Cancelled tasks
+     */
+    cancelled: number;
+    /**
+     * Progress percentage (0-100)
+     */
+    progressPercent: number;
+    /**
+     * Last update timestamp (ISO)
+     */
+    lastUpdated: string;
+};
+
+export type DispatchPlanRequest = {
+    [key: string]: unknown;
+};
+
+export type RecommendedAction = {
+    /**
+     * Type of recommended action
+     */
+    type: 'todo' | 'stale_note' | 'missing_docs' | 'broken_link';
+    /**
+     * Source note path
+     */
+    source: string;
+    /**
+     * Action description
+     */
+    description: string;
+    /**
+     * Priority level
+     */
+    priority: 'high' | 'medium' | 'low';
+    /**
+     * Suggested prompt for agent
+     */
+    suggestedPrompt?: string;
+};
+
+export type ObsidianNote = {
+    /**
+     * Note path relative to vault
+     */
+    path: string;
+    /**
+     * Note title
+     */
+    title: string;
+    /**
+     * Last modified timestamp (ISO)
+     */
+    modifiedAt: string;
+    /**
+     * Note status
+     */
+    status?: 'active' | 'archive' | 'stale';
+    /**
+     * Number of incomplete TODOs
+     */
+    todoCount: number;
+    /**
+     * Note tags
+     */
+    tags: Array<string>;
+};
+
+export type DispatchRequest = {
+    /**
+     * Team slug or ID
+     */
+    teamSlugOrId: string;
+    recommendation: RecommendedAction;
+    /**
+     * Agent to use (default: claude/sonnet-4.5)
+     */
+    agentName?: string;
+    /**
+     * Repository full name
+     */
+    repoFullName?: string;
+};
+
+export type PveLxcResumeTaskRunResponse = {
+    resumed: true;
+};
+
+export type PveLxcResumeTaskRunBody = {
+    teamSlugOrId: string;
+};
+
+export type PveLxcPreviewInstanceStartResponse = {
+    instanceId: string;
+    vmid: number;
+    status: string;
+    networking: {
+        httpServices: Array<{
+            name: string;
+            port: number;
+            url: string;
+        }>;
+        hostname?: string;
+        fqdn?: string;
+    };
+};
+
+export type PveLxcPreviewInstanceStartBody = {
+    snapshotId: string;
+    templateVmid?: number;
+    metadata?: {
+        [key: string]: string;
+    };
+    ttlSeconds?: number;
+    ttlAction?: 'pause' | 'stop';
+};
+
+export type PveLxcPreviewInstanceExecResponse = {
+    exit_code: number;
+    stdout: string;
+    stderr: string;
+};
+
+export type PveLxcPreviewInstanceExecBody = {
+    command: string;
+    timeoutMs?: number;
+};
+
+export type PveLxcCheckTaskRunStoppedResponse = {
+    stopped: boolean;
+    deleted?: boolean;
+};
+
+export type PveLxcCheckTaskRunStoppedBody = {
+    teamSlugOrId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
 };
 
 export type CreateEnvironmentBody = {
     teamSlugOrId: string;
     name: string;
-    morphInstanceId: string;
+    instanceId: string;
     envVarsContent: string;
     selectedRepos?: Array<string>;
     description?: string;
@@ -461,7 +1151,9 @@ export type CreateEnvironmentBody = {
 export type GetEnvironmentResponse = {
     id: string;
     name: string;
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
+    templateVmid?: number;
     dataVaultKey: string;
     selectedRepos?: Array<string>;
     description?: string;
@@ -475,6 +1167,11 @@ export type GetEnvironmentResponse = {
 export type ListEnvironmentsResponse = Array<GetEnvironmentResponse>;
 
 export type GetEnvironmentVarsResponse = {
+    envVarsContent: string;
+};
+
+export type UpdateEnvironmentVarsBody = {
+    teamSlugOrId: string;
     envVarsContent: string;
 };
 
@@ -499,13 +1196,15 @@ export type UpdateEnvironmentPortsResponse = {
 export type UpdateEnvironmentPortsBody = {
     teamSlugOrId: string;
     ports: Array<number>;
-    morphInstanceId?: string;
+    instanceId?: string;
 };
 
 export type SnapshotVersionResponse = {
     id: string;
     version: number;
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
+    templateVmid?: number;
     createdAt: number;
     createdByUserId: string;
     label?: string;
@@ -519,12 +1218,13 @@ export type ListSnapshotVersionsResponse = Array<SnapshotVersionResponse>;
 export type CreateSnapshotVersionResponse = {
     snapshotVersionId: string;
     snapshotId: string;
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
     version: number;
 };
 
 export type CreateSnapshotVersionBody = {
     teamSlugOrId: string;
-    morphInstanceId: string;
+    instanceId: string;
     label?: string;
     activate?: boolean;
     maintenanceScript?: string;
@@ -532,7 +1232,9 @@ export type CreateSnapshotVersionBody = {
 };
 
 export type ActivateSnapshotVersionResponse = {
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'docker' | 'morph' | 'e2b' | 'daytona' | 'pve-lxc' | 'other' | 'pve-vm';
+    templateVmid?: number;
     version: number;
 };
 
@@ -544,7 +1246,9 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
-    provider?: 'morph';
+    vncUrl?: string;
+    xtermUrl?: string;
+    provider?: 'morph' | 'pve-lxc';
     vscodePersisted?: boolean;
 };
 
@@ -563,6 +1267,20 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    agentName?: string;
+    prompt?: string;
+};
+
+export type SetupProvidersResponse = {
+    success: boolean;
+    providers: Array<string>;
+};
+
+export type SetupProvidersBody = {
+    teamSlugOrId: string;
+    repoUrl?: string;
+    taskRunId?: string;
+    taskRunJwt?: string;
 };
 
 export type PrewarmSandboxResponse = {
@@ -574,6 +1292,14 @@ export type PrewarmSandboxBody = {
     teamSlugOrId: string;
     repoUrl?: string;
     branch?: string;
+};
+
+export type SandboxRefreshGitHubAuthResponse = {
+    refreshed: true;
+};
+
+export type SandboxRefreshGitHubAuthBody = {
+    teamSlugOrId: string;
 };
 
 export type UpdateSandboxEnvResponse = {
@@ -753,6 +1479,32 @@ export type CodeReviewStartBody = {
     tooltipLanguage?: string;
 };
 
+export type SandboxPreset = {
+    id: string;
+    presetId: string;
+    label: string;
+    cpu: string;
+    memory: string;
+    disk: string;
+    description?: string;
+};
+
+export type SandboxProviderCapabilities = {
+    supportsHibernate: boolean;
+    supportsSnapshots: boolean;
+    supportsResize: boolean;
+    supportsNestedVirt: boolean;
+    supportsGpu: boolean;
+};
+
+export type SandboxConfig = {
+    provider: 'morph' | 'pve-lxc' | 'pve-vm';
+    providerDisplayName: string;
+    presets: Array<SandboxPreset>;
+    defaultPresetId: string;
+    capabilities: SandboxProviderCapabilities;
+};
+
 export type WorkspaceConfigResponse = {
     projectFullName: string;
     maintenanceScript?: string;
@@ -833,6 +1585,332 @@ export type EditorSettingsBody = {
     extensions?: string;
 };
 
+export type TestAnthropicConnectionResult = {
+    success: boolean;
+    message: string;
+    details?: {
+        statusCode?: number;
+        responseTime?: number;
+        endpoint: string;
+        modelsFound?: number;
+    };
+};
+
+export type TestAnthropicConnectionBody = {
+    baseUrl: string;
+    apiKey: string;
+};
+
+export type RemoveWorktreeResult = {
+    success: boolean;
+    message: string;
+};
+
+export type RemoveWorktreeBody = {
+    teamSlugOrId: string;
+    worktreePath: string;
+};
+
+export type Model = {
+    _id: string;
+    name: string;
+    displayName: string;
+    vendor: string;
+    source: 'curated' | 'discovered';
+    discoveredFrom?: string;
+    discoveredAt?: number;
+    requiredApiKeys: Array<string>;
+    tier: 'free' | 'paid';
+    tags: Array<string>;
+    enabled: boolean;
+    sortOrder: number;
+    disabled?: boolean;
+    disabledReason?: string;
+    hiddenForTeam: boolean;
+    variants?: Array<{
+        id: string;
+        displayName: string;
+        description?: string;
+    }>;
+    defaultVariant?: string;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type ModelListResponse = {
+    models: Array<Model>;
+};
+
+export type SuccessResponse = {
+    success: boolean;
+};
+
+export type SetEnabledBody = {
+    enabled: boolean;
+};
+
+export type ReorderBody = {
+    modelNames: Array<string>;
+};
+
+export type DiscoveryResultResponse = {
+    success: boolean;
+    curated?: number;
+    discovered?: number;
+    free?: number;
+    paid?: number;
+    openrouter?: {
+        discovered: number;
+        free: number;
+        paid: number;
+    };
+    error?: string;
+};
+
+export type ApiFormat = 'anthropic' | 'openai' | 'bedrock' | 'vertex' | 'passthrough';
+
+export type Fallback = {
+    modelName: string;
+    priority: number;
+};
+
+export type ProviderOverride = {
+    _id: string;
+    teamId: string;
+    providerId: string;
+    baseUrl?: string;
+    apiFormat?: ApiFormat;
+    apiKeyEnvVar?: string;
+    customHeaders?: {
+        [key: string]: string;
+    };
+    fallbacks?: Array<Fallback>;
+    enabled: boolean;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type ProviderListResponse = {
+    providers: Array<ProviderOverride>;
+};
+
+export type UpsertResponse = {
+    id: string;
+    action: 'created' | 'updated';
+};
+
+export type UpsertProviderBody = {
+    baseUrl?: string;
+    apiFormat?: ApiFormat;
+    apiKeyEnvVar?: string;
+    customHeaders?: {
+        [key: string]: string;
+    };
+    fallbacks?: Array<Fallback>;
+    enabled: boolean;
+};
+
+export type TestResponse = {
+    success: boolean;
+    latencyMs?: number;
+    error?: string;
+};
+
+export type ProviderStatus = {
+    id: string;
+    name: string;
+    isAvailable: boolean;
+    source: 'apiKeys' | 'oauth' | 'free';
+    configuredKeys: Array<string>;
+    requiredKeys: Array<string>;
+};
+
+export type ProviderStatusListResponse = {
+    providers: Array<ProviderStatus>;
+};
+
+export type ApiKey = {
+    envVar: string;
+    displayName: string;
+    description?: string;
+    hasValue: boolean;
+    maskedValue?: string;
+    updatedAt?: number;
+};
+
+export type ApiKeyListResponse = {
+    apiKeys: Array<ApiKey>;
+};
+
+export type UpsertApiKeyBody = {
+    envVar: string;
+    value: string;
+    displayName: string;
+    description?: string;
+};
+
+export type McpServerScope = 'global' | 'workspace';
+
+export type McpServerStdioConfig = {
+    _id: string;
+    name: string;
+    displayName: string;
+    hasEnvVars?: boolean;
+    envVarKeys?: Array<string>;
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+    createdAt: number;
+    updatedAt: number;
+    type: 'stdio';
+    command: string;
+    args: Array<string>;
+};
+
+export type McpServerHttpConfig = {
+    _id: string;
+    name: string;
+    displayName: string;
+    hasEnvVars?: boolean;
+    envVarKeys?: Array<string>;
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+    createdAt: number;
+    updatedAt: number;
+    type: 'http';
+    url: string;
+    headers?: {
+        [key: string]: string;
+    };
+};
+
+export type McpServerSseConfig = {
+    _id: string;
+    name: string;
+    displayName: string;
+    hasEnvVars?: boolean;
+    envVarKeys?: Array<string>;
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+    createdAt: number;
+    updatedAt: number;
+    type: 'sse';
+    url: string;
+    headers?: {
+        [key: string]: string;
+    };
+};
+
+export type McpServerConfig = ({
+    type: 'stdio';
+} & McpServerStdioConfig) | ({
+    type: 'http';
+} & McpServerHttpConfig) | ({
+    type: 'sse';
+} & McpServerSseConfig);
+
+export type McpServerPresetSupportedAgents = {
+    claude: boolean;
+    codex: boolean;
+    gemini: boolean;
+    opencode: boolean;
+};
+
+export type McpServerPreset = {
+    name: string;
+    displayName: string;
+    description: string;
+    type: 'stdio';
+    command: string;
+    args: Array<string>;
+    tags: Array<string>;
+    supportedAgents: McpServerPresetSupportedAgents;
+};
+
+export type McpServersListResponse = {
+    configs: Array<McpServerConfig>;
+    presets: Array<McpServerPreset>;
+};
+
+export type McpServerSuccessResponse = {
+    success: boolean;
+    id?: string;
+};
+
+export type UpsertMcpServerBody = {
+    name: string;
+    displayName: string;
+    type?: 'stdio';
+    command: string;
+    args?: Array<string>;
+    envVars?: {
+        [key: string]: string;
+    };
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+} | {
+    type: 'http';
+    name: string;
+    displayName: string;
+    url: string;
+    headers?: {
+        [key: string]: string;
+    };
+    envVars?: {
+        [key: string]: string;
+    };
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+} | {
+    type: 'sse';
+    name: string;
+    displayName: string;
+    url: string;
+    headers?: {
+        [key: string]: string;
+    };
+    envVars?: {
+        [key: string]: string;
+    };
+    description?: string;
+    tags?: Array<string>;
+    enabledClaude: boolean;
+    enabledCodex: boolean;
+    enabledGemini: boolean;
+    enabledOpencode: boolean;
+    scope: McpServerScope;
+    projectFullName?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -848,6 +1926,22 @@ export type GetApiHealthResponses = {
 };
 
 export type GetApiHealthResponse = GetApiHealthResponses[keyof GetApiHealthResponses];
+
+export type GetApiHealthSandboxData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/health/sandbox';
+};
+
+export type GetApiHealthSandboxResponses = {
+    /**
+     * Sandbox provider health status
+     */
+    200: SandboxHealth;
+};
+
+export type GetApiHealthSandboxResponse = GetApiHealthSandboxResponses[keyof GetApiHealthSandboxResponses];
 
 export type PostApiAuthAnonymousSignUpData = {
     body?: never;
@@ -1260,6 +2354,288 @@ export type GetApiIntegrationsGithubReposResponses = {
 };
 
 export type GetApiIntegrationsGithubReposResponse = GetApiIntegrationsGithubReposResponses[keyof GetApiIntegrationsGithubReposResponses];
+
+export type GetApiIntegrationsGithubProjectsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or UUID
+         */
+        team: string;
+        /**
+         * GitHub App installation ID
+         */
+        installationId?: number | null;
+        /**
+         * GitHub user or org login (optional, inferred from installation if omitted)
+         */
+        owner?: string;
+        /**
+         * Owner type
+         */
+        ownerType?: 'user' | 'organization';
+    };
+    url: '/api/integrations/github/projects';
+};
+
+export type GetApiIntegrationsGithubProjectsErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubProjectsResponses = {
+    /**
+     * OK
+     */
+    200: ProjectsResponse;
+};
+
+export type GetApiIntegrationsGithubProjectsResponse = GetApiIntegrationsGithubProjectsResponses[keyof GetApiIntegrationsGithubProjectsResponses];
+
+export type PostApiIntegrationsGithubProjectsDraftsBatchData = {
+    body: CreateDraftBatchBody;
+    path?: never;
+    query: {
+        team: string;
+        installationId?: number | null;
+    };
+    url: '/api/integrations/github/projects/drafts/batch';
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsBatchErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsBatchResponses = {
+    /**
+     * OK
+     */
+    200: DraftBatchResponse;
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsBatchResponse = PostApiIntegrationsGithubProjectsDraftsBatchResponses[keyof PostApiIntegrationsGithubProjectsDraftsBatchResponses];
+
+export type GetApiIntegrationsGithubProjectsFieldsData = {
+    body?: never;
+    path?: never;
+    query: {
+        team: string;
+        installationId?: number | null;
+        projectId: string;
+    };
+    url: '/api/integrations/github/projects/fields';
+};
+
+export type GetApiIntegrationsGithubProjectsFieldsErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubProjectsFieldsResponses = {
+    /**
+     * OK
+     */
+    200: ProjectFieldsResponse;
+};
+
+export type GetApiIntegrationsGithubProjectsFieldsResponse = GetApiIntegrationsGithubProjectsFieldsResponses[keyof GetApiIntegrationsGithubProjectsFieldsResponses];
+
+export type GetApiIntegrationsGithubProjectsItemsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or UUID
+         */
+        team: string;
+        /**
+         * GitHub App installation ID
+         */
+        installationId?: number | null;
+        /**
+         * GitHub Project node ID
+         */
+        projectId: string;
+        /**
+         * Number of items to fetch
+         */
+        first?: number | null;
+        /**
+         * Pagination cursor
+         */
+        after?: string;
+        /**
+         * Filter by Status field value (e.g., 'Backlog', 'In Progress')
+         */
+        status?: string;
+        /**
+         * Only return items without a linked task
+         */
+        noLinkedTask?: boolean | null;
+    };
+    url: '/api/integrations/github/projects/items';
+};
+
+export type GetApiIntegrationsGithubProjectsItemsErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubProjectsItemsResponses = {
+    /**
+     * OK
+     */
+    200: ProjectItemsResponse;
+};
+
+export type GetApiIntegrationsGithubProjectsItemsResponse = GetApiIntegrationsGithubProjectsItemsResponses[keyof GetApiIntegrationsGithubProjectsItemsResponses];
+
+export type PostApiIntegrationsGithubProjectsItemsData = {
+    body: AddItemBody;
+    path?: never;
+    query: {
+        team: string;
+        installationId?: number | null;
+    };
+    url: '/api/integrations/github/projects/items';
+};
+
+export type PostApiIntegrationsGithubProjectsItemsErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiIntegrationsGithubProjectsItemsResponses = {
+    /**
+     * OK
+     */
+    200: ItemResponse;
+};
+
+export type PostApiIntegrationsGithubProjectsItemsResponse = PostApiIntegrationsGithubProjectsItemsResponses[keyof PostApiIntegrationsGithubProjectsItemsResponses];
+
+export type PostApiIntegrationsGithubProjectsDraftsData = {
+    body: CreateDraftBody;
+    path?: never;
+    query: {
+        team: string;
+        installationId?: number | null;
+    };
+    url: '/api/integrations/github/projects/drafts';
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsResponses = {
+    /**
+     * OK
+     */
+    200: ItemResponse;
+};
+
+export type PostApiIntegrationsGithubProjectsDraftsResponse = PostApiIntegrationsGithubProjectsDraftsResponses[keyof PostApiIntegrationsGithubProjectsDraftsResponses];
+
+export type PatchApiIntegrationsGithubProjectsItemsFieldData = {
+    body: UpdateFieldBody;
+    path?: never;
+    query: {
+        team: string;
+        installationId?: number | null;
+    };
+    url: '/api/integrations/github/projects/items/field';
+};
+
+export type PatchApiIntegrationsGithubProjectsItemsFieldErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PatchApiIntegrationsGithubProjectsItemsFieldResponses = {
+    /**
+     * OK
+     */
+    200: ItemResponse;
+};
+
+export type PatchApiIntegrationsGithubProjectsItemsFieldResponse = PatchApiIntegrationsGithubProjectsItemsFieldResponses[keyof PatchApiIntegrationsGithubProjectsItemsFieldResponses];
+
+export type PostApiIntegrationsGithubProjectsPlanSyncData = {
+    body: {
+        planContent: string;
+        planFile?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/projects/plan-sync';
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncResponses = {
+    /**
+     * OK
+     */
+    200: {
+        success: boolean;
+        itemsCreated: number;
+        projectId: string | null;
+        error?: string;
+    };
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncResponse = PostApiIntegrationsGithubProjectsPlanSyncResponses[keyof PostApiIntegrationsGithubProjectsPlanSyncResponses];
 
 export type GetApiIntegrationsGithubFrameworkDetectionData = {
     body?: never;
@@ -2078,6 +3454,909 @@ export type GetApiMorphInstancesResponses = {
 
 export type GetApiMorphInstancesResponse = GetApiMorphInstancesResponses[keyof GetApiMorphInstancesResponses];
 
+export type PostApiOrchestrateMessageData = {
+    body: OrchestrateMessageRequest;
+    path?: never;
+    query?: never;
+    url: '/api/orchestrate/message';
+};
+
+export type PostApiOrchestrateMessageErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiOrchestrateMessageResponses = {
+    /**
+     * Message sent successfully
+     */
+    200: OrchestrateMessageResponse;
+};
+
+export type PostApiOrchestrateMessageResponse = PostApiOrchestrateMessageResponses[keyof PostApiOrchestrateMessageResponses];
+
+export type GetApiOrchestrateTasksData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+        /**
+         * Filter by status
+         */
+        status?: TaskStatus & unknown;
+        /**
+         * Maximum number of tasks to return
+         */
+        limit?: number | null;
+    };
+    url: '/api/orchestrate/tasks';
+};
+
+export type GetApiOrchestrateTasksErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiOrchestrateTasksResponses = {
+    /**
+     * Tasks retrieved successfully
+     */
+    200: Array<OrchestrationTaskWithDeps>;
+};
+
+export type GetApiOrchestrateTasksResponse = GetApiOrchestrateTasksResponses[keyof GetApiOrchestrateTasksResponses];
+
+export type GetApiOrchestrateTasksByTaskIdData = {
+    body?: never;
+    path: {
+        /**
+         * Orchestration task ID
+         */
+        taskId: string;
+    };
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/orchestrate/tasks/{taskId}';
+};
+
+export type GetApiOrchestrateTasksByTaskIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Task not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiOrchestrateTasksByTaskIdResponses = {
+    /**
+     * Task retrieved successfully
+     */
+    200: OrchestrationTask;
+};
+
+export type GetApiOrchestrateTasksByTaskIdResponse = GetApiOrchestrateTasksByTaskIdResponses[keyof GetApiOrchestrateTasksByTaskIdResponses];
+
+export type PostApiOrchestrateTasksByTaskIdCancelData = {
+    body: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+        /**
+         * Also cancel dependent tasks
+         */
+        cascade?: boolean;
+    };
+    path: {
+        /**
+         * Orchestration task ID
+         */
+        taskId: string;
+    };
+    query?: never;
+    url: '/api/orchestrate/tasks/{taskId}/cancel';
+};
+
+export type PostApiOrchestrateTasksByTaskIdCancelErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Task not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiOrchestrateTasksByTaskIdCancelResponses = {
+    /**
+     * Task cancelled successfully
+     */
+    200: {
+        ok: boolean;
+        cancelledCount: number;
+    };
+};
+
+export type PostApiOrchestrateTasksByTaskIdCancelResponse = PostApiOrchestrateTasksByTaskIdCancelResponses[keyof PostApiOrchestrateTasksByTaskIdCancelResponses];
+
+export type GetApiOrchestrateMetricsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/orchestrate/metrics';
+};
+
+export type GetApiOrchestrateMetricsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiOrchestrateMetricsResponses = {
+    /**
+     * Metrics retrieved successfully
+     */
+    200: OrchestrationSummary;
+};
+
+export type GetApiOrchestrateMetricsResponse = GetApiOrchestrateMetricsResponses[keyof GetApiOrchestrateMetricsResponses];
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncData = {
+    body?: never;
+    path: {
+        /**
+         * Orchestration ID
+         */
+        orchestrationId: string;
+    };
+    query?: never;
+    url: '/api/v1/cmux/orchestration/{orchestrationId}/sync';
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Orchestration not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses = {
+    /**
+     * Orchestration state retrieved successfully
+     */
+    200: OrchestrationSyncResponse;
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponse = GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses[keyof GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses];
+
+export type GetApiProjectsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+        /**
+         * Filter by status
+         */
+        status?: ProjectStatus & unknown;
+        /**
+         * Maximum number of projects
+         */
+        limit?: number | null;
+    };
+    url: '/api/projects';
+};
+
+export type GetApiProjectsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiProjectsResponses = {
+    /**
+     * Projects retrieved successfully
+     */
+    200: Array<Project>;
+};
+
+export type GetApiProjectsResponse = GetApiProjectsResponses[keyof GetApiProjectsResponses];
+
+export type PostApiProjectsData = {
+    body: CreateProjectRequest;
+    path?: never;
+    query?: never;
+    url: '/api/projects';
+};
+
+export type PostApiProjectsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Validation error
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiProjectsResponses = {
+    /**
+     * Project created successfully
+     */
+    201: {
+        /**
+         * Created project ID
+         */
+        id: string;
+    };
+};
+
+export type PostApiProjectsResponse = PostApiProjectsResponses[keyof PostApiProjectsResponses];
+
+export type GetApiProjectsByProjectIdData = {
+    body?: never;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/projects/{projectId}';
+};
+
+export type GetApiProjectsByProjectIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiProjectsByProjectIdResponses = {
+    /**
+     * Project retrieved successfully
+     */
+    200: Project;
+};
+
+export type GetApiProjectsByProjectIdResponse = GetApiProjectsByProjectIdResponses[keyof GetApiProjectsByProjectIdResponses];
+
+export type PatchApiProjectsByProjectIdData = {
+    body: UpdateProjectRequest;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query?: never;
+    url: '/api/projects/{projectId}';
+};
+
+export type PatchApiProjectsByProjectIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * Validation error
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PatchApiProjectsByProjectIdResponses = {
+    /**
+     * Project updated successfully
+     */
+    200: {
+        /**
+         * Updated project ID
+         */
+        id: string;
+    };
+};
+
+export type PatchApiProjectsByProjectIdResponse = PatchApiProjectsByProjectIdResponses[keyof PatchApiProjectsByProjectIdResponses];
+
+export type PutApiProjectsByProjectIdPlanData = {
+    body: UpsertPlanRequest;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query?: never;
+    url: '/api/projects/{projectId}/plan';
+};
+
+export type PutApiProjectsByProjectIdPlanErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * Validation error
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PutApiProjectsByProjectIdPlanResponses = {
+    /**
+     * Plan upserted successfully
+     */
+    200: {
+        /**
+         * Updated project ID
+         */
+        id: string;
+    };
+};
+
+export type PutApiProjectsByProjectIdPlanResponse = PutApiProjectsByProjectIdPlanResponses[keyof PutApiProjectsByProjectIdPlanResponses];
+
+export type GetApiProjectsByProjectIdProgressData = {
+    body?: never;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/projects/{projectId}/progress';
+};
+
+export type GetApiProjectsByProjectIdProgressErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiProjectsByProjectIdProgressResponses = {
+    /**
+     * Progress retrieved successfully
+     */
+    200: ProjectProgress;
+};
+
+export type GetApiProjectsByProjectIdProgressResponse = GetApiProjectsByProjectIdProgressResponses[keyof GetApiProjectsByProjectIdProgressResponses];
+
+export type PostApiProjectsByProjectIdDispatchData = {
+    body: DispatchPlanRequest;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query?: never;
+    url: '/api/projects/{projectId}/dispatch';
+};
+
+export type PostApiProjectsByProjectIdDispatchErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * No plan tasks to dispatch
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiProjectsByProjectIdDispatchResponses = {
+    /**
+     * Plan dispatched successfully
+     */
+    200: {
+        /**
+         * Number of tasks dispatched
+         */
+        dispatched: number;
+    };
+};
+
+export type PostApiProjectsByProjectIdDispatchResponse = PostApiProjectsByProjectIdDispatchResponses[keyof PostApiProjectsByProjectIdDispatchResponses];
+
+export type GetApiVaultRecommendationsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+        /**
+         * Maximum recommendations
+         */
+        limit?: number | null;
+        /**
+         * Filter by priority
+         */
+        priority?: 'high' | 'medium' | 'low';
+        /**
+         * Filter by type
+         */
+        type?: 'todo' | 'stale_note' | 'missing_docs' | 'broken_link';
+    };
+    url: '/api/vault/recommendations';
+};
+
+export type GetApiVaultRecommendationsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiVaultRecommendationsResponses = {
+    /**
+     * Recommendations retrieved successfully
+     */
+    200: {
+        recommendations: Array<RecommendedAction>;
+        vaultConfigured: boolean;
+    };
+};
+
+export type GetApiVaultRecommendationsResponse = GetApiVaultRecommendationsResponses[keyof GetApiVaultRecommendationsResponses];
+
+export type GetApiVaultNotesData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+        /**
+         * Search query
+         */
+        search?: string;
+        /**
+         * Filter by folder path
+         */
+        folder?: string;
+        /**
+         * Filter by status
+         */
+        status?: 'active' | 'archive' | 'stale';
+        /**
+         * Maximum notes to return
+         */
+        limit?: number | null;
+    };
+    url: '/api/vault/notes';
+};
+
+export type GetApiVaultNotesErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiVaultNotesResponses = {
+    /**
+     * Notes retrieved successfully
+     */
+    200: {
+        notes: Array<ObsidianNote>;
+        tags: Array<string>;
+        vaultConfigured: boolean;
+    };
+};
+
+export type GetApiVaultNotesResponse = GetApiVaultNotesResponses[keyof GetApiVaultNotesResponses];
+
+export type PostApiVaultDispatchData = {
+    body: DispatchRequest;
+    path?: never;
+    query?: never;
+    url: '/api/vault/dispatch';
+};
+
+export type PostApiVaultDispatchErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Validation error
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiVaultDispatchResponses = {
+    /**
+     * Task created successfully
+     */
+    201: {
+        /**
+         * Created task ID
+         */
+        taskId: string;
+        /**
+         * Created task run ID
+         */
+        taskRunId?: string;
+    };
+};
+
+export type PostApiVaultDispatchResponse = PostApiVaultDispatchResponses[keyof PostApiVaultDispatchResponses];
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeData = {
+    body: PveLxcResumeTaskRunBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/task-runs/{taskRunId}/resume';
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeErrors = {
+    /**
+     * Task run is not backed by a PVE LXC container
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or container not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume container
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponses = {
+    /**
+     * PVE LXC container resumed
+     */
+    200: PveLxcResumeTaskRunResponse;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponse = PostApiPveLxcTaskRunsByTaskRunIdResumeResponses[keyof PostApiPveLxcTaskRunsByTaskRunIdResumeResponses];
+
+export type PostApiPveLxcPreviewInstancesStartData = {
+    body: PveLxcPreviewInstanceStartBody;
+    path?: never;
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/start';
+};
+
+export type PostApiPveLxcPreviewInstancesStartErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Failed to start instance
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesStartResponses = {
+    /**
+     * PVE LXC instance started
+     */
+    200: PveLxcPreviewInstanceStartResponse;
+};
+
+export type PostApiPveLxcPreviewInstancesStartResponse = PostApiPveLxcPreviewInstancesStartResponses[keyof PostApiPveLxcPreviewInstancesStartResponses];
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecData = {
+    body: PveLxcPreviewInstanceExecBody;
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}/exec';
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to execute command
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecResponses = {
+    /**
+     * Command executed
+     */
+    200: PveLxcPreviewInstanceExecResponse;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdExecResponse = PostApiPveLxcPreviewInstancesByInstanceIdExecResponses[keyof PostApiPveLxcPreviewInstancesByInstanceIdExecResponses];
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdData = {
+    body?: never;
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}';
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to stop instance
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdResponses = {
+    /**
+     * PVE LXC instance stopped
+     */
+    200: {
+        stopped: true;
+    };
+};
+
+export type DeleteApiPveLxcPreviewInstancesByInstanceIdResponse = DeleteApiPveLxcPreviewInstancesByInstanceIdResponses[keyof DeleteApiPveLxcPreviewInstancesByInstanceIdResponses];
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileData = {
+    body: {
+        filePath: string;
+    };
+    path: {
+        instanceId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/preview/instances/{instanceId}/read-file';
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileErrors = {
+    /**
+     * Unauthorized - missing or invalid internal API key
+     */
+    401: unknown;
+    /**
+     * Instance or file not found
+     */
+    404: unknown;
+    /**
+     * Failed to read file
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses = {
+    /**
+     * File content returned
+     */
+    200: {
+        base64: string;
+        size: number;
+    };
+};
+
+export type PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponse = PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses[keyof PostApiPveLxcPreviewInstancesByInstanceIdReadFileResponses];
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedData = {
+    body: PveLxcCheckTaskRunStoppedBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/task-runs/{taskRunId}/is-stopped';
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedErrors = {
+    /**
+     * Task run is not backed by a PVE LXC container
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+    /**
+     * Failed to check container status
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses = {
+    /**
+     * PVE LXC container status returned
+     */
+    200: PveLxcCheckTaskRunStoppedResponse;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponse = PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses[keyof PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses];
+
 export type GetApiIframePreflightData = {
     body?: never;
     path?: never;
@@ -2312,6 +4591,43 @@ export type GetApiEnvironmentsByIdVarsResponses = {
 
 export type GetApiEnvironmentsByIdVarsResponse = GetApiEnvironmentsByIdVarsResponses[keyof GetApiEnvironmentsByIdVarsResponses];
 
+export type PatchApiEnvironmentsByIdVarsData = {
+    body: UpdateEnvironmentVarsBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/environments/{id}/vars';
+};
+
+export type PatchApiEnvironmentsByIdVarsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Environment not found
+     */
+    404: unknown;
+    /**
+     * Failed to update environment variables
+     */
+    500: unknown;
+};
+
+export type PatchApiEnvironmentsByIdVarsResponses = {
+    /**
+     * Environment variables updated successfully
+     */
+    200: GetEnvironmentVarsResponse;
+};
+
+export type PatchApiEnvironmentsByIdVarsResponse = PatchApiEnvironmentsByIdVarsResponses[keyof PatchApiEnvironmentsByIdVarsResponses];
+
 export type PatchApiEnvironmentsByIdPortsData = {
     body: UpdateEnvironmentPortsBody;
     path: {
@@ -2482,6 +4798,42 @@ export type PostApiSandboxesStartResponses = {
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
 
+export type PostApiSandboxesByIdSetupProvidersData = {
+    body: SetupProvidersBody;
+    path: {
+        /**
+         * Sandbox instance ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/setup-providers';
+};
+
+export type PostApiSandboxesByIdSetupProvidersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to set up providers
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdSetupProvidersResponses = {
+    /**
+     * Provider auth configured
+     */
+    200: SetupProvidersResponse;
+};
+
+export type PostApiSandboxesByIdSetupProvidersResponse = PostApiSandboxesByIdSetupProvidersResponses[keyof PostApiSandboxesByIdSetupProvidersResponses];
+
 export type PostApiSandboxesPrewarmData = {
     body: PrewarmSandboxBody;
     path?: never;
@@ -2508,6 +4860,55 @@ export type PostApiSandboxesPrewarmResponses = {
 };
 
 export type PostApiSandboxesPrewarmResponse = PostApiSandboxesPrewarmResponses[keyof PostApiSandboxesPrewarmResponses];
+
+export type PostApiSandboxesByIdRefreshGithubAuthData = {
+    body: SandboxRefreshGitHubAuthBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/refresh-github-auth';
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthErrors = {
+    /**
+     * Unsupported sandbox provider
+     */
+    400: unknown;
+    /**
+     * Unauthorized or GitHub not connected
+     */
+    401: unknown;
+    /**
+     * Forbidden - sandbox does not belong to this team
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Sandbox is paused/stopped and must be resumed first
+     */
+    409: unknown;
+    /**
+     * Failed to refresh GitHub authentication
+     */
+    500: unknown;
+    /**
+     * Sandbox provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthResponses = {
+    /**
+     * GitHub authentication refreshed successfully
+     */
+    200: SandboxRefreshGitHubAuthResponse;
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthResponse = PostApiSandboxesByIdRefreshGithubAuthResponses[keyof PostApiSandboxesByIdRefreshGithubAuthResponses];
 
 export type PostApiSandboxesByIdEnvData = {
     body: UpdateSandboxEnvBody;
@@ -2644,7 +5045,7 @@ export type GetApiSandboxesByIdStatusResponses = {
         running: boolean;
         vscodeUrl?: string;
         workerUrl?: string;
-        provider?: 'morph';
+        provider?: 'morph' | 'pve-lxc';
     };
 };
 
@@ -2763,6 +5164,60 @@ export type PostApiSandboxesByIdResumeResponses = {
 };
 
 export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
+export type PostApiSandboxesByIdDiscoverReposData = {
+    body: {
+        /**
+         * Path to scan for repos (default: /root/workspace)
+         */
+        workspacePath?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/discover-repos';
+};
+
+export type PostApiSandboxesByIdDiscoverReposErrors = {
+    /**
+     * Invalid workspace path
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to discover repos
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdDiscoverReposResponses = {
+    /**
+     * Discovered repositories
+     */
+    200: {
+        /**
+         * Array of discovered repos in owner/repo format
+         */
+        repos: Array<string>;
+        /**
+         * Detailed info about each discovered .git directory
+         */
+        paths: Array<{
+            path: string;
+            repo: string | null;
+        }>;
+    };
+};
+
+export type PostApiSandboxesByIdDiscoverReposResponse = PostApiSandboxesByIdDiscoverReposResponses[keyof PostApiSandboxesByIdDiscoverReposResponses];
 
 export type GetApiTeamsData = {
     body?: never;
@@ -2887,6 +5342,29 @@ export type PostApiCodeReviewStartResponses = {
 };
 
 export type PostApiCodeReviewStartResponse = PostApiCodeReviewStartResponses[keyof PostApiCodeReviewStartResponses];
+
+export type GetApiConfigSandboxData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/config/sandbox';
+};
+
+export type GetApiConfigSandboxErrors = {
+    /**
+     * No sandbox provider configured
+     */
+    500: unknown;
+};
+
+export type GetApiConfigSandboxResponses = {
+    /**
+     * Sandbox configuration
+     */
+    200: SandboxConfig;
+};
+
+export type GetApiConfigSandboxResponse = GetApiConfigSandboxResponses[keyof GetApiConfigSandboxResponses];
 
 export type GetApiWorkspaceConfigsData = {
     body?: never;
@@ -3433,6 +5911,562 @@ export type PostApiEditorSettingsResponses = {
 };
 
 export type PostApiEditorSettingsResponse = PostApiEditorSettingsResponses[keyof PostApiEditorSettingsResponses];
+
+export type PostApiSettingsTestAnthropicConnectionData = {
+    body: TestAnthropicConnectionBody;
+    path?: never;
+    query?: never;
+    url: '/api/settings/test-anthropic-connection';
+};
+
+export type PostApiSettingsTestAnthropicConnectionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiSettingsTestAnthropicConnectionResponses = {
+    /**
+     * Connection test result
+     */
+    200: TestAnthropicConnectionResult;
+};
+
+export type PostApiSettingsTestAnthropicConnectionResponse = PostApiSettingsTestAnthropicConnectionResponses[keyof PostApiSettingsTestAnthropicConnectionResponses];
+
+export type PostApiWorktreesRemoveData = {
+    body: RemoveWorktreeBody;
+    path?: never;
+    query?: never;
+    url: '/api/worktrees/remove';
+};
+
+export type PostApiWorktreesRemoveErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiWorktreesRemoveResponses = {
+    /**
+     * Worktree removal result
+     */
+    200: RemoveWorktreeResult;
+};
+
+export type PostApiWorktreesRemoveResponse = PostApiWorktreesRemoveResponses[keyof PostApiWorktreesRemoveResponses];
+
+export type GetApiModelsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/models';
+};
+
+export type GetApiModelsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiModelsResponses = {
+    /**
+     * List of all models
+     */
+    200: ModelListResponse;
+};
+
+export type GetApiModelsResponse = GetApiModelsResponses[keyof GetApiModelsResponses];
+
+export type PatchApiModelsByNameEnabledData = {
+    body: SetEnabledBody;
+    path: {
+        /**
+         * Model name (URL-encoded)
+         */
+        name: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/models/{name}/enabled';
+};
+
+export type PatchApiModelsByNameEnabledErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Model not found
+     */
+    404: unknown;
+};
+
+export type PatchApiModelsByNameEnabledResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type PatchApiModelsByNameEnabledResponse = PatchApiModelsByNameEnabledResponses[keyof PatchApiModelsByNameEnabledResponses];
+
+export type PostApiModelsReorderData = {
+    body: ReorderBody;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/models/reorder';
+};
+
+export type PostApiModelsReorderErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiModelsReorderResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type PostApiModelsReorderResponse = PostApiModelsReorderResponses[keyof PostApiModelsReorderResponses];
+
+export type PostApiModelsRefreshData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/models/refresh';
+};
+
+export type PostApiModelsRefreshErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiModelsRefreshResponses = {
+    /**
+     * Discovery result
+     */
+    200: DiscoveryResultResponse;
+};
+
+export type PostApiModelsRefreshResponse = PostApiModelsRefreshResponses[keyof PostApiModelsRefreshResponses];
+
+export type PostApiModelsSeedData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/models/seed';
+};
+
+export type PostApiModelsSeedErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiModelsSeedResponses = {
+    /**
+     * Seed result
+     */
+    200: {
+        success: boolean;
+        seededCount: number;
+        error?: string;
+    };
+};
+
+export type PostApiModelsSeedResponse = PostApiModelsSeedResponses[keyof PostApiModelsSeedResponses];
+
+export type GetApiProvidersData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers';
+};
+
+export type GetApiProvidersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiProvidersResponses = {
+    /**
+     * List of provider overrides
+     */
+    200: ProviderListResponse;
+};
+
+export type GetApiProvidersResponse = GetApiProvidersResponses[keyof GetApiProvidersResponses];
+
+export type DeleteApiProvidersByIdData = {
+    body?: never;
+    path: {
+        /**
+         * Provider ID (e.g., anthropic, openai)
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/{id}';
+};
+
+export type DeleteApiProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Provider override not found
+     */
+    404: unknown;
+};
+
+export type DeleteApiProvidersByIdResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type DeleteApiProvidersByIdResponse = DeleteApiProvidersByIdResponses[keyof DeleteApiProvidersByIdResponses];
+
+export type GetApiProvidersByIdData = {
+    body?: never;
+    path: {
+        /**
+         * Provider ID (e.g., anthropic, openai)
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/{id}';
+};
+
+export type GetApiProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiProvidersByIdResponses = {
+    /**
+     * Provider override
+     */
+    200: ProviderOverride & unknown;
+};
+
+export type GetApiProvidersByIdResponse = GetApiProvidersByIdResponses[keyof GetApiProvidersByIdResponses];
+
+export type PutApiProvidersByIdData = {
+    body: UpsertProviderBody;
+    path: {
+        /**
+         * Provider ID (e.g., anthropic, openai)
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/{id}';
+};
+
+export type PutApiProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PutApiProvidersByIdResponses = {
+    /**
+     * Success
+     */
+    200: UpsertResponse;
+};
+
+export type PutApiProvidersByIdResponse = PutApiProvidersByIdResponses[keyof PutApiProvidersByIdResponses];
+
+export type PostApiProvidersByIdTestData = {
+    body?: never;
+    path: {
+        /**
+         * Provider ID (e.g., anthropic, openai)
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/{id}/test';
+};
+
+export type PostApiProvidersByIdTestErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiProvidersByIdTestResponses = {
+    /**
+     * Test result
+     */
+    200: TestResponse;
+};
+
+export type PostApiProvidersByIdTestResponse = PostApiProvidersByIdTestResponses[keyof PostApiProvidersByIdTestResponses];
+
+export type PatchApiProvidersByIdEnabledData = {
+    body: {
+        enabled: boolean;
+    };
+    path: {
+        /**
+         * Provider ID
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/{id}/enabled';
+};
+
+export type PatchApiProvidersByIdEnabledErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Provider override not found
+     */
+    404: unknown;
+};
+
+export type PatchApiProvidersByIdEnabledResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type PatchApiProvidersByIdEnabledResponse = PatchApiProvidersByIdEnabledResponses[keyof PatchApiProvidersByIdEnabledResponses];
+
+export type GetApiProvidersStatusData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/providers/status';
+};
+
+export type GetApiProvidersStatusErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiProvidersStatusResponses = {
+    /**
+     * Provider status list
+     */
+    200: ProviderStatusListResponse;
+};
+
+export type GetApiProvidersStatusResponse = GetApiProvidersStatusResponses[keyof GetApiProvidersStatusResponses];
+
+export type GetApiApiKeysData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/api-keys';
+};
+
+export type GetApiApiKeysErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiApiKeysResponses = {
+    /**
+     * List of API keys
+     */
+    200: ApiKeyListResponse;
+};
+
+export type GetApiApiKeysResponse = GetApiApiKeysResponses[keyof GetApiApiKeysResponses];
+
+export type PutApiApiKeysData = {
+    body: UpsertApiKeyBody;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/api-keys';
+};
+
+export type PutApiApiKeysErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PutApiApiKeysResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type PutApiApiKeysResponse = PutApiApiKeysResponses[keyof PutApiApiKeysResponses];
+
+export type DeleteApiApiKeysByEnvVarData = {
+    body?: never;
+    path: {
+        /**
+         * Environment variable name
+         */
+        envVar: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/api-keys/{envVar}';
+};
+
+export type DeleteApiApiKeysByEnvVarErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type DeleteApiApiKeysByEnvVarResponses = {
+    /**
+     * Success
+     */
+    200: SuccessResponse;
+};
+
+export type DeleteApiApiKeysByEnvVarResponse = DeleteApiApiKeysByEnvVarResponses[keyof DeleteApiApiKeysByEnvVarResponses];
+
+export type GetApiMcpServersData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        scope?: McpServerScope;
+        projectFullName?: string;
+    };
+    url: '/api/mcp-servers';
+};
+
+export type GetApiMcpServersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiMcpServersResponses = {
+    /**
+     * List of MCP server configs and presets
+     */
+    200: McpServersListResponse;
+};
+
+export type GetApiMcpServersResponse = GetApiMcpServersResponses[keyof GetApiMcpServersResponses];
+
+export type PostApiMcpServersData = {
+    body: UpsertMcpServerBody;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/mcp-servers';
+};
+
+export type PostApiMcpServersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMcpServersResponses = {
+    /**
+     * Configuration saved
+     */
+    200: McpServerSuccessResponse;
+};
+
+export type PostApiMcpServersResponse = PostApiMcpServersResponses[keyof PostApiMcpServersResponses];
+
+export type DeleteApiMcpServersByIdData = {
+    body?: never;
+    path: {
+        /**
+         * MCP server config document ID
+         */
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/mcp-servers/{id}';
+};
+
+export type DeleteApiMcpServersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type DeleteApiMcpServersByIdResponses = {
+    /**
+     * Configuration deleted
+     */
+    200: McpServerSuccessResponse;
+};
+
+export type DeleteApiMcpServersByIdResponse = DeleteApiMcpServersByIdResponses[keyof DeleteApiMcpServersByIdResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

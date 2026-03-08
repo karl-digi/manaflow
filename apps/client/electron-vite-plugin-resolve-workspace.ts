@@ -1,5 +1,6 @@
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { type Plugin } from "vite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -86,10 +87,21 @@ export function resolveWorkspacePackages(): Plugin {
       // Handle subpath imports for shared
       if (id.startsWith("@cmux/shared/")) {
         const subpath = id.slice("@cmux/shared/".length);
-        return resolvePath(
+        // First try as a direct .ts file
+        const directPath = resolvePath(
           __dirname,
           `../../packages/shared/src/${subpath}.ts`
         );
+        // Check if it's a directory with index.ts (for exports like resilience)
+        const indexPath = resolvePath(
+          __dirname,
+          `../../packages/shared/src/${subpath}/index.ts`
+        );
+        // Try index.ts first (for directory exports), then direct .ts file
+        if (existsSync(indexPath)) {
+          return indexPath;
+        }
+        return directPath;
       }
 
       return null;

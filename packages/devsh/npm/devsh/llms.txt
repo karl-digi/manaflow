@@ -1,0 +1,70 @@
+# devsh
+
+> Cloud VMs for development - spawn isolated dev environments instantly
+
+devsh is a CLI tool for managing cloud development VMs. It provides instant access to fully configured development environments with VS Code, VNC desktop, SSH, and browser automation.
+
+## Installation
+
+```bash
+npm install -g devsh
+```
+
+## Commands
+
+### Authentication
+- `devsh login` - Login via browser
+- `devsh logout` - Logout
+- `devsh whoami` - Show current user and team
+
+### VM Management
+- `devsh start [path]` - Create new VM, optionally sync a directory
+- `devsh ls` - List all VMs (aliases: list, ps)
+- `devsh status <id>` - Show VM status and URLs
+- `devsh pause <id>` - Pause VM (preserves state)
+- `devsh resume <id>` - Resume paused VM
+- `devsh delete <id>` - Delete VM permanently
+
+### Accessing VMs
+- `devsh code <id>` - Open VS Code in browser
+- `devsh ssh <id>` - SSH into VM
+- `devsh vnc <id>` - Open VNC desktop in browser
+- `devsh pty <id>` - Interactive terminal session
+
+### Working with VMs
+- `devsh exec <id> "command"` - Execute command in VM
+- `devsh sync <id> <path>` - Sync local directory to VM
+- `devsh sync <id> <path> --pull` - Pull from VM to local
+
+### Browser Automation
+Control Chrome running in the VNC desktop:
+- `devsh computer open <id> <url>` - Navigate to URL
+- `devsh computer snapshot <id>` - Get accessibility tree with element refs (@e1, @e2)
+- `devsh computer click <id> <selector>` - Click element (use @ref or CSS selector)
+- `devsh computer type <id> "text"` - Type into focused element
+- `devsh computer fill <id> <selector> "value"` - Clear and fill input
+- `devsh computer screenshot <id> [file]` - Take screenshot
+- `devsh computer press <id> <key>` - Press key (enter, tab, escape, etc.)
+
+## Examples
+
+Create a VM and run a dev server:
+```bash
+devsh start ./my-app
+devsh exec cmux_abc123 "npm install && npm run dev"
+devsh code cmux_abc123
+```
+
+Automate browser testing:
+```bash
+devsh computer open cmux_abc123 "http://localhost:3000"
+devsh computer snapshot cmux_abc123
+devsh computer click cmux_abc123 @e1
+devsh computer screenshot cmux_abc123 test.png
+```
+
+## Links
+
+- Homepage: https://github.com/karlorz/cmux
+- Documentation: https://github.com/karlorz/cmux
+- GitHub: https://github.com/karlorz/cmux

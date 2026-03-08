@@ -25,10 +25,11 @@ import type { Id } from "@cmux/convex/dataModel";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import {
   postApiEnvironmentsMutation,
+  getApiSandboxesByIdStatusOptions,
   postApiSandboxesByIdEnvMutation,
   postApiSandboxesByIdRunScriptsMutation,
 } from "@cmux/www-openapi-client/react-query";
-import { useMutation as useRQMutation } from "@tanstack/react-query";
+import { useMutation as useRQMutation, useQuery as useRQQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   useCallback,
@@ -45,6 +46,29 @@ import {
 import { toast } from "sonner";
 import { EnvironmentInitialSetup } from "./EnvironmentInitialSetup";
 import { EnvironmentWorkspaceConfig } from "./EnvironmentWorkspaceConfig";
+
+function deriveVncWebsocketUrlFromWorkspace(workspaceUrl?: string): string | undefined {
+  if (!workspaceUrl) return undefined;
+
+  try {
+    const url = new URL(workspaceUrl);
+    const portMatch = url.hostname.match(/port-(\d+)-/);
+    if (!portMatch) {
+      return undefined;
+    }
+    const vncHost = url.hostname.replace(`port-${portMatch[1]}-`, "port-39380-");
+    const wsUrl = new URL(workspaceUrl);
+    wsUrl.hostname = vncHost;
+    wsUrl.port = "";
+    wsUrl.protocol = "wss:";
+    wsUrl.pathname = "/websockify";
+    wsUrl.search = "";
+    wsUrl.hash = "";
+    return wsUrl.toString();
+  } catch {
+    return undefined;
+  }
+}
 
 interface EnvironmentSetupFlowProps {
   teamSlugOrId: string;
@@ -99,20 +123,36 @@ export function EnvironmentSetupFlow({
   );
   const [maintenanceScript, setMaintenanceScript] = useState(initialMaintenanceScript);
   const [devScript, setDevScript] = useState(initialDevScript);
-  const [exposedPorts] = useState(initialExposedPorts);
+  const [exposedPorts, setExposedPorts] = useState(initialExposedPorts);
 
   // Error state
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const sandboxStatusQuery = useRQQuery({
+    ...getApiSandboxesByIdStatusOptions({
+      path: { id: instanceId || "placeholder" },
+    }),
+    enabled: Boolean(instanceId),
+  });
+
+  const workspaceUrlFromStatus = sandboxStatusQuery.data?.vscodeUrl;
+
   // Derived URLs
   const vscodeUrl = useMemo((): string | undefined => {
+    if (workspaceUrlFromStatus) {
+      return workspaceUrlFromStatus;
+    }
     if (!instanceId) return undefined;
     return deriveVscodeUrl(instanceId) ?? undefined;
-  }, [instanceId]);
+  }, [workspaceUrlFromStatus, instanceId]);
 
   const vncWebsocketUrl = useMemo((): string | undefined => {
+    const fromStatus = deriveVncWebsocketUrlFromWorkspace(workspaceUrlFromStatus);
+    if (fromStatus) {
+      return fromStatus;
+    }
     return deriveVncWebsocketUrl(instanceId, vscodeUrl) ?? undefined;
-  }, [instanceId, vscodeUrl]);
+  }, [instanceId, vscodeUrl, workspaceUrlFromStatus]);
 
   // Script detection from framework (only fetch if we have repos)
   const hasUserEditedScriptsRef = useRef(false);
@@ -369,7 +409,7 @@ export function EnvironmentSetupFlow({
         body: {
           teamSlugOrId,
           name: finalEnvName,
-          morphInstanceId: instanceId,
+          instanceId,
           envVarsContent,
           selectedRepos,
           maintenanceScript: requestMaintenanceScript,
@@ -446,10 +486,12 @@ export function EnvironmentSetupFlow({
   // Workspace Configuration Phase - full-width split view
   return (
     <EnvironmentWorkspaceConfig
+      teamSlugOrId={teamSlugOrId}
       selectedRepos={selectedRepos}
       maintenanceScript={maintenanceScript}
       devScript={devScript}
       envVars={envVars}
+      exposedPorts={exposedPorts}
       vscodeUrl={vscodeUrl}
       vncWebsocketUrl={vncWebsocketUrl}
       isSaving={createEnvironmentMutation.isPending}
@@ -458,6 +500,7 @@ export function EnvironmentSetupFlow({
       onMaintenanceScriptChange={handleMaintenanceScriptChange}
       onDevScriptChange={handleDevScriptChange}
       onEnvVarsChange={handleEnvVarsChange}
+      onExposedPortsChange={setExposedPorts}
       onConfigStepChange={handleConfigStepChange}
       onSave={handleSaveEnvironment}
       onBack={handleBackToInitialSetup}

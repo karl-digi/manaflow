@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 import { getConvex } from "../utils/get-convex";
 import { __TEST_INTERNAL_ONLY_GET_STACK_TOKENS } from "@/lib/test-utils/__TEST_INTERNAL_ONLY_GET_STACK_TOKENS";
 
+const TEST_TEAM = process.env.CMUX_TEST_TEAM_SLUG || "example-team";
+
 describe("githubReposRouter via SDK", () => {
   it("rejects unauthenticated requests", async () => {
     const res = await getApiIntegrationsGithubRepos({
       client: testApiClient,
-      query: { team: "manaflow" },
+      query: { team: TEST_TEAM },
     });
     expect(res.response.status).toBe(401);
   });
@@ -23,7 +25,7 @@ describe("githubReposRouter via SDK", () => {
       const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
       const res = await getApiIntegrationsGithubRepos({
         client: testApiClient,
-        query: { team: "manaflow" },
+        query: { team: TEST_TEAM },
         headers: { "x-stack-auth": JSON.stringify(tokens) },
     });
     // Accept 200 (OK), 401 (if token rejected), 500 (server error), or 501 (GitHub app not configured)
@@ -54,7 +56,7 @@ describe("githubReposRouter via SDK", () => {
     let installationId: number | undefined;
     try {
       const conns = await convex.query(api.github.listProviderConnections, {
-        teamSlugOrId: "manaflow",
+        teamSlugOrId: TEST_TEAM,
       });
       console.log("conns", conns);
       installationId = conns.find((c) => c.isActive !== false)?.installationId;
@@ -70,7 +72,7 @@ describe("githubReposRouter via SDK", () => {
 
     const res = await getApiIntegrationsGithubRepos({
       client: testApiClient,
-      query: { team: "manaflow", installationId },
+      query: { team: TEST_TEAM, installationId },
       headers: { "x-stack-auth": JSON.stringify(tokens) },
     });
     expect([200, 401, 500, 501]).toContain(res.response.status);
@@ -93,14 +95,14 @@ describe("githubReposRouter via SDK", () => {
     const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
     const first = await getApiIntegrationsGithubRepos({
       client: testApiClient,
-      query: { team: "manaflow", page: 1 },
+      query: { team: TEST_TEAM, page: 1 },
       headers: { "x-stack-auth": JSON.stringify(tokens) },
     });
     expect([200, 401, 500, 501]).toContain(first.response.status);
     if (first.response.status === 200 && first.data) {
       const second = await getApiIntegrationsGithubRepos({
         client: testApiClient,
-        query: { team: "manaflow", page: 2 },
+        query: { team: TEST_TEAM, page: 2 },
         headers: { "x-stack-auth": JSON.stringify(tokens) },
       });
       expect([200, 401, 501]).toContain(second.response.status);

@@ -412,7 +412,7 @@ export function EnvironmentConfiguration({
           try {
             el.scrollIntoView({ block: "nearest" });
           } catch (_e) {
-            void 0;
+            // scrollIntoView may not be available in all environments - safe to ignore
           }
         }, 0);
         setPendingFocusIndex(null);
@@ -522,7 +522,7 @@ export function EnvironmentConfiguration({
           path: { id: sourceEnvironmentId },
           body: {
             teamSlugOrId,
-            morphInstanceId: instanceId,
+            instanceId,
             label: envName.trim(),
             activate: true,
             maintenanceScript: requestMaintenanceScript,
@@ -562,7 +562,7 @@ export function EnvironmentConfiguration({
           body: {
             teamSlugOrId,
             name: envName.trim(),
-            morphInstanceId: instanceId,
+            instanceId,
             envVarsContent,
             selectedRepos,
             maintenanceScript: requestMaintenanceScript,

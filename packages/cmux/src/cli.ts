@@ -263,18 +263,18 @@ program
     console.log("\n\x1b[36mTo complete the uninstallation:\x1b[0m\n");
 
     console.log("If installed globally with npm:");
-    console.log("  \x1b[90mnpm uninstall -g manaflow\x1b[0m\n");
+    console.log("  \x1b[90mnpm uninstall -g cmux\x1b[0m\n");
 
     console.log("If installed globally with yarn:");
-    console.log("  \x1b[90myarn global remove manaflow\x1b[0m\n");
+    console.log("  \x1b[90myarn global remove cmux\x1b[0m\n");
 
     console.log("If installed globally with pnpm:");
-    console.log("  \x1b[90mpnpm uninstall -g manaflow\x1b[0m\n");
+    console.log("  \x1b[90mpnpm uninstall -g cmux\x1b[0m\n");
 
     console.log("If installed globally with bun:");
-    console.log("  \x1b[90mbun uninstall -g manaflow\x1b[0m\n");
+    console.log("  \x1b[90mbun uninstall -g cmux\x1b[0m\n");
 
-    console.log("\x1b[32m✓\x1b[0m manaflow data has been removed!");
+    console.log("\x1b[32m✓\x1b[0m cmux data has been removed!");
     process.exit(0);
   });
 

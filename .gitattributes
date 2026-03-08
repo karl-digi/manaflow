@@ -1,3 +1,23 @@
 
-# Use bd merge for beads JSONL files
-.beads/issues.jsonl merge=beads
+# Always accept upstream (theirs) version for .beads/ files (auto-generated issue tracker)
+# Requires: git config merge.theirs.driver "cp %B %A"
+.beads/** merge=theirs
+.beads/issues.jsonl merge=theirs
+.beads/interactions.jsonl merge=theirs
+
+# Always keep OUR version of morph-snapshots.json (fork-specific snapshots)
+packages/shared/src/morph-snapshots.json merge=ours
+configs/ide-deps.json merge=ours
+packages/www-openapi-client/src/client/types.gen.ts merge=ours
+
+# devsh fork customizations (keep ours on upstream merge)
+packages/devsh/go.mod merge=ours
+packages/devsh/npm/devsh/package.json merge=ours
+packages/devsh/npm/devsh/llms.txt merge=ours
+packages/devsh/npm/devsh/lib/postinstall.js merge=ours
+packages/devsh/npm/devsh/AGENTS.md merge=ours
+packages/devsh/npm/darwin-arm64/package.json merge=ours
+packages/devsh/npm/darwin-x64/package.json merge=ours
+packages/devsh/npm/linux-arm64/package.json merge=ours
+packages/devsh/npm/linux-x64/package.json merge=ours
+packages/devsh/npm/win32-x64/package.json merge=ours

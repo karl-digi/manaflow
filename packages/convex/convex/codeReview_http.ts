@@ -4,20 +4,10 @@ import {
   type CodeReviewCallbackPayload,
   type CodeReviewFileCallbackPayload,
 } from "@cmux/shared/codeReview/callback-schemas";
+import { jsonResponse } from "../_shared/http-utils";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: JSON_HEADERS,
-  });
-}
 
 function getBearerToken(req: Request): string | null {
   const header = req.headers.get("authorization");

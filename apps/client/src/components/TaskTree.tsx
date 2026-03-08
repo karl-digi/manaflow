@@ -8,17 +8,19 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import {
   useResumeMorphWorkspace,
-  useRefreshMorphGitHubAuth,
+  useRefreshGitHubAuth,
 } from "@/hooks/useMorphWorkspace";
+import { useResumePveLxcWorkspace } from "@/hooks/usePveLxcWorkspace";
+import { usePublishForwardedPorts } from "@/hooks/usePublishForwardedPorts";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import {
   getTaskRunPersistKey,
-  getTaskRunBrowserPersistKey,
 } from "@/lib/persistent-webview-keys";
 import { persistentIframeManager } from "@/lib/persistentIframeManager";
+import { emitBrowserReload } from "@/lib/browser-reload-events";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -42,6 +44,7 @@ import {
   AlertTriangle,
   Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
+  Brain,
   CheckCircle,
   Circle,
   ChevronRight,
@@ -97,7 +100,7 @@ type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
  * Feature flag to show/hide preview URLs in the sidebar.
  * Set to true to re-enable preview URLs and "Add preview URL" button.
  */
-const SHOW_PREVIEW_URLS = false;
+const SHOW_PREVIEW_URLS = true;
 
 function getStatusIcon(status: TaskRunStatus): ReactElement {
   switch (status) {
@@ -1553,24 +1556,47 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
-  const resumeWorkspace = useResumeMorphWorkspace({
+  const resumeMorphWorkspace = useResumeMorphWorkspace({
     taskRunId: run._id,
     teamSlugOrId,
   });
 
-  const handleResumeWorkspace = useCallback(() => {
-    if (resumeWorkspace.isPending) {
+  const resumePveLxcWorkspace = useResumePveLxcWorkspace({
+    taskRunId: run._id,
+    teamSlugOrId,
+  });
+
+  const handleResumeMorphWorkspace = useCallback(() => {
+    if (resumeMorphWorkspace.isPending) {
       return;
     }
 
-    void resumeWorkspace.mutateAsync({
+    void resumeMorphWorkspace.mutateAsync({
       path: { taskRunId: run._id },
       body: { teamSlugOrId },
     });
-  }, [resumeWorkspace, run._id, teamSlugOrId]);
+  }, [resumeMorphWorkspace, run._id, teamSlugOrId]);
 
-  const refreshGitHubAuth = useRefreshMorphGitHubAuth({
+  const handleResumePveLxcWorkspace = useCallback(() => {
+    if (resumePveLxcWorkspace.isPending) {
+      return;
+    }
+
+    void resumePveLxcWorkspace.mutateAsync({
+      path: { taskRunId: run._id },
+      body: { teamSlugOrId },
+    });
+  }, [resumePveLxcWorkspace, run._id, teamSlugOrId]);
+
+  const refreshGitHubAuth = useRefreshGitHubAuth({
     taskRunId: run._id,
+    sandboxId: run.vscode?.containerName,
+    provider: run.vscode?.provider,
+    teamSlugOrId,
+  });
+  const refreshForwardedPorts = usePublishForwardedPorts({
+    taskRunId: run._id,
+    sandboxId: run.vscode?.containerName,
     teamSlugOrId,
   });
 
@@ -1579,11 +1605,30 @@ function TaskRunTreeInner({
       return;
     }
 
-    void refreshGitHubAuth.mutateAsync({
-      path: { taskRunId: run._id },
-      body: { teamSlugOrId },
-    });
-  }, [refreshGitHubAuth, run._id, teamSlugOrId]);
+    void refreshGitHubAuth.mutateAsync();
+  }, [refreshGitHubAuth]);
+  const handleRefreshForwardedPorts = useCallback(() => {
+    if (refreshForwardedPorts.isPending) {
+      return;
+    }
+
+    void refreshForwardedPorts.mutateAsync();
+  }, [refreshForwardedPorts]);
+
+  const supportsGitHubAuthRefresh = ["morph", "pve-lxc"].includes(
+    run.vscode?.provider ?? ""
+  );
+  const supportsForwardedPortRefresh = ["morph", "pve-lxc"].includes(
+    run.vscode?.provider ?? ""
+  );
+  const canRefreshGitHubAuth =
+    supportsGitHubAuthRefresh &&
+    (run.vscode?.provider !== "pve-lxc" ||
+      Boolean(run.vscode?.containerName));
+  const canRefreshForwardedPorts =
+    !isLocalWorkspaceRunEntry &&
+    supportsForwardedPortRefresh &&
+    Boolean(run.vscode?.containerName);
 
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
@@ -1668,14 +1713,24 @@ function TaskRunTreeInner({
               {run.vscode?.provider === "morph" ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                  onClick={handleResumeWorkspace}
-                  disabled={resumeWorkspace.isPending}
+                  onClick={handleResumeMorphWorkspace}
+                  disabled={resumeMorphWorkspace.isPending}
                 >
                   <Play className="w-3.5 h-3.5" />
-                  {resumeWorkspace.isPending ? "Resuming…" : "Resume VM"}
+                  {resumeMorphWorkspace.isPending ? "Resuming…" : "Resume VM"}
                 </ContextMenu.Item>
               ) : null}
-              {run.vscode?.provider === "morph" ? (
+              {run.vscode?.provider === "pve-lxc" ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleResumePveLxcWorkspace}
+                  disabled={resumePveLxcWorkspace.isPending}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  {resumePveLxcWorkspace.isPending ? "Resuming…" : "Resume Container"}
+                </ContextMenu.Item>
+              ) : null}
+              {canRefreshGitHubAuth ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                   onClick={handleRefreshGitHubAuth}
@@ -1685,6 +1740,18 @@ function TaskRunTreeInner({
                   {refreshGitHubAuth.isPending
                     ? "Refreshing…"
                     : "Refresh GitHub auth"}
+                </ContextMenu.Item>
+              ) : null}
+              {canRefreshForwardedPorts ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleRefreshForwardedPorts}
+                  disabled={refreshForwardedPorts.isPending}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  {refreshForwardedPorts.isPending
+                    ? "Refreshing ports..."
+                    : "Refresh forwarded ports"}
                 </ContextMenu.Item>
               ) : null}
               {hasOpenWithActions ? (
@@ -2086,7 +2153,7 @@ function TaskRunDetails({
   }, [run._id]);
 
   const handleReloadBrowser = useCallback(() => {
-    persistentIframeManager.reloadIframe(getTaskRunBrowserPersistKey(run._id));
+    emitBrowserReload(run._id);
   }, [run._id]);
 
   const handleReloadTerminals = useCallback(() => {
@@ -2253,6 +2320,16 @@ function TaskRunDetails({
           params={{ teamSlugOrId, taskId, runId: run._id }}
           icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Pull Request"
+          indentLevel={indentLevel}
+        />
+      ) : null}
+
+      {!isLocalWorkspace ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/memory"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<Brain className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Memory"
           indentLevel={indentLevel}
         />
       ) : null}

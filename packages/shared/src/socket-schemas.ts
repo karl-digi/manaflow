@@ -1,6 +1,7 @@
 import type { Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
 import { typedZid } from "./utils/typed-zid";
+import { RUNTIME_PROVIDERS } from "./provider-types";
 import type {
   AggregatePullRequestSummary,
   PullRequestActionResult,
@@ -273,17 +274,26 @@ export const FileInfoSchema = z.object({
   repoFullName: z.string().optional(),
 });
 
-export const ListFilesResponseSchema = z.object({
-  files: z.array(FileInfoSchema),
-  error: z.string().optional(),
-});
+export const ListFilesResponseSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    files: z.array(FileInfoSchema),
+  }),
+  z.object({
+    ok: z.literal(false),
+    files: z.array(FileInfoSchema),
+    error: z.string().optional(),
+  }),
+]);
 
 // VSCode instance events (used for notifications)
 export const VSCodeSpawnedSchema = z.object({
   instanceId: z.string(),
   url: z.string(),
   workspaceUrl: z.string(),
-  provider: z.enum(["docker", "morph", "daytona"]),
+  vncUrl: z.string().optional(),
+  xtermUrl: z.string().optional(),
+  provider: z.enum(RUNTIME_PROVIDERS),
 });
 
 
@@ -552,7 +562,14 @@ export interface ClientToServerEvents {
     data: OpenInEditor,
     callback: (response: OpenInEditorResponse) => void
   ) => void;
-  "list-files": (data: ListFilesRequest) => void;
+  "list-files": (
+    data: ListFilesRequest,
+    callback: (
+      response:
+        | { ok: true; files: FileInfo[] }
+        | { ok: false; files: FileInfo[]; error: string }
+    ) => void
+  ) => void;
   // GitHub operations
   "github-test-auth": (
     callback: (response: GitHubAuthResponse) => void
@@ -625,6 +642,10 @@ export interface ClientToServerEvents {
     data: ArchiveTask,
     callback: (response: { success: boolean; error?: string }) => void
   ) => void;
+  "unarchive-task": (
+    data: ArchiveTask,
+    callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
   "spawn-from-comment": (
     data: SpawnFromComment,
     callback: (response: {
@@ -642,6 +663,47 @@ export interface ClientToServerEvents {
     data: TriggerLocalCloudSync,
     callback: (response: TriggerLocalCloudSyncResponse) => void
   ) => void;
+  // Scan filesystem for existing worktrees and register them
+  "scan-worktrees": (
+    data: { teamSlugOrId: string },
+    callback: (response: {
+      success: boolean;
+      found: number;
+      registered: number;
+      error?: string;
+    }) => void
+  ) => void;
+  // Delete a worktree from filesystem and registry
+  "delete-worktree": (
+    data: { teamSlugOrId: string; worktreePath: string },
+    callback: (response: {
+      success: boolean;
+      error?: string;
+    }) => void
+  ) => void;
+  // Validate worktree paths and clean up stale entries
+  "validate-worktrees": (
+    data: { teamSlugOrId: string; worktreePaths: string[] },
+    callback: (response: {
+      success: boolean;
+      validPaths: string[];
+      invalidPaths: string[];
+      error?: string;
+    }) => void
+  ) => void;
+  // Clean up a task's worktreePath if it doesn't exist
+  "cleanup-stale-workspace": (
+    data: { teamSlugOrId: string; taskId: string },
+    callback: (response: {
+      success: boolean;
+      error?: string;
+    }) => void
+  ) => void;
+}
+
+export interface LocalRepoNotFound {
+  repoFullName: string;
+  message: string;
 }
 
 export interface ServerToClientEvents {
@@ -649,13 +711,13 @@ export interface ServerToClientEvents {
   "git-file-changed": (data: GitFileChanged) => void;
   "git-full-diff-response": (data: GitFullDiffResponse) => void;
   "open-in-editor-error": (data: OpenInEditorError) => void;
-  "list-files-response": (data: ListFilesResponse) => void;
   "vscode-spawned": (data: VSCodeSpawned) => void;
   "default-repo": (data: DefaultRepo) => void;
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
   "docker-pull-progress": (data: DockerPullProgress) => void;
+  "local-repo-not-found": (data: LocalRepoNotFound) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

@@ -1,0 +1,46 @@
+{
+  "name": "devsh",
+  "version": "0.1.3",
+  "description": "Cloud VMs for development - spawn isolated dev environments instantly",
+  "keywords": [
+    "cli",
+    "devbox",
+    "cloud",
+    "vm",
+    "development",
+    "sandbox",
+    "remote",
+    "vscode"
+  ],
+  "homepage": "https://github.com/karlorz/cmux",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karlorz/cmux.git",
+    "directory": "packages/devsh"
+  },
+  "license": "MIT",
+  "author": "karlorz",
+  "bin": {
+    "devsh": "bin/devsh"
+  },
+  "files": [
+    "bin",
+    "lib",
+    ".agents",
+    "AGENTS.md",
+    "llms.txt"
+  ],
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "optionalDependencies": {
+    "devsh-darwin-arm64": "0.1.3",
+    "devsh-darwin-x64": "0.1.3",
+    "devsh-linux-arm64": "0.1.3",
+    "devsh-linux-x64": "0.1.3",
+    "devsh-win32-x64": "0.1.3"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

@@ -1,12 +1,13 @@
 import { Dropdown } from "@/components/ui/dropdown";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { isElectron } from "@/lib/electron";
+import type { RuntimeProvider } from "@cmux/shared/provider-types";
 import clsx from "clsx";
 import { EllipsisVertical, ExternalLink, GitBranch, Globe } from "lucide-react";
 
 interface OpenWithDropdownProps {
   vscodeUrl?: string | null;
-  vscodeProvider?: "docker" | "morph" | "daytona" | "other";
+  vscodeProvider?: RuntimeProvider;
   worktreePath?: string | null;
   branch?: string | null;
   networking?: Parameters<typeof useOpenWithActions>[0]["networking"];

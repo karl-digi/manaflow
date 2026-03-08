@@ -33,7 +33,8 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: manaflow/cmux
+  IMAGE_NAME: karl8080/cmux
+  IDE_DEPS_CHANNEL: ${{ vars.IDE_DEPS_CHANNEL || 'stable' }}
 
 jobs:
   docker-build:
@@ -96,6 +97,8 @@ jobs:
           file: Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IDE_DEPS_CHANNEL=${{ env.IDE_DEPS_CHANNEL }}
           cache-from: type=gha,scope=worker-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=worker-${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true

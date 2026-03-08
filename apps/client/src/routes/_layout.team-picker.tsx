@@ -7,12 +7,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { stackClientApp } from "@/lib/stack";
 import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
 import { postApiTeams } from "@cmux/www-openapi-client";
 import { Skeleton } from "@heroui/react";
-import { useStackApp, useUser, type Team } from "@stackframe/react";
+import { useUser, type Team } from "@stackframe/react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { useQuery as useConvexQuery, useMutation } from "convex/react";
@@ -24,11 +23,31 @@ export const Route = createFileRoute("/_layout/team-picker")({
 });
 
 function TeamPicker() {
-  const app = useStackApp();
   const user = useUser({ or: "return-null" });
+
+  // Show loading state while user is being resolved
+  if (!user) {
+    return (
+      <div className="min-h-dvh w-full bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center p-6">
+        <div className="text-neutral-600 dark:text-neutral-400">Loading...</div>
+      </div>
+    );
+  }
+
+  // Render the inner component only when user exists
+  // This ensures useTeams() is always called with a valid user
+  return <TeamPickerInner user={user} />;
+}
+
+// Inner component that requires a valid user
+// Use a simpler type - the user prop will have useTeams() available
+interface TeamPickerInnerProps {
+  user: NonNullable<ReturnType<typeof useUser>>;
+}
+
+function TeamPickerInner({ user }: TeamPickerInnerProps) {
   const navigate = useNavigate();
-  // Call the Stack teams hook at the top level (no memo to satisfy hook rules)
-  const teams: Team[] = user?.useTeams() ?? [];
+  const teams: Team[] = user.useTeams();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Convex helpers to immediately reflect team creation/membership locally
@@ -45,26 +64,11 @@ function TeamPicker() {
   };
 
   const openCreateTeamDialog = useCallback(() => {
-    if (!user) {
-      void stackClientApp.redirectToAccountSettings?.().catch(() => {
-        const url = app.urls.accountSettings;
-        void navigate({ to: url });
-      });
-      return;
-    }
     setCreateDialogOpen(true);
-  }, [app.urls.accountSettings, navigate, user]);
+  }, []);
 
   const handleCreateTeamSubmit = useCallback(
     async (values: CreateTeamFormValues) => {
-      if (!user) {
-        await stackClientApp.redirectToAccountSettings?.().catch(() => {
-          const url = app.urls.accountSettings;
-          void navigate({ to: url });
-        });
-        throw new Error("You must be signed in to create a team.");
-      }
-
       try {
         const { data } = await postApiTeams({
           body: {
@@ -117,7 +121,7 @@ function TeamPicker() {
         throw new Error(message);
       }
     },
-    [ensureMembershipPublic, navigate, upsertTeamPublic, user, app.urls.accountSettings]
+    [ensureMembershipPublic, navigate, upsertTeamPublic, user]
   );
 
   return (

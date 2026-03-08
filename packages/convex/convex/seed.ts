@@ -15,9 +15,17 @@ function requireEnv(name: keyof typeof env): string {
   return String(value);
 }
 
+interface SeedSummary {
+  usersProcessed: number;
+  teamsProcessed: number;
+  membershipsProcessed: number;
+  modelsSeeded: number;
+  modelsDeleted: number;
+}
+
 export const init = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<SeedSummary> => {
     const projectId = requireEnv("NEXT_PUBLIC_STACK_PROJECT_ID");
     const publishableClientKey = requireEnv(
       "NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"
@@ -119,7 +127,21 @@ export const init = internalAction({
 
     summary.teamsProcessed += await teamSyncPromise;
 
-    return summary;
+    // Seed curated models (ensure models table is populated)
+    console.log("[seed] Seeding curated models...");
+    const modelSeedResult = await ctx.runAction(
+      internal.modelDiscovery.seedCuratedModels,
+      {}
+    );
+    console.log(
+      `[seed] Seeded ${modelSeedResult.seededCount} models, deleted ${modelSeedResult.deletedCount} stale`
+    );
+
+    return {
+      ...summary,
+      modelsSeeded: modelSeedResult.seededCount,
+      modelsDeleted: modelSeedResult.deletedCount,
+    };
   },
 });
 

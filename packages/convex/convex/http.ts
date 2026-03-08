@@ -7,6 +7,7 @@ import {
   crownWorkerComplete,
 } from "./crown_http";
 import { agentStopped } from "./notifications_http";
+import { syncMemory } from "./agentMemory_http";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./screenshots_http";
 import {
   codeReviewFileCallback,
@@ -46,9 +47,17 @@ import {
   getSnapshot as cmuxGetSnapshot,
   getConfig as cmuxGetConfig,
   getMe as cmuxGetMe,
+  listMyTeams as cmuxListMyTeams,
+  switchTeam as cmuxSwitchTeam,
   instanceActionRouter as cmuxInstanceActionRouter,
   instanceGetRouter as cmuxInstanceGetRouter,
   instanceDeleteRouter as cmuxInstanceDeleteRouter,
+  createStorageUploadUrl as cmuxCreateStorageUploadUrl,
+  listTasks as cmuxListTasks,
+  createTask as cmuxCreateTask,
+  taskGetRouter as cmuxTaskGetRouter,
+  taskActionRouter as cmuxTaskActionRouter,
+  taskRunGetRouter as cmuxTaskRunGetRouter,
 } from "./cmux_http";
 import {
   createInstance as devboxV2CreateInstance,
@@ -59,6 +68,20 @@ import {
   instanceActionRouter as devboxV2InstanceActionRouter,
   instanceGetRouter as devboxV2InstanceGetRouter,
 } from "./devbox_v2_http";
+import {
+  createTaskAndRun as orchestrationCreateTaskAndRun,
+  createOrchestrationTask,
+  updateOrchestrationTask,
+  getSpawnConfig as orchestrationGetSpawnConfig,
+  pullOrchestrationState,
+  getOrchestrationResults,
+} from "./orchestration_http";
+import {
+  autopilotHeartbeat,
+  autopilotThreadId,
+  autopilotStatus,
+  autopilotInfo,
+} from "./autopilot_http";
 
 const http = httpRouter();
 
@@ -108,6 +131,12 @@ http.route({
   path: "/api/notifications/agent-stopped",
   method: "POST",
   handler: agentStopped,
+});
+
+http.route({
+  path: "/api/memory/sync",
+  method: "POST",
+  handler: syncMemory,
 });
 
 http.route({
@@ -284,6 +313,18 @@ http.route({
   handler: cmuxGetMe,
 });
 
+http.route({
+  path: "/api/v1/cmux/me/teams",
+  method: "GET",
+  handler: cmuxListMyTeams,
+});
+
+http.route({
+  path: "/api/v1/cmux/me/team",
+  method: "POST",
+  handler: cmuxSwitchTeam,
+});
+
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
@@ -301,6 +342,45 @@ http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "DELETE",
   handler: cmuxInstanceDeleteRouter,
+});
+
+http.route({
+  path: "/api/v1/cmux/storage/upload-url",
+  method: "POST",
+  handler: cmuxCreateStorageUploadUrl,
+});
+
+// Task management routes
+http.route({
+  path: "/api/v1/cmux/tasks",
+  method: "GET",
+  handler: cmuxListTasks,
+});
+
+http.route({
+  path: "/api/v1/cmux/tasks",
+  method: "POST",
+  handler: cmuxCreateTask,
+});
+
+// Task-specific routes use pathPrefix to capture the task ID
+http.route({
+  pathPrefix: "/api/v1/cmux/tasks/",
+  method: "GET",
+  handler: cmuxTaskGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v1/cmux/tasks/",
+  method: "POST",
+  handler: cmuxTaskActionRouter,
+});
+
+// Task run GET endpoints (memory, children, parent, children/status)
+http.route({
+  pathPrefix: "/api/v1/cmux/task-runs/",
+  method: "GET",
+  handler: cmuxTaskRunGetRouter,
 });
 
 // =============================================================================
@@ -348,6 +428,74 @@ http.route({
   pathPrefix: "/api/v2/devbox/instances/",
   method: "POST",
   handler: devboxV2InstanceActionRouter,
+});
+
+// =============================================================================
+// Orchestration API - JWT-authenticated endpoints for sub-agent spawning
+// =============================================================================
+
+http.route({
+  path: "/api/orchestration/task-and-run",
+  method: "POST",
+  handler: orchestrationCreateTaskAndRun,
+});
+
+http.route({
+  path: "/api/orchestration/tasks",
+  method: "POST",
+  handler: createOrchestrationTask,
+});
+
+http.route({
+  path: "/api/orchestration/tasks/update",
+  method: "POST",
+  handler: updateOrchestrationTask,
+});
+
+http.route({
+  path: "/api/orchestration/spawn-config",
+  method: "GET",
+  handler: orchestrationGetSpawnConfig,
+});
+
+http.route({
+  path: "/api/orchestration/pull",
+  method: "GET",
+  handler: pullOrchestrationState,
+});
+
+http.route({
+  path: "/api/orchestration/results",
+  method: "GET",
+  handler: getOrchestrationResults,
+});
+
+// =============================================================================
+// Autopilot API - JWT-authenticated endpoints for long-running sessions
+// =============================================================================
+
+http.route({
+  path: "/api/autopilot/heartbeat",
+  method: "POST",
+  handler: autopilotHeartbeat,
+});
+
+http.route({
+  path: "/api/autopilot/thread-id",
+  method: "POST",
+  handler: autopilotThreadId,
+});
+
+http.route({
+  path: "/api/autopilot/status",
+  method: "POST",
+  handler: autopilotStatus,
+});
+
+http.route({
+  path: "/api/autopilot/info",
+  method: "GET",
+  handler: autopilotInfo,
 });
 
 export default http;

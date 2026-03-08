@@ -1,0 +1,636 @@
+# Workflow Development Kit
+
+The Workflow Development Kit is a durable functions framework for JavaScript/TypeScript that enables writing long-running, stateful application logic on top of stateless compute. It provides durability, reliability, and observability for async JavaScript applications, allowing workflows to suspend, resume, and maintain state across failures and cold starts.
+
+The framework uses an event-sourcing approach where workflow progress is persisted as an event log and deterministically replayed to reconstruct state after interruptions. Workflows consist of orchestrator functions that run in a sandboxed VM and step functions that execute with full Node.js runtime access. The SDK integrates seamlessly with Next.js, Nuxt, Nitro, SvelteKit, and Astro, provides AI agent capabilities through integration with AI SDK, and includes CLI tools for standalone deployment. Storage backends support local filesystem development, PostgreSQL for self-hosted deployments, and Vercel's managed infrastructure for production.
+
+## APIs and Functions
+
+### Workflow Function Definition
+
+Workflow functions are orchestrators that coordinate step execution in a sandboxed environment. They must include the `"use workflow"` directive and can only use serializable data types.
+
+```typescript
+import { FatalError } from 'workflow';
+
+async function add(a: number, b: number): Promise<number> {
+  'use step';
+
+  // Mimic a retryable error - non-fatal errors are automatically retried
+  if (Math.random() < 0.5) {
+    throw new Error('Retryable error');
+  }
+
+  // Fatal errors bubble up to the workflow
+  if (Math.random() < 0.05) {
+    throw new FatalError("Unrecoverable error");
+  }
+
+  return a + b;
+}
+
+export async function simple(i: number) {
+  'use workflow';
+  console.log('Simple workflow started');
+
+  const a = await add(i, 7);
+  console.log('Workflow step 1 completed - Result:', a);
+
+  const b = await add(a, 8);
+  console.log('Simple workflow completed. Result:', b);
+
+  return b;
+}
+```
+
+### Starting Workflows with `start()`
+
+Start a workflow execution and get a Run handle to track its progress and retrieve results.
+
+```typescript
+import { start } from 'workflow/api';
+import * as workflows from './workflows/simple';
+
+// Start workflow with arguments
+const run = await start(workflows.simple, [42]);
+console.log('Run ID:', run.runId);
+
+// Wait for completion and get result
+try {
+  const result = await run.returnValue;
+  console.log('Workflow result:', result);
+} catch (error) {
+  if (error instanceof WorkflowRunFailedError) {
+    console.error('Workflow failed:', error.message);
+  } else if (error instanceof WorkflowRunNotCompletedError) {
+    console.log('Workflow still running:', error.status);
+  }
+}
+```
+
+### Getting Workflow Runs with `getRun()`
+
+Retrieve an existing workflow run by ID to check its status or get results.
+
+```typescript
+import { getRun } from 'workflow/api';
+
+// Next.js API route example
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const runId = url.searchParams.get('runId');
+
+  if (!runId) {
+    return new Response('No runId provided', { status: 400 });
+  }
+
+  try {
+    const run = getRun(runId);
+    const returnValue = await run.returnValue;
+
+    return returnValue instanceof ReadableStream
+      ? new Response(returnValue, {
+          headers: { 'Content-Type': 'application/octet-stream' }
+        })
+      : Response.json(returnValue);
+  } catch (error) {
+    if (error instanceof WorkflowRunNotCompletedError) {
+      return Response.json(
+        { name: error.name, message: error.message },
+        { status: 202 }
+      );
+    }
+    if (error instanceof WorkflowRunFailedError) {
+      return Response.json(
+        { name: error.name, message: error.message },
+        { status: 400 }
+      );
+    }
+    throw error;
+  }
+}
+```
+
+### Sleeping with `sleep()`
+
+Pause workflow execution for a specified duration or until a specific time using durable timers.
+
+```typescript
+import { sleep } from 'workflow';
+
+export async function scheduledWorkflow() {
+  'use workflow';
+
+  console.log('Starting workflow');
+
+  // Sleep for 10 seconds using string format
+  await sleep('10s');
+
+  // Sleep for 5 minutes
+  await sleep('5m');
+
+  // Sleep for 1 hour
+  await sleep('1h');
+
+  // Sleep using milliseconds
+  await sleep(30000); // 30 seconds
+
+  // Sleep until a specific date
+  const targetDate = new Date('2025-12-31T00:00:00Z');
+  await sleep(targetDate);
+
+  console.log('Workflow resumed after sleep');
+  return { status: 'completed' };
+}
+```
+
+### Control Flow with Promise.all() and Promise.race()
+
+Workflows support standard JavaScript async patterns for parallel execution and racing.
+
+```typescript
+import { RetryableError, getStepMetadata } from 'workflow';
+
+async function delayedMessage(ms: number, message: string): Promise<string> {
+  'use step';
+  console.log(`Sleeping for ${ms}ms and returning ${message}`);
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  return `${message} (sent: ${new Date().toISOString()})`;
+}
+
+async function retryableStep(): Promise<string> {
+  'use step';
+  const { attempt } = getStepMetadata();
+
+  if (attempt === 1) {
+    // Retry after 5 seconds
+    throw new RetryableError('Retryable error', { retryAfter: '5s' });
+  }
+
+  return 'Success';
+}
+
+export async function control_flow() {
+  'use workflow';
+
+  // Run steps in parallel and use first to complete
+  const raceResult = await Promise.race([
+    delayedMessage(2000, 'I won the race!'),
+    delayedMessage(10000, 'I lost the race'),
+  ]);
+  console.log('Race result:', raceResult);
+
+  // Run steps in parallel and wait for all
+  const allResults = await Promise.all([
+    delayedMessage(1000, 'First task'),
+    delayedMessage(2000, 'Second task'),
+  ]);
+  console.log('All results:', allResults);
+
+  // Handle retryable errors with custom retry timing
+  await retryableStep();
+
+  return { raceResult, allResults };
+}
+```
+
+### Hooks with `createHook()`
+
+Create hooks to suspend workflows until external systems send data, enabling human-in-the-loop workflows and callback-based integrations.
+
+```typescript
+import { createHook } from 'workflow';
+import OpenAI from 'openai';
+
+async function initiateOpenAIResponse() {
+  'use step';
+  const openai = new OpenAI();
+  const resp = await openai.responses.create({
+    model: 'o3',
+    input: 'Write a very long novel about otters in space.',
+    background: true,
+  });
+  return resp.id;
+}
+
+async function getOpenAIResponse(respId: string): Promise<string> {
+  'use step';
+  const openai = new OpenAI();
+  const resp = await openai.responses.retrieve(respId);
+  return resp.output_text;
+}
+
+export async function withCreateHook() {
+  'use workflow';
+
+  // Initiate background operation
+  const respId = await initiateOpenAIResponse();
+
+  // Register hook with custom token for this specific response
+  const hook = createHook<{ type: string; data: { id: string } }>({
+    token: `openai:${respId}`,
+  });
+  console.log('Registered hook:', hook.token);
+
+  // Workflow suspends here until hook is invoked
+  const payload = await hook;
+  console.log('Received hook payload:', payload);
+
+  if (payload.type === 'response.completed') {
+    const text = await getOpenAIResponse(payload.data.id);
+    console.log('OpenAI response text:', text);
+    return text;
+  }
+}
+```
+
+### Type-Safe Hooks with `defineHook()`
+
+Define typed hooks for type-safe hook creation and resumption with optional validation and transformation.
+
+```typescript
+import { defineHook } from 'workflow';
+import { z } from 'zod';
+
+// Define a hook with schema validation
+const approvalHook = defineHook<
+  { approved: boolean; comment: string },
+  { approved: boolean; comment: string; timestamp: number }
+>({
+  schema: z.object({
+    approved: z.boolean(),
+    comment: z.string(),
+  }).transform(data => ({
+    ...data,
+    timestamp: Date.now(),
+  })),
+});
+
+// In a workflow
+export async function workflowWithApproval() {
+  'use workflow';
+
+  console.log('Requesting approval...');
+  const hook = approvalHook.create({ token: 'user-approval-123' });
+
+  // Fully typed as { approved: boolean; comment: string; timestamp: number }
+  const result = await hook;
+
+  if (result.approved) {
+    console.log('Approved with comment:', result.comment);
+    return { status: 'approved', timestamp: result.timestamp };
+  } else {
+    console.log('Rejected with comment:', result.comment);
+    return { status: 'rejected', timestamp: result.timestamp };
+  }
+}
+
+// In an API route
+export async function POST(request: Request) {
+  const { token, approved, comment } = await request.json();
+
+  // Input is validated and transformed by the schema
+  await approvalHook.resume(token, { approved, comment });
+
+  return Response.json({ success: true });
+}
+```
+
+### Webhooks with `createWebhook()`
+
+Create webhooks that suspend workflows until HTTP requests arrive, with optional manual response handling.
+
+```typescript
+import { createWebhook } from 'workflow';
+
+export async function webhookWorkflow() {
+  'use workflow';
+
+  // Auto-respond with 202 Accepted
+  const autoWebhook = createWebhook({
+    token: 'payment-notification',
+  });
+  console.log('Webhook URL:', autoWebhook.url);
+
+  const request = await autoWebhook;
+  const body = await request.json();
+  console.log('Received webhook payload:', body);
+
+  // Manual response control
+  const manualWebhook = createWebhook({
+    token: 'custom-response',
+    respondWith: 'manual',
+  });
+
+  const req = await manualWebhook;
+  const data = await req.json();
+
+  // Send custom response back to caller
+  await req.respondWith(
+    new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+  );
+
+  return { processed: true };
+}
+```
+
+### Streaming with `getWritable()` and `getReadable()`
+
+Create streams to send real-time data from workflows to external consumers, useful for progress updates and live results.
+
+```typescript
+import { getWritable } from 'workflow';
+
+async function genStream(): Promise<ReadableStream<Uint8Array>> {
+  'use step';
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      for (let i = 0; i < 30; i++) {
+        const chunk = encoder.encode(`${i}\n`);
+        controller.enqueue(chunk);
+        console.log(`Enqueued number: ${i}`);
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+      controller.close();
+    },
+  });
+  return stream;
+}
+
+export async function streams() {
+  'use workflow';
+
+  // Get writable stream for this workflow
+  const writable = getWritable<string>({ namespace: 'progress' });
+
+  // Write progress updates from workflow
+  const writer = writable.getWriter();
+  await writer.write('Starting processing...');
+
+  const [s1, s2] = await Promise.all([genStream(), genStream()]);
+  await writer.write('Streams generated');
+
+  await writer.close();
+
+  return { message: 'Streams processed successfully' };
+}
+
+// External consumer
+import { getRun } from 'workflow/api';
+
+const run = getRun(runId);
+const stream = run.getReadable({ namespace: 'progress' });
+
+for await (const chunk of stream) {
+  console.log('Progress update:', chunk);
+}
+```
+
+### AI Agent Integration
+
+Build durable AI agents with automatic fetch hoisting and step-based tool execution that survives timeouts.
+
+```typescript
+import { generateText, stepCountIs } from 'ai';
+import { FatalError } from 'workflow';
+import z from 'zod';
+
+async function getWeatherInformation({ city }: { city: string }) {
+  'use step';
+
+  console.log('Getting the weather for city:', city);
+
+  // Retryable errors are automatically handled
+  if (Math.random() < 0.5) {
+    throw new Error('Retryable error');
+  }
+
+  // Fatal errors allow the agent to handle them
+  if (Math.random() < 0.1) {
+    throw new FatalError(
+      `Try asking for the weather for Muscat instead`
+    );
+  }
+
+  const weatherOptions = ['sunny', 'cloudy', 'rainy', 'snowy', 'windy'];
+  return weatherOptions[Math.floor(Math.random() * weatherOptions.length)];
+}
+
+export async function agent(prompt: string) {
+  'use workflow';
+
+  console.log('Agent workflow started');
+
+  // AI SDK generateText works natively - fetches are hoisted to steps
+  const { text } = await generateText({
+    model: 'anthropic/claude-4-opus-20250514',
+    prompt,
+    tools: {
+      getWeatherInformation: {
+        description: 'show the weather in a given city to the user',
+        inputSchema: z.object({ city: z.string() }),
+        execute: getWeatherInformation, // Step function as tool
+      },
+    },
+    // No timeout restrictions on agent loops
+    stopWhen: stepCountIs(10),
+  });
+
+  console.log(`Agent workflow completed. Result: ${text}`);
+  return text;
+}
+```
+
+### Next.js Integration with `withWorkflow()`
+
+Configure Next.js applications to automatically discover and compile workflow files with proper bundling.
+
+```typescript
+// next.config.ts
+import type { NextConfig } from 'next';
+import { withWorkflow } from 'workflow/next';
+
+const nextConfig: NextConfig = {
+  serverExternalPackages: ['@node-rs/xxhash'],
+};
+
+export default withWorkflow(nextConfig);
+```
+
+```typescript
+// app/api/trigger/route.ts
+import { start, getRun } from 'workflow/api';
+import * as workflows from '@/workflows/simple';
+
+export async function POST(req: Request) {
+  const url = new URL(req.url);
+  const args = url.searchParams.get('args')?.split(',').map(Number) || [42];
+
+  try {
+    const run = await start(workflows.simple, args);
+    console.log('Run:', run);
+    return Response.json(run);
+  } catch (err) {
+    console.error('Failed to start workflow:', err);
+    throw err;
+  }
+}
+```
+
+### Nuxt Integration
+
+Configure Nuxt applications to automatically discover and compile workflow files with proper bundling.
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  modules: ['workflow/nuxt'],
+  workflow: {
+    // Optional configuration
+  },
+});
+```
+
+### Nitro Integration
+
+Configure Nitro applications with workflow support for serverless deployments.
+
+```typescript
+// nitro.config.ts
+import { defineNitroConfig } from 'nitro/config';
+import { workflowNitro } from 'workflow/nitro';
+
+export default defineNitroConfig({
+  plugins: [workflowNitro()],
+});
+```
+
+### SvelteKit Integration
+
+Configure SvelteKit applications to automatically discover and compile workflow files.
+
+```typescript
+// vite.config.ts
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+import { workflowSvelteKit } from 'workflow/sveltekit';
+
+export default defineConfig({
+  plugins: [workflowSvelteKit(), sveltekit()],
+});
+```
+
+### Astro Integration
+
+Configure Astro applications to automatically discover and compile workflow files with proper bundling.
+
+```typescript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import { workflow } from 'workflow/astro';
+import node from '@astrojs/node';
+
+export default defineConfig({
+  output: 'server',
+  integrations: [workflow()],
+  adapter: node({ mode: 'standalone' }),
+});
+```
+
+### Metadata Access with `getWorkflowMetadata()` and `getStepMetadata()`
+
+Access contextual information about the current workflow run and step execution, including retry attempts.
+
+```typescript
+import { getStepMetadata, getWorkflowMetadata } from 'workflow';
+
+async function stepWithMetadata() {
+  'use step';
+  const ctx = getStepMetadata();
+  console.log('Step context:', {
+    workflowRunId: ctx.workflowRunId,
+    attempt: ctx.attempt, // Increments on retries
+    workflowStartedAt: ctx.workflowStartedAt,
+  });
+
+  // Use attempt count for retry logic
+  if (ctx.attempt < 3) {
+    throw new Error('Retryable error');
+  }
+}
+
+export async function withWorkflowMetadata() {
+  'use workflow';
+  const ctx = getWorkflowMetadata();
+  console.log('Workflow context:', {
+    workflowRunId: ctx.workflowRunId,
+    workflowStartedAt: ctx.workflowStartedAt,
+    url: ctx.url, // Base URL for this deployment
+  });
+
+  await stepWithMetadata();
+}
+```
+
+### Error Handling with `FatalError` and `RetryableError`
+
+Control step retry behavior with specialized error types for fatal failures and configurable retries.
+
+```typescript
+import { FatalError, RetryableError } from 'workflow';
+
+async function smartRetryStep() {
+  'use step';
+
+  const success = await externalApiCall();
+
+  if (!success) {
+    // Retry with exponential backoff
+    throw new RetryableError('API call failed', {
+      retryAfter: '30s', // Can use: number (seconds), Date, or string ('5m', '1h')
+    });
+  }
+
+  return result;
+}
+
+async function validationStep(data: any) {
+  'use step';
+
+  if (!isValid(data)) {
+    // Don't retry - data is fundamentally invalid
+    throw new FatalError('Invalid data format - cannot proceed');
+  }
+
+  return processData(data);
+}
+
+export async function errorHandlingWorkflow(input: any) {
+  'use workflow';
+
+  try {
+    await validationStep(input);
+  } catch (error) {
+    // Only FatalErrors bubble up here
+    // RetryableErrors and regular errors are handled by the runtime
+    if (error instanceof FatalError) {
+      console.error('Fatal validation error:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // This will retry automatically up to the configured limit
+  const result = await smartRetryStep();
+
+  return { success: true, result };
+}
+```
+
+## Use Cases and Integration
+
+The Workflow Development Kit is designed for building reliable, long-running operations that need to survive failures, timeouts, and cold starts. Common use cases include AI agent orchestration with tool calling that can take hours or days to complete, human-in-the-loop workflows where approvals or external inputs pause execution, data pipeline processing with retryable external API calls, webhook-driven integrations that wait for callbacks from third-party services, and scheduled background jobs that need guaranteed completion.
+
+Integration patterns center around multiple approaches: Next.js, Nuxt, Nitro, SvelteKit, and Astro applications using framework-specific configuration helpers that automatically discover workflow files in the `workflows/` directory and generate API routes, or standalone applications using the CLI for building and deploying workflows to serverless platforms. The framework provides local development with embedded storage via `@workflow/world-local`, PostgreSQL storage for self-hosted multi-host deployments with `@workflow/world-postgres`, and seamless production deployment to Vercel with durable storage via `@workflow/world-vercel`. Workflows are invoked through the `start()` API and tracked via `Run` handles, while external systems interact through hooks, webhooks, and readable streams for real-time updates.

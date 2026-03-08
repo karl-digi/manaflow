@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/manaflow-ai/cloudrouter/internal/auth"
+	"github.com/karlorz/cloudrouter/internal/auth"
 )
 
 type Client struct {
@@ -107,6 +108,18 @@ type CreateInstanceResponse struct {
 	VNCURL     string `json:"vncUrl,omitempty"`
 }
 
+func normalizeWorkerURL(provider, workerURL string) string {
+	if workerURL == "" {
+		return ""
+	}
+	// PVE-LXC SSH/PTy/WebSocket APIs are served by the Go worker on 39377.
+	// Some responses currently return 39376 (node worker), which breaks SSH.
+	if strings.Contains(workerURL, "//port-39376-pvelxc-") && (provider == "" || provider == "pve-lxc") {
+		return strings.Replace(workerURL, "//port-39376-pvelxc-", "//port-39377-pvelxc-", 1)
+	}
+	return workerURL
+}
+
 func (c *Client) CreateInstance(req CreateInstanceRequest) (*CreateInstanceResponse, error) {
 	respBody, err := c.doRequest("POST", "/api/v2/devbox/instances", req)
 	if err != nil {
@@ -117,6 +130,7 @@ func (c *Client) CreateInstance(req CreateInstanceRequest) (*CreateInstanceRespo
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w (body: %s)", err, string(respBody))
 	}
+	resp.WorkerURL = normalizeWorkerURL(resp.Provider, resp.WorkerURL)
 
 	return &resp, nil
 }
@@ -153,6 +167,7 @@ func (c *Client) GetInstance(teamSlug, id string) (*Instance, error) {
 	if err := json.Unmarshal(respBody, &inst); err != nil {
 		return nil, err
 	}
+	inst.WorkerURL = normalizeWorkerURL(inst.Provider, inst.WorkerURL)
 	return &inst, nil
 }
 
@@ -285,9 +300,9 @@ func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
 
 // ConfigResponse from GET /api/v2/devbox/config
 type ConfigResponse struct {
-	Providers       []string       `json:"providers"`
-	DefaultProvider string         `json:"defaultProvider"`
-	Modal           *ModalConfig   `json:"modal,omitempty"`
+	Providers       []string     `json:"providers"`
+	DefaultProvider string       `json:"defaultProvider"`
+	Modal           *ModalConfig `json:"modal,omitempty"`
 }
 
 type ModalConfig struct {

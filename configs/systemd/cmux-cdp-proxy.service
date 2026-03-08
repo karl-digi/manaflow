@@ -1,7 +1,7 @@
 [Unit]
 Description=Cmux Chrome DevTools proxy
 After=cmux-devtools.service
-Requires=cmux-devtools.service
+Wants=cmux-devtools.service
 
 [Service]
 Type=simple

@@ -1,4 +1,17 @@
-export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff";
+import type { LucideIcon } from "lucide-react";
+import { MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Brain, FileText } from "lucide-react";
+
+export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff" | "memory" | "summary";
+
+/**
+ * All available panel types. When adding a new panel:
+ * 1. Add to PanelType union above
+ * 2. Add to this array
+ * 3. Add to PANEL_LABELS
+ * 4. Add to PANEL_ICON_COMPONENTS
+ * 5. Handle in TaskPanelFactory.tsx switch statement
+ */
+export const ALL_PANEL_TYPES: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff", "memory", "summary"];
 
 export type LayoutMode =
   | "single-panel"    // Single full-width panel
@@ -51,14 +64,33 @@ export const PANEL_LABELS: Record<PanelType, string> = {
   terminal: "Terminal",
   browser: "Browser",
   gitDiff: "Git Diff",
+  memory: "Memory",
+  summary: "Summary",
 };
 
+/** @deprecated Use PANEL_ICON_COMPONENTS instead */
 export const PANEL_ICONS: Record<PanelType, string> = {
   chat: "MessageSquare",
   workspace: "Code2",
   terminal: "TerminalSquare",
   browser: "Globe2",
   gitDiff: "GitCompare",
+  memory: "Brain",
+  summary: "FileText",
+};
+
+/**
+ * Single source of truth for panel icons.
+ * Use this instead of duplicating icon mappings in components.
+ */
+export const PANEL_ICON_COMPONENTS: Record<PanelType, LucideIcon> = {
+  chat: MessageSquare,
+  workspace: Code2,
+  terminal: TerminalSquare,
+  browser: Globe2,
+  gitDiff: GitCompare,
+  memory: Brain,
+  summary: FileText,
 };
 
 export const LAYOUT_LABELS: Record<LayoutMode, string> = {
@@ -159,7 +191,6 @@ export function getCurrentLayoutPanels(config: PanelConfig): LayoutPanels {
 }
 
 export function getAvailablePanels(config: PanelConfig): PanelType[] {
-  const allPanels: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff"];
   const currentLayout = getCurrentLayoutPanels(config);
 
   // Check all positions (including inactive) to prevent duplicates within current layout
@@ -170,7 +201,7 @@ export function getAvailablePanels(config: PanelConfig): PanelType[] {
     currentLayout.bottomRight,
   ].filter((p): p is PanelType => p !== null));
 
-  return allPanels.filter(panel => !usedPanels.has(panel));
+  return ALL_PANEL_TYPES.filter(panel => !usedPanels.has(panel));
 }
 
 /**
@@ -193,6 +224,44 @@ export function removePanelFromAllPositions(config: PanelConfig, panelType: Pane
 }
 
 export type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
+
+/**
+ * Ensures the terminal panel is visible in the current layout.
+ * If terminal is already visible, returns unchanged config.
+ * If there's an empty slot, adds terminal there.
+ * If all slots are full, switches to 4-panel layout to make room for terminal.
+ */
+export function ensureTerminalPanelVisible(config: PanelConfig): PanelConfig {
+  const currentLayout = getCurrentLayoutPanels(config);
+  const activePositions = getActivePanelPositions(config.layoutMode);
+
+  // Check if terminal is already in an active position
+  for (const pos of activePositions) {
+    if (currentLayout[pos] === "terminal") {
+      return config; // Already visible, no change
+    }
+  }
+
+  // Find first empty active position to add terminal
+  for (const pos of activePositions) {
+    if (currentLayout[pos] === null) {
+      return {
+        ...config,
+        layouts: {
+          ...config.layouts,
+          [config.layoutMode]: {
+            ...currentLayout,
+            [pos]: "terminal",
+          },
+        },
+      };
+    }
+  }
+
+  // All active positions filled - don't change layout, return unchanged
+  // User can manually add terminal panel if needed
+  return config;
+}
 
 /**
  * Returns which panel positions are visible for the given layout mode
