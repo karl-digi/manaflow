@@ -63,92 +63,6 @@ export const CODEX_CATALOG_GENERATED: CodexModelEntry[] = [
     ]
   },
   {
-    "name": "codex/gpt-5.4",
-    "displayName": "GPT-5.4",
-    "description": "Strong model for everyday coding.",
-    "vendor": "openai",
-    "requiredApiKeys": [
-      "OPENAI_API_KEY",
-      "CODEX_AUTH_JSON"
-    ],
-    "tier": "paid",
-    "tags": [
-      "reasoning"
-    ],
-    "hidden": false,
-    "isDefault": false,
-    "defaultVariant": "medium",
-    "variants": [
-      {
-        "id": "low",
-        "displayName": "Low",
-        "description": "Fast responses with lighter reasoning"
-      },
-      {
-        "id": "medium",
-        "displayName": "Medium",
-        "description": "Balances speed and reasoning depth for everyday tasks"
-      },
-      {
-        "id": "high",
-        "displayName": "High",
-        "description": "Greater reasoning depth for complex problems"
-      },
-      {
-        "id": "xhigh",
-        "displayName": "Extra High",
-        "description": "Extra high reasoning depth for complex problems"
-      }
-    ],
-    "inputModalities": [
-      "text",
-      "image"
-    ]
-  },
-  {
-    "name": "codex/gpt-5.4-mini",
-    "displayName": "GPT-5.4-Mini",
-    "description": "Small, fast, and cost-efficient model for simpler coding tasks.",
-    "vendor": "openai",
-    "requiredApiKeys": [
-      "OPENAI_API_KEY",
-      "CODEX_AUTH_JSON"
-    ],
-    "tier": "paid",
-    "tags": [
-      "reasoning"
-    ],
-    "hidden": false,
-    "isDefault": false,
-    "defaultVariant": "medium",
-    "variants": [
-      {
-        "id": "low",
-        "displayName": "Low",
-        "description": "Fast responses with lighter reasoning"
-      },
-      {
-        "id": "medium",
-        "displayName": "Medium",
-        "description": "Balances speed and reasoning depth for everyday tasks"
-      },
-      {
-        "id": "high",
-        "displayName": "High",
-        "description": "Greater reasoning depth for complex problems"
-      },
-      {
-        "id": "xhigh",
-        "displayName": "Extra High",
-        "description": "Extra high reasoning depth for complex problems"
-      }
-    ],
-    "inputModalities": [
-      "text",
-      "image"
-    ]
-  },
-  {
     "name": "codex/gpt-5.5",
     "displayName": "GPT-5.5",
     "description": "Frontier model for complex coding, research, and real-world work.",
@@ -385,6 +299,98 @@ export const CODEX_CATALOG_GENERATED: CodexModelEntry[] = [
         "description": "Extra high reasoning depth for complex problems"
       }
     ],
+    "inputModalities": [
+      "text",
+      "image"
+    ]
+  },
+  {
+    "name": "codex/gpt-5.4",
+    "displayName": "GPT-5.4",
+    "description": "Strong model for everyday coding.",
+    "vendor": "openai",
+    "requiredApiKeys": [
+      "OPENAI_API_KEY",
+      "CODEX_AUTH_JSON"
+    ],
+    "tier": "paid",
+    "tags": [
+      "hidden",
+      "upgradeable",
+      "reasoning"
+    ],
+    "hidden": true,
+    "isDefault": false,
+    "defaultVariant": "medium",
+    "variants": [
+      {
+        "id": "low",
+        "displayName": "Low",
+        "description": "Fast responses with lighter reasoning"
+      },
+      {
+        "id": "medium",
+        "displayName": "Medium",
+        "description": "Balances speed and reasoning depth for everyday tasks"
+      },
+      {
+        "id": "high",
+        "displayName": "High",
+        "description": "Greater reasoning depth for complex problems"
+      },
+      {
+        "id": "xhigh",
+        "displayName": "Extra High",
+        "description": "Extra high reasoning depth for complex problems"
+      }
+    ],
+    "upgrade": "gpt-5.6-terra",
+    "inputModalities": [
+      "text",
+      "image"
+    ]
+  },
+  {
+    "name": "codex/gpt-5.4-mini",
+    "displayName": "GPT-5.4-Mini",
+    "description": "Small, fast, and cost-efficient model for simpler coding tasks.",
+    "vendor": "openai",
+    "requiredApiKeys": [
+      "OPENAI_API_KEY",
+      "CODEX_AUTH_JSON"
+    ],
+    "tier": "paid",
+    "tags": [
+      "hidden",
+      "upgradeable",
+      "reasoning"
+    ],
+    "hidden": true,
+    "isDefault": false,
+    "defaultVariant": "medium",
+    "variants": [
+      {
+        "id": "low",
+        "displayName": "Low",
+        "description": "Fast responses with lighter reasoning"
+      },
+      {
+        "id": "medium",
+        "displayName": "Medium",
+        "description": "Balances speed and reasoning depth for everyday tasks"
+      },
+      {
+        "id": "high",
+        "displayName": "High",
+        "description": "Greater reasoning depth for complex problems"
+      },
+      {
+        "id": "xhigh",
+        "displayName": "Extra High",
+        "description": "Extra high reasoning depth for complex problems"
+      }
+    ],
+    "upgrade": "gpt-5.6-luna",
     "inputModalities": [
       "text",
       "image"
