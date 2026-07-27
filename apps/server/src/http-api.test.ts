@@ -417,13 +417,15 @@ describe("HTTP API - apps/server", () => {
         expect(response.status).toBe(200);
         const data = await response.json();
 
-        const gpt54 = data.models.find(
-          (model: { name: string }) => model.name === "codex/gpt-5.4",
+        // gpt-5.4 became hidden/upgradeable after the 2026-07-25 app-server sync;
+        // gpt-5.5 is a visible flagship with the same variant shape.
+        const gpt55 = data.models.find(
+          (model: { name: string }) => model.name === "codex/gpt-5.5",
         );
-        expect(gpt54).toBeDefined();
-        expect(gpt54.defaultVariant).toBe("medium");
+        expect(gpt55).toBeDefined();
+        expect(gpt55.defaultVariant).toBe("medium");
         expect(
-          gpt54.variants.some(
+          gpt55.variants.some(
             (variant: { id: string }) => variant.id === "xhigh",
           ),
         ).toBe(true);

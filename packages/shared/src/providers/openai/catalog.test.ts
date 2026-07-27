@@ -36,15 +36,17 @@ describe("CODEX_CATALOG", () => {
     }
   });
 
-  it("includes GPT-5.4 as a model", () => {
-    // Note: app-server catalog uses base name with variants, not suffixes
-    const gpt54 = CODEX_CATALOG.find((e) => e.name === "codex/gpt-5.4");
-    expect(gpt54).toBeDefined();
+  it("includes GPT-5.5 as a visible flagship model", () => {
+    // Note: app-server catalog uses base name with variants, not suffixes.
+    // gpt-5.4/gpt-5.4-mini are hidden/upgradeable after the 2026-07-25 sync;
+    // gpt-5.5 remains a visible flagship.
+    const gpt55 = CODEX_CATALOG.find((e) => e.name === "codex/gpt-5.5");
+    expect(gpt55).toBeDefined();
     // Verify it has xhigh variant
-    expect(gpt54?.variants?.some((v) => v.id === "xhigh")).toBe(true);
+    expect(gpt55?.variants?.some((v) => v.id === "xhigh")).toBe(true);
   });
 
-  it("includes GPT-5.5 as the default model", () => {
+  it("includes GPT-5.5 as the default-tier visible model", () => {
     const gpt55 = CODEX_CATALOG.find((e) => e.name === "codex/gpt-5.5");
     expect(gpt55).toBeDefined();
     expect(gpt55?.displayName).toBe("GPT-5.5");

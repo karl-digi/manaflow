@@ -9,9 +9,11 @@ import { AGENT_CONFIGS, type AgentConfig } from "./agentConfig";
  *    its own authentication flow. User API keys (ANTHROPIC_API_KEY, etc.) are for
  *    direct provider access with custom base URLs, not for OpenCode's routing.
  *
- * 2. Non-flagship Codex models (codex/*): Only flagship models are in static catalog
- *    (gpt-5.4, gpt-5.4-xhigh, gpt-5.4-mini, gpt-5.1-codex-mini). Older/variant models
- *    are auto-discovered via OpenAI API discovery cron.
+ * 2. Non-flagship Codex models (codex/*): Only visible flagships are in the static
+ *    catalog (gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.2).
+ *    gpt-5.4/gpt-5.4-mini became hidden/upgradeable after the 2026-07-25 app-server
+ *    sync and are now runtime-discovered (configs-only). Older/variant models are
+ *    auto-discovered via OpenAI API discovery cron.
  *
  * These models are discovered at runtime via Convex modelDiscovery.
  */
@@ -25,8 +27,6 @@ const CODEX_CATALOG_BASE_MODELS = new Set([
   "codex/gpt-5.6-terra",
   "codex/gpt-5.6-luna",
   "codex/gpt-5.5",
-  "codex/gpt-5.4",
-  "codex/gpt-5.4-mini",
   "codex/gpt-5.2",
 ]);
 
