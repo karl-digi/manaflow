@@ -19,15 +19,32 @@ type StartTemplate struct {
 	// MirrorLocal can be bool true or a map with options.
 	MirrorLocal any `yaml:"mirror_local"`
 	NoAuth      *bool `yaml:"no_auth"`
+	// TargetHome is the cloud home for --mirror-local path rewrite/extract
+	// (default /root; /home/orca for Orca Server).
+	TargetHome string `yaml:"target_home"`
+	// OrcaServe composes Orca Server post-start behavior (B1, workspace gh,
+	// optional migrate-from-root). Enable implies target_home /home/orca and
+	// mirror_local unless explicitly overridden.
+	OrcaServe *OrcaServeTemplate `yaml:"orca_serve"`
+}
+
+// OrcaServeTemplate is the orca_serve: block of a start template.
+type OrcaServeTemplate struct {
+	Enable          bool `yaml:"enable"`
+	WorkspaceGH     bool `yaml:"workspace_gh"`
+	MigrateFromRoot bool `yaml:"migrate_from_root"`
 }
 
 // StartTemplateFlags is the resolved flag state after template + CLI merge.
 type StartTemplateFlags struct {
-	Provider    string
-	Snapshot    string
-	Clean       bool
-	MirrorLocal bool
-	NoAuth      bool
+	Provider                 string
+	Snapshot                 string
+	Clean                    bool
+	MirrorLocal              bool
+	NoAuth                   bool
+	TargetHome               string
+	OrcaServe                bool
+	MigrateAgentHomeFromRoot bool
 }
 
 // LoadStartTemplate loads a template by name (under ~/.cmux/templates/) or absolute path.
@@ -107,8 +124,29 @@ func ExpandStartTemplate(tmpl *StartTemplate, cli StartTemplateFlags, cliSet map
 	if !cliSet["no-auth"] && tmpl.NoAuth != nil {
 		out.NoAuth = *tmpl.NoAuth
 	}
+	if !cliSet["target-home"] && tmpl.TargetHome != "" {
+		out.TargetHome = tmpl.TargetHome
+	}
+	if !cliSet["orca-serve"] && tmpl.OrcaServe != nil && tmpl.OrcaServe.Enable {
+		out.OrcaServe = true
+	}
+	// orca_serve.enable implies /home/orca unless target-home was set explicitly.
+	if out.OrcaServe && !cliSet["target-home"] && out.TargetHome == "" {
+		out.TargetHome = "/home/orca"
+	}
+	// migrate_from_root only applies when orca_serve is enabled; explicit CLI wins.
+	if !cliSet["migrate-agent-home-from-root"] && out.OrcaServe && tmpl.OrcaServe != nil {
+		out.MigrateAgentHomeFromRoot = tmpl.OrcaServe.MigrateFromRoot
+	}
 	if !cliSet["mirror-local"] {
-		out.MirrorLocal = templateMirrorLocalEnabled(tmpl.MirrorLocal)
+		if tmpl.MirrorLocal != nil {
+			out.MirrorLocal = templateMirrorLocalEnabled(tmpl.MirrorLocal)
+		} else if out.OrcaServe {
+			// orca_serve.enable implies mirror-local unless explicitly false.
+			out.MirrorLocal = true
+		} else {
+			out.MirrorLocal = false
+		}
 	}
 	return out
 }

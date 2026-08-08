@@ -453,6 +453,31 @@ Waiting for VM to be ready...
   VNC:      https://vnc-morphvm-xxx.http.cloud.morph.so
 ```
 
+### Orca Server start
+
+Start a pve-lxc box composed for Orca Server: agent config is mirrored to
+`/home/orca` (not `/root`), and post-start steps wire the B1 bridge, workspace
+`gh` (G1/G2), and the agent matrix.
+
+```bash
+devsh start --provider pve-lxc --clean --orca-serve --mirror-local --target-home /home/orca
+```
+
+Or use the example template (install once):
+
+```bash
+mkdir -p ~/.cmux/templates
+cp packages/devsh/examples/templates/orca-serve.yaml ~/.cmux/templates/
+devsh start --provider pve-lxc --template orca-serve
+```
+
+Attach an existing long-lived LXC (migrate allowlist root → `/home/orca`,
+workspace gh, B1 symlinks):
+
+```bash
+devsh exec <id> 'bash -s' < scripts/pve/setup-orca-agent-home.sh
+```
+
 ### `devsh pause <id>`
 
 Pause a VM by its ID. The VM state is preserved and can be resumed later.

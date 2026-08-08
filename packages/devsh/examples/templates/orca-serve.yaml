@@ -1,0 +1,13 @@
+# ~/.cmux/templates/orca-serve.yaml
+# Orca Server start template: pve-lxc box with agent home under /home/orca.
+# Install: cp packages/devsh/examples/templates/orca-serve.yaml ~/.cmux/templates/
+# Usage:   devsh start --provider pve-lxc --template orca-serve
+name: orca-serve
+provider: pve-lxc
+clean: true
+mirror_local: true
+target_home: /home/orca
+orca_serve:
+  enable: true
+  workspace_gh: true
+  migrate_from_root: false
