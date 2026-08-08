@@ -521,9 +521,9 @@ def install_global_packages(instance):
         "@anthropic-ai/claude-code",
         "@google/gemini-cli",
         "opencode-ai",
-        "codebuff",
         "@devcontainers/cli",
         "@sourcegraph/amp",
+        "@xai-official/grok",
     ]
 
     run_ssh_command(

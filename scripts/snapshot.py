@@ -1626,6 +1626,27 @@ async def task_install_cursor(ctx: TaskContext) -> None:
 
 
 @registry.task(
+    name="install-agy",
+    deps=("apt-bootstrap",),
+    description="Install Google Antigravity CLI (agy) via official installer",
+)
+async def task_install_agy(ctx: TaskContext) -> None:
+    # agy has no official npm package (the `agy` npm name is an unrelated
+    # placeholder), so use Google's official installer like install-cursor-cli.
+    # Installs the ~170 MB binary to /root/.local/bin/agy; idempotent.
+    cmd = textwrap.dedent(
+        """
+        set -euo pipefail
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        /root/.local/bin/agy --version
+        """
+    )
+    # ~170 MB download through the HTTP exec stream; give it 40 min (no retry
+    # on timeout, only on transport failures, so a low cap would fail slow links)
+    await ctx.run("install-agy", cmd, timeout=60 * 40)
+
+
+@registry.task(
     name="install-global-cli",
     deps=("install-bun", "install-node-runtime"),
     description="Install global agent CLIs with bun",
