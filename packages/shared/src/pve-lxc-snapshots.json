@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-07-27T03:05:07Z",
+  "updatedAt": "2026-08-08T18:24:13.495Z",
   "presets": [
     {
       "presetId": "4vcpu_8gb_32gb",
@@ -10,57 +10,6 @@
       "disk": "32 GB SSD",
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage.",
       "versions": [
-        {
-          "version": 101,
-          "snapshotId": "snapshot_8ff6caa9",
-          "templateVmid": 9091,
-          "capturedAt": "2026-04-11T22:52:23Z"
-        },
-        {
-          "version": 102,
-          "snapshotId": "snapshot_8ae8a907",
-          "templateVmid": 9110,
-          "capturedAt": "2026-04-13T16:02:40Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 103,
-          "snapshotId": "snapshot_6c2c5b81",
-          "templateVmid": 9128,
-          "capturedAt": "2026-04-14T04:02:53Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 104,
-          "snapshotId": "snapshot_f78d6afd",
-          "templateVmid": 9146,
-          "capturedAt": "2026-04-14T11:41:45Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 105,
-          "snapshotId": "snapshot_7ad6dd83",
-          "templateVmid": 9155,
-          "capturedAt": "2026-04-14T16:09:49Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 106,
-          "snapshotId": "snapshot_196b5051",
-          "templateVmid": 9071,
-          "capturedAt": "2026-05-03T22:42:39Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
         {
           "version": 107,
           "snapshotId": "snapshot_d2a97ee6",
@@ -99,57 +48,6 @@
       "description": "Extra headroom for larger codebases or heavier workloads.",
       "versions": [
         {
-          "version": 85,
-          "snapshotId": "snapshot_e680e0e5",
-          "templateVmid": 9094,
-          "capturedAt": "2026-04-11T22:52:54Z"
-        },
-        {
-          "version": 86,
-          "snapshotId": "snapshot_a1af1fd7",
-          "templateVmid": 9111,
-          "capturedAt": "2026-04-13T16:03:10Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 87,
-          "snapshotId": "snapshot_15333828",
-          "templateVmid": 9129,
-          "capturedAt": "2026-04-14T04:03:27Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 88,
-          "snapshotId": "snapshot_f1b18489",
-          "templateVmid": 9147,
-          "capturedAt": "2026-04-14T11:42:15Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 89,
-          "snapshotId": "snapshot_f686b30d",
-          "templateVmid": 9156,
-          "capturedAt": "2026-04-14T16:10:21Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
-          "version": 90,
-          "snapshotId": "snapshot_3829ef95",
-          "templateVmid": 9072,
-          "capturedAt": "2026-05-03T22:43:09Z",
-          "novncVersion": "v1.7.0-beta",
-          "novncSource": "github:noVNC/v1.7.0-beta",
-          "novncPackageState": "purged"
-        },
-        {
           "version": 91,
           "snapshotId": "snapshot_b523186a",
           "templateVmid": 9202,
@@ -178,7 +76,5 @@
         }
       ]
     }
-  ],
-  "baseTemplateVmid": 9000,
-  "node": "karl-ws"
+  ]
 }
