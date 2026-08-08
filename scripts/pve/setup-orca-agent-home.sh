@@ -39,10 +39,12 @@ ln -sfn /root/wiki "$ORCA_HOME/wiki"
 chown -h "$ORCA:$ORCA" "$ORCA_HOME/root-home" "$ORCA_HOME/workspace" "$ORCA_HOME/wiki"
 # shellcheck disable=SC2016 # $HOME expands inside the container's bash -lc, not here
 orca_run 'mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/node_modules"; if command -v npm >/dev/null 2>&1; then npm config set prefix "$HOME/.local"; fi'
-# Link bun-installed agent CLIs (claude, gemini, opencode, etc.) into orca PATH
-# bun installs to /root/.bun/bin/ which is not on orca's PATH by default
+# Link bun-installed agent CLIs (claude, gemini, opencode, grok, etc.) into orca PATH
+# bun installs to /root/.bun/bin/ which is not on orca's PATH by default; also
+# link root-local installer binaries (agy, cursor-agent) from /root/.local/bin
 echo "[B1] Linking bun-installed CLIs to /home/orca/.local/bin..."
-for cli in /root/.bun/bin/*; do
+for cli in /root/.bun/bin/* /root/.local/bin/*; do
+    [ -e "$cli" ] || continue
     name=$(basename "$cli")
     [ "$name" = "bun" ] && continue
     [ "$name" = "bunx" ] && continue
@@ -100,7 +102,7 @@ chown "$ORCA:$ORCA" "$ORCA_HOME/.local/bin/gh"
 echo "== setup-orca-agent-home: agent matrix =="
 # 4) Detection matrix (same as devsh BuildAgentMatrixCommand).
 echo "-- binaries on orca PATH --"
-for b in claude codex grok gh; do
+for b in claude codex grok agy gh; do
   if p=$(orca_run "command -v $b" 2>/dev/null); then
     echo "ok   $b: $p"
   else

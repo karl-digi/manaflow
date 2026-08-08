@@ -3731,6 +3731,32 @@ async def task_install_cursor(ctx: PveTaskContext) -> None:
 
 
 @registry.task(
+    name="install-agy",
+    deps=("apt-bootstrap",),
+    description="Install Google Antigravity CLI (agy) via official installer",
+)
+@update_registry.task(
+    name="install-agy",
+    deps=("restart-execd-early",),  # avoid execd restart cutting the big download mid-stream
+    description="Install Google Antigravity CLI (agy) via official installer",
+)
+async def task_install_agy(ctx: PveTaskContext) -> None:
+    # agy has no official npm package (the `agy` npm name is an unrelated
+    # placeholder), so use Google's official installer like install-cursor-cli.
+    # Installs the ~170 MB binary to /root/.local/bin/agy; idempotent.
+    cmd = textwrap.dedent(
+        """
+        set -euo pipefail
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        /root/.local/bin/agy --version
+        """
+    )
+    # ~170 MB download through the HTTP exec stream; give it 40 min (no retry
+    # on timeout, only on transport failures, so a low cap would fail slow links)
+    await ctx.run("install-agy", cmd, timeout=60 * 40)
+
+
+@registry.task(
     name="install-global-cli",
     deps=("install-bun", "install-node-runtime"),
     description="Install global agent CLIs with bun",
@@ -3805,9 +3831,10 @@ async def task_install_global_cli(ctx: PveTaskContext) -> None:
         which opencode && opencode --version || echo "opencode not found"
         which gemini && gemini --version || echo "gemini not found"
         which bwrap && bwrap --version || echo "bwrap not found"
-        # amp and codebuff may not have --version, just check existence
+        # amp may not have --version, just check existence
         which amp || echo "amp not found"
-        which codebuff || echo "codebuff not found"
+        # grok-build CLI (grok); agy is verified by its own install-agy task
+        which grok && grok --version || echo "grok not found"
         which devcontainer && devcontainer --version || echo "devcontainer not found"
         echo "CLI verification complete"
         """

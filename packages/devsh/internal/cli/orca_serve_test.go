@@ -107,6 +107,14 @@ func TestBuildOrcaB1EnsureCommands(t *testing.T) {
 	if !strings.Contains(joined, "/root/.bun/bin") {
 		t.Fatal("B1 must link bun-installed CLIs from /root/.bun/bin into orca PATH")
 	}
+	// B1 must also link root-local installer binaries (agy, cursor-agent) from
+	// /root/.local/bin, with a glob guard so an empty dir does not break the loop.
+	if !strings.Contains(joined, "/root/.local/bin/*") {
+		t.Fatal("B1 must link root-local binaries from /root/.local/bin into orca PATH")
+	}
+	if !strings.Contains(joined, `[ -e "$cli" ] || continue`) {
+		t.Fatal(`B1 link loop must guard unmatched globs with [ -e "$cli" ] || continue`)
+	}
 	// git safe.directory for root-owned trees.
 	if !strings.Contains(joined, "safe.directory") {
 		t.Fatalf("expected git safe.directory: %s", joined)
@@ -148,7 +156,7 @@ func TestBuildAgentMatrixCommand(t *testing.T) {
 		t.Fatalf("expected shebang script: %s", cmd)
 	}
 	// Matrix must report binaries, mirrored config, and gh status.
-	for _, want := range []string{"claude", "codex", ".claude", ".codex", "gh"} {
+	for _, want := range []string{"claude", "codex", "grok", "agy", ".claude", ".codex", "gh"} {
 		if !strings.Contains(cmd, want) {
 			t.Fatalf("matrix missing %q: %s", want, cmd)
 		}

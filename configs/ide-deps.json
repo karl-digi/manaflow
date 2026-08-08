@@ -31,9 +31,9 @@
     "@anthropic-ai/claude-code": "2.1.89",
     "@google/gemini-cli": "0.52.0",
     "opencode-ai": "1.18.6",
-    "codebuff": "1.0.684",
     "@devcontainers/cli": "0.88.0",
     "@sourcegraph/amp": "0.0.1785111528-g7dd942",
+    "@xai-official/grok": "1.0.0",
     "devsh": "0.1.23"
   }
 }
