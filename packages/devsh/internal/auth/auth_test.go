@@ -2,8 +2,15 @@
 package auth
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -286,7 +293,7 @@ func TestConfigValidateMissingProjectID(t *testing.T) {
 	if err == nil {
 		t.Error("expected validation error for missing ProjectID")
 	}
-	if err != nil && !contains(err.Error(), "STACK_PROJECT_ID") {
+	if err != nil && !strings.Contains(err.Error(), "STACK_PROJECT_ID") {
 		t.Errorf("expected error to mention STACK_PROJECT_ID, got: %v", err)
 	}
 }
@@ -302,7 +309,7 @@ func TestConfigValidateMissingPublishableKey(t *testing.T) {
 	if err == nil {
 		t.Error("expected validation error for missing PublishableKey")
 	}
-	if err != nil && !contains(err.Error(), "STACK_PUBLISHABLE_CLIENT_KEY") {
+	if err != nil && !strings.Contains(err.Error(), "STACK_PUBLISHABLE_CLIENT_KEY") {
 		t.Errorf("expected error to mention STACK_PUBLISHABLE_CLIENT_KEY, got: %v", err)
 	}
 }
@@ -318,7 +325,7 @@ func TestConfigValidateMissingCmuxURL(t *testing.T) {
 	if err == nil {
 		t.Error("expected validation error for missing CmuxURL")
 	}
-	if err != nil && !contains(err.Error(), "CMUX_API_URL") {
+	if err != nil && !strings.Contains(err.Error(), "CMUX_API_URL") {
 		t.Errorf("expected error to mention CMUX_API_URL, got: %v", err)
 	}
 }
@@ -334,7 +341,7 @@ func TestConfigValidateMissingConvexSiteURL(t *testing.T) {
 	if err == nil {
 		t.Error("expected validation error for missing ConvexSiteURL")
 	}
-	if err != nil && !contains(err.Error(), "CONVEX_SITE_URL") {
+	if err != nil && !strings.Contains(err.Error(), "CONVEX_SITE_URL") {
 		t.Errorf("expected error to mention CONVEX_SITE_URL, got: %v", err)
 	}
 }
@@ -363,20 +370,334 @@ func TestConfigValidateMultipleMissing(t *testing.T) {
 	}
 	// Should mention multiple missing fields
 	errStr := err.Error()
-	if !contains(errStr, "STACK_PROJECT_ID") {
+	if !strings.Contains(errStr, "STACK_PROJECT_ID") {
 		t.Error("expected error to mention STACK_PROJECT_ID")
 	}
-	if !contains(errStr, "STACK_PUBLISHABLE_CLIENT_KEY") {
+	if !strings.Contains(errStr, "STACK_PUBLISHABLE_CLIENT_KEY") {
 		t.Error("expected error to mention STACK_PUBLISHABLE_CLIENT_KEY")
 	}
 }
 
-// Helper function
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestGetAccessTokenUsesEnvironmentRefreshTokenWithoutFallback(t *testing.T) {
+	envToken := "environment-refresh-token-valid"
+	server, requests := newRefreshTokenTestServer(t, map[string]int{
+		envToken: http.StatusOK,
+	})
+	defer server.Close()
+	setAccessTokenTestEnvironment(t, server.URL)
+	t.Setenv("DEVSH_DEV_REFRESH_TOKEN", envToken)
+
+	storedLoads := 0
+	accessToken, err := getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+		storedLoads++
+		return "stored-refresh-token-valid", nil
+	})
+	if err != nil {
+		t.Fatalf("GetAccessToken returned error: %v", err)
 	}
-	return false
+	if accessToken != envToken+"-access" {
+		t.Fatalf("access token = %q, want %q", accessToken, envToken+"-access")
+	}
+	if storedLoads != 0 {
+		t.Fatalf("stored credential loads = %d, want 0", storedLoads)
+	}
+	if got := requests(); len(got) != 1 || got[0] != envToken {
+		t.Fatalf("refresh requests = %q, want [%q]", got, envToken)
+	}
+}
+
+func TestGetRefreshTokenCredentialTracksEnvironmentSource(t *testing.T) {
+	for _, envVar := range []string{
+		"DEVSH_DEV_REFRESH_TOKEN",
+		"DEVSH_REFRESH_TOKEN",
+		"DEVBOX_REFRESH_TOKEN",
+	} {
+		t.Run(envVar, func(t *testing.T) {
+			setAccessTokenTestEnvironment(t, "http://stack-auth.invalid")
+			token := "refresh-token-selected-from-" + envVar
+			t.Setenv(envVar, token)
+
+			credential, err := getRefreshTokenCredential(func() (string, error) {
+				return "", fmt.Errorf("stored credentials should not be loaded")
+			})
+			if err != nil {
+				t.Fatalf("getRefreshTokenCredential returned error: %v", err)
+			}
+			if credential.token != token {
+				t.Fatalf("token = %q, want %q", credential.token, token)
+			}
+			if credential.envVar != envVar {
+				t.Fatalf("env var = %q, want %q", credential.envVar, envVar)
+			}
+		})
+	}
+}
+
+func TestGetAccessTokenFallsBackToStoredCredentialAfterEnvironmentUnauthorized(t *testing.T) {
+	envToken := "environment-refresh-token-stale"
+	genericToken := "generic-refresh-token-not-used"
+	storedToken := "stored-refresh-token-valid"
+	server, requests := newRefreshTokenTestServer(t, map[string]int{
+		envToken:     http.StatusUnauthorized,
+		genericToken: http.StatusOK,
+		storedToken:  http.StatusOK,
+	})
+	defer server.Close()
+	setAccessTokenTestEnvironment(t, server.URL)
+	t.Setenv("DEVSH_DEV_REFRESH_TOKEN", envToken)
+	t.Setenv("DEVSH_REFRESH_TOKEN", genericToken)
+
+	storedLoads := 0
+	var accessToken string
+	var accessErr error
+	stderr := captureStderr(t, func() {
+		accessToken, accessErr = getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+			storedLoads++
+			return storedToken, nil
+		})
+	})
+
+	if accessErr != nil {
+		t.Fatalf("GetAccessToken returned error: %v", accessErr)
+	}
+	if accessToken != storedToken+"-access" {
+		t.Fatalf("access token = %q, want %q", accessToken, storedToken+"-access")
+	}
+	if storedLoads != 1 {
+		t.Fatalf("stored credential loads = %d, want 1", storedLoads)
+	}
+	if got := requests(); len(got) != 2 || got[0] != envToken || got[1] != storedToken {
+		t.Fatalf("refresh requests = %q, want [%q %q]", got, envToken, storedToken)
+	}
+	if !strings.Contains(stderr, "DEVSH_DEV_REFRESH_TOKEN") {
+		t.Fatalf("warning %q does not name DEVSH_DEV_REFRESH_TOKEN", stderr)
+	}
+	if strings.Contains(stderr, envToken) || strings.Contains(stderr, storedToken) {
+		t.Fatalf("warning leaked refresh-token contents: %q", stderr)
+	}
+}
+
+func TestGetAccessTokenDoesNotFallbackForNonUnauthorizedResponse(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			envToken := fmt.Sprintf("environment-refresh-token-%d", status)
+			server, requests := newRefreshTokenTestServer(t, map[string]int{
+				envToken: status,
+			})
+			defer server.Close()
+			setAccessTokenTestEnvironment(t, server.URL)
+			t.Setenv("DEVSH_DEV_REFRESH_TOKEN", envToken)
+
+			storedLoads := 0
+			_, err := getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+				storedLoads++
+				return "stored-refresh-token-valid", nil
+			})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d", status)) {
+				t.Fatalf("error = %v, want status %d", err, status)
+			}
+			if storedLoads != 0 {
+				t.Fatalf("stored credential loads = %d, want 0", storedLoads)
+			}
+			if got := requests(); len(got) != 1 || got[0] != envToken {
+				t.Fatalf("refresh requests = %q, want [%q]", got, envToken)
+			}
+		})
+	}
+}
+
+func TestGetAccessTokenDoesNotFallbackForMalformedSuccessResponse(t *testing.T) {
+	envToken := "environment-refresh-token-malformed-response"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":`))
+	}))
+	defer server.Close()
+	setAccessTokenTestEnvironment(t, server.URL)
+	t.Setenv("DEVSH_DEV_REFRESH_TOKEN", envToken)
+
+	storedLoads := 0
+	_, err := getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+		storedLoads++
+		return "stored-refresh-token-valid", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to decode refresh response") {
+		t.Fatalf("error = %v, want decode failure", err)
+	}
+	if storedLoads != 0 {
+		t.Fatalf("stored credential loads = %d, want 0", storedLoads)
+	}
+	if requests != 1 {
+		t.Fatalf("refresh requests = %d, want 1", requests)
+	}
+}
+
+func TestGetAccessTokenDoesNotFallbackForTransportFailure(t *testing.T) {
+	envToken := "environment-refresh-token-transport-failure"
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+	setAccessTokenTestEnvironment(t, serverURL)
+	t.Setenv("DEVSH_DEV_REFRESH_TOKEN", envToken)
+
+	storedLoads := 0
+	_, err := getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+		storedLoads++
+		return "stored-refresh-token-valid", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to refresh token") {
+		t.Fatalf("error = %v, want refresh transport failure", err)
+	}
+	if storedLoads != 0 {
+		t.Fatalf("stored credential loads = %d, want 0", storedLoads)
+	}
+}
+
+func TestGetAccessTokenBoundsUnauthorizedFallback(t *testing.T) {
+	staleEnvToken := "environment-refresh-token-stale"
+	rejectedStoredToken := "stored-refresh-token-rejected"
+	for _, test := range []struct {
+		name         string
+		envToken     string
+		storedToken  string
+		storedErr    error
+		statuses     map[string]int
+		wantRequests []string
+		wantErrors   []string
+	}{
+		{
+			name:         "stored credential is not retried",
+			storedToken:  rejectedStoredToken,
+			statuses:     map[string]int{rejectedStoredToken: http.StatusUnauthorized},
+			wantRequests: []string{rejectedStoredToken},
+			wantErrors:   []string{"status 401"},
+		},
+		{
+			name:         "missing fallback credential stops after environment 401",
+			envToken:     staleEnvToken,
+			storedErr:    fmt.Errorf("token not found in keychain"),
+			statuses:     map[string]int{staleEnvToken: http.StatusUnauthorized},
+			wantRequests: []string{staleEnvToken},
+			wantErrors:   []string{"stored credentials unavailable", "DEVSH_DEV_REFRESH_TOKEN"},
+		},
+		{
+			name:         "rejected fallback credential is tried once",
+			envToken:     staleEnvToken,
+			storedToken:  rejectedStoredToken,
+			statuses:     map[string]int{staleEnvToken: http.StatusUnauthorized, rejectedStoredToken: http.StatusUnauthorized},
+			wantRequests: []string{staleEnvToken, rejectedStoredToken},
+			wantErrors:   []string{"status 401"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests := newRefreshTokenTestServer(t, test.statuses)
+			defer server.Close()
+			setAccessTokenTestEnvironment(t, server.URL)
+			if test.envToken != "" {
+				t.Setenv("DEVSH_DEV_REFRESH_TOKEN", test.envToken)
+			}
+
+			storedLoads := 0
+			_, err := getAccessTokenWithStoredRefreshTokenLoader(func() (string, error) {
+				storedLoads++
+				return test.storedToken, test.storedErr
+			})
+			if err == nil {
+				t.Fatal("GetAccessToken returned nil error")
+			}
+			for _, want := range test.wantErrors {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want substring %q", err, want)
+				}
+			}
+			if storedLoads != 1 {
+				t.Fatalf("stored credential loads = %d, want 1", storedLoads)
+			}
+			if got := requests(); !slices.Equal(got, test.wantRequests) {
+				t.Fatalf("refresh requests = %q, want %q", got, test.wantRequests)
+			}
+		})
+	}
+}
+
+func setAccessTokenTestEnvironment(t *testing.T, stackAuthURL string) {
+	t.Helper()
+
+	originalBuildMode := buildMode
+	originalEnvLoaded := envLoaded
+	buildMode = "dev"
+	envLoaded = true
+	t.Cleanup(func() {
+		buildMode = originalBuildMode
+		envLoaded = originalEnvLoaded
+	})
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AUTH_API_URL", stackAuthURL)
+	t.Setenv("DEVSH_DEV", "1")
+	t.Setenv("DEVSH_PROD", "")
+	t.Setenv("CMUX_DEVBOX_DEV", "")
+	t.Setenv("CMUX_DEVBOX_PROD", "")
+	t.Setenv("DEVSH_DEV_REFRESH_TOKEN", "")
+	t.Setenv("DEVSH_PROD_REFRESH_TOKEN", "")
+	t.Setenv("DEVSH_REFRESH_TOKEN", "")
+	t.Setenv("DEVBOX_REFRESH_TOKEN", "")
+}
+
+func newRefreshTokenTestServer(t *testing.T, statuses map[string]int) (*httptest.Server, func() []string) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var refreshTokens []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("x-stack-refresh-token")
+		mu.Lock()
+		refreshTokens = append(refreshTokens, token)
+		mu.Unlock()
+
+		status, ok := statuses[token]
+		if !ok {
+			status = http.StatusBadRequest
+		}
+		w.WriteHeader(status)
+		if status == http.StatusOK {
+			_, _ = fmt.Fprintf(w, `{"access_token":%q}`, token+"-access")
+		}
+	}))
+
+	requests := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), refreshTokens...)
+	}
+	return server, requests
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	os.Stderr = writer
+	defer func() {
+		os.Stderr = original
+	}()
+
+	fn()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
+	return string(output)
 }

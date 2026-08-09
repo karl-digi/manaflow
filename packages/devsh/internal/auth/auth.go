@@ -386,41 +386,54 @@ func StoreRefreshToken(token string) error {
 // 2. Generic env var (DEVSH_REFRESH_TOKEN, DEVBOX_REFRESH_TOKEN)
 // 3. File-based credentials (credentials_dev.json or credentials_prod.json)
 func GetRefreshToken() (string, error) {
+	credential, err := getRefreshTokenCredential(getStoredRefreshToken)
+	if err != nil {
+		return "", err
+	}
+	return credential.token, nil
+}
+
+type refreshTokenCredential struct {
+	token  string
+	envVar string
+}
+
+type storedRefreshTokenLoader func() (string, error)
+
+func getRefreshTokenCredential(loadStoredRefreshToken storedRefreshTokenLoader) (refreshTokenCredential, error) {
 	cfg := GetConfig()
 
-	// 1. Check mode-specific env var first (preferred for CI)
+	// Mode-specific env var takes priority (preferred for CI)
 	modeEnvVar := "DEVSH_PROD_REFRESH_TOKEN"
 	if cfg.IsDev {
 		modeEnvVar = "DEVSH_DEV_REFRESH_TOKEN"
 	}
-	if modeToken := os.Getenv(modeEnvVar); modeToken != "" {
-		if err := ValidateRefreshTokenFormat(modeToken); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s may be invalid: %v\n", modeEnvVar, err)
-			// Fall through to try other sources
-		} else {
-			return modeToken, nil
+
+	// Check env vars in priority order: mode-specific first, then generic legacy vars
+	for _, envVar := range []string{modeEnvVar, "DEVSH_REFRESH_TOKEN", "DEVBOX_REFRESH_TOKEN"} {
+		if token := os.Getenv(envVar); token != "" {
+			if err := ValidateRefreshTokenFormat(token); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %s may be invalid: %v\n", envVar, err)
+			} else {
+				return refreshTokenCredential{
+					token:  token,
+					envVar: envVar,
+				}, nil
+			}
 		}
 	}
 
-	// 2. Check generic env vars (legacy support)
-	if devToken := os.Getenv("DEVSH_REFRESH_TOKEN"); devToken != "" {
-		if err := ValidateRefreshTokenFormat(devToken); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: DEVSH_REFRESH_TOKEN may be invalid: %v\n", err)
-			// Fall through to try stored credentials
-		} else {
-			return devToken, nil
-		}
+	// File-based credentials
+	storedToken, err := loadStoredRefreshToken()
+	if err != nil {
+		return refreshTokenCredential{}, err
 	}
-	if devToken := os.Getenv("DEVBOX_REFRESH_TOKEN"); devToken != "" {
-		if err := ValidateRefreshTokenFormat(devToken); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: DEVBOX_REFRESH_TOKEN may be invalid: %v\n", err)
-			// Fall through to try stored credentials
-		} else {
-			return devToken, nil
-		}
-	}
+	return refreshTokenCredential{
+		token: storedToken,
+	}, nil
+}
 
-	// 3. File-based credentials
+func getStoredRefreshToken() (string, error) {
 	if runtime.GOOS == "darwin" {
 		return getFromKeychain()
 	}
@@ -844,25 +857,58 @@ func Logout() error {
 
 // GetAccessToken returns a valid access token, refreshing if necessary
 func GetAccessToken() (string, error) {
+	return getAccessTokenWithStoredRefreshTokenLoader(getStoredRefreshToken)
+}
+
+func getAccessTokenWithStoredRefreshTokenLoader(loadStoredRefreshToken storedRefreshTokenLoader) (string, error) {
 	// Try cached token first (with 60 second buffer)
 	if token, err := GetCachedAccessToken(60); err == nil {
 		return token, nil
 	}
 
 	// Need to refresh
-	refreshToken, err := GetRefreshToken()
+	credential, err := getRefreshTokenCredential(loadStoredRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("not logged in. Run 'devsh auth login' first")
 	}
 
 	cfg := GetConfig()
 	client := &http.Client{Timeout: 30 * time.Second}
+	accessToken, statusCode, err := refreshAccessToken(client, cfg, credential.token)
+	if statusCode == http.StatusUnauthorized && credential.envVar != "" {
+		fmt.Fprintf(
+			os.Stderr,
+			"Warning: %[1]s was rejected by Stack Auth with status 401; retrying with stored credentials. Unset %[1]s to remove the stale override.\n",
+			credential.envVar,
+		)
 
+		storedToken, storedErr := loadStoredRefreshToken()
+		if storedErr != nil {
+			return "", fmt.Errorf(
+				"refresh token from %s was rejected with status 401 and stored credentials unavailable: %w",
+				credential.envVar,
+				storedErr,
+			)
+		}
+		accessToken, _, err = refreshAccessToken(client, cfg, storedToken)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	// Cache the new access token (default 1 hour expiry; JWT exp parsing is best-effort future work)
+	expiresAt := time.Now().Add(1 * time.Hour).Unix()
+	_ = CacheAccessToken(accessToken, expiresAt)
+
+	return accessToken, nil
+}
+
+func refreshAccessToken(client *http.Client, cfg Config, refreshToken string) (string, int, error) {
 	// Refresh the token
 	refreshURL := fmt.Sprintf("%s/api/v1/auth/sessions/current/refresh", cfg.StackAuthURL)
 	req, err := http.NewRequest("POST", refreshURL, nil)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	req.Header.Set("x-stack-project-id", cfg.ProjectID)
@@ -872,30 +918,21 @@ func GetAccessToken() (string, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to refresh token: %w", err)
+		return "", 0, fmt.Errorf("failed to refresh token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to refresh token: status %d. Try 'devsh auth login' to re-authenticate", resp.StatusCode)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return "", resp.StatusCode, fmt.Errorf("failed to refresh token: status %d. Try 'devsh auth login' to re-authenticate", resp.StatusCode)
 	}
 
 	var refreshResp RefreshTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&refreshResp); err != nil {
-		return "", fmt.Errorf("failed to decode refresh response: %w", err)
+		return "", resp.StatusCode, fmt.Errorf("failed to decode refresh response: %w", err)
 	}
 
-	// Parse JWT to get expiry (simple extraction, no verification needed)
-	expiresAt := time.Now().Add(1 * time.Hour).Unix() // Default 1 hour
-	if parts := strings.Split(refreshResp.AccessToken, "."); len(parts) == 3 {
-		// Try to parse payload for actual expiry
-		// This is best-effort; we'll use default if it fails
-	}
-
-	// Cache the new access token
-	_ = CacheAccessToken(refreshResp.AccessToken, expiresAt)
-
-	return refreshResp.AccessToken, nil
+	return refreshResp.AccessToken, resp.StatusCode, nil
 }
 
 // GetUserInfo retrieves the current user's information
