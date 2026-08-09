@@ -920,9 +920,10 @@ RUN /root/.local/bin/cursor-agent --version
 
 # Install agy (Google Antigravity CLI) — no official npm package (the `agy`
 # npm name is an unrelated placeholder), so use the official installer.
-# pipefail makes a failed curl fail the layer instead of piping empty stdin
-# to bash; the --version check then fails fast with the real error.
-RUN set -euo pipefail; curl -fsSL https://antigravity.google/cli/install.sh | bash \
+# Download before executing so curl failures stop the layer under /bin/sh.
+RUN curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh \
+  && bash /tmp/agy-install.sh \
+  && rm -f /tmp/agy-install.sh \
   && /root/.local/bin/agy --version
 
 # Copy only the built artifacts and runtime dependencies from builder
