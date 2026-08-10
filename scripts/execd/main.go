@@ -18,6 +18,84 @@ import (
 	"time"
 )
 
+// authToken is loaded at startup from /root/.worker-auth-token (or
+// /home/user/.worker-auth-token as fallback). When non-empty, all /exec and
+// /files requests must present the token via Authorization: Bearer header,
+// ?token= query param, or _cmux_auth cookie. When empty (token file absent),
+// the daemon operates in no-auth mode for backward compatibility with older
+// containers that don't have cmux-token-init installed.
+var authToken string
+
+// tokenPaths lists the candidate paths for the auth token file, in priority
+// order. /root/ is the canonical location for PVE-LXC containers; /home/user/
+// is a legacy fallback for user-based containers.
+var tokenPaths = []string{
+	"/root/.worker-auth-token",
+	"/home/user/.worker-auth-token",
+}
+
+// loadAuthToken reads the auth token from the first existing token file.
+// Returns "" if no token file is found (no-auth mode).
+func loadAuthToken() string {
+	for _, p := range tokenPaths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		token := strings.TrimSpace(string(data))
+		if token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+// verifyAuth checks whether the request presents the expected auth token.
+// Supports Authorization: Bearer <token> header, ?token=<token> query param,
+// and _cmux_auth cookie — same as the cloudrouter worker's verifyAuth.
+func verifyAuth(r *http.Request) bool {
+	if authToken == "" {
+		return true // no token configured → no-auth mode
+	}
+
+	// Check Authorization header
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		if strings.HasPrefix(auth, "Bearer ") {
+			if auth[7:] == authToken {
+				return true
+			}
+		} else if auth == authToken {
+			return true
+		}
+	}
+
+	// Check query parameter
+	if r.URL.Query().Get("token") == authToken {
+		return true
+	}
+
+	// Check cookie
+	if cookie, err := r.Cookie("_cmux_auth"); err == nil && cookie.Value == authToken {
+		return true
+	}
+
+	return false
+}
+
+// authMiddleware wraps a handler with token authentication. When authToken
+// is empty (no token file), requests pass through without auth.
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !verifyAuth(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
+			return
+		}
+		next(w, r)
+	}
+}
+
 type execRequest struct {
 	Command   string `json:"command"`
 	TimeoutMs *int   `json:"timeout_ms"`
@@ -275,11 +353,21 @@ func main() {
 	portFlag := flag.Int("port", 39375, "port to listen on")
 	flag.Parse()
 
+	// Load auth token at startup. When the token file is absent (e.g. older
+	// containers without cmux-token-init), authToken remains "" and the daemon
+	// operates in no-auth mode for backward compatibility.
+	authToken = loadAuthToken()
+	if authToken != "" {
+		log.Printf("auth enabled (token: %s...)", authToken[:8])
+	} else {
+		log.Printf("auth disabled (no token file found)")
+	}
+
 	port := determinePort(*portFlag)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
-	mux.HandleFunc("/exec", execHandler)
-	mux.HandleFunc("/files", filesHandler)
+	mux.HandleFunc("/exec", authMiddleware(execHandler))
+	mux.HandleFunc("/files", authMiddleware(filesHandler))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),

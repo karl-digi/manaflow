@@ -54,6 +54,12 @@ type Client struct {
 	dnsMu         sync.Mutex
 	domainSuffix  string
 	domainFetched bool
+
+	// execToken caches the worker-auth-token read from inside the container
+	// via SSH + pct exec. Empty when PVE_SSH_HOST is not set or the token file
+	// doesn't exist (older containers without cmux-token-init).
+	execTokenMu sync.Mutex
+	execToken   string
 }
 
 type Instance struct {

@@ -120,3 +120,227 @@ func TestHealthHandler(t *testing.T) {
 	}
 }
 
+// --- Auth middleware tests ---
+
+// withAuthToken temporarily sets the package-level authToken for the duration
+// of the test and restores the original value on cleanup.
+func withAuthToken(t *testing.T, token string) {
+	t.Helper()
+	prev := authToken
+	authToken = token
+	t.Cleanup(func() { authToken = prev })
+}
+
+func TestAuthMiddleware_NoTokenConfigured_AllowsAll(t *testing.T) {
+	withAuthToken(t, "") // no-auth mode
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("no-auth mode: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestAuthMiddleware_ValidBearerToken_Passes(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	req.Header.Set("Authorization", "Bearer test-secret-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid Bearer: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestAuthMiddleware_ValidQueryToken_Passes(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec?token=test-secret-token", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid query token: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestAuthMiddleware_ValidCookie_Passes(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	req.AddCookie(&http.Cookie{Name: "_cmux_auth", Value: "test-secret-token"})
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid cookie: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestAuthMiddleware_MissingToken_Returns401(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("handler should not be called when auth fails")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("missing token: expected %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestAuthMiddleware_WrongToken_Returns401(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("handler should not be called when auth fails")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("wrong token: expected %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestAuthMiddleware_RawAuthHeader_Passes(t *testing.T) {
+	withAuthToken(t, "test-secret-token")
+
+	handler := authMiddleware(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+	req.Header.Set("Authorization", "test-secret-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("raw auth header: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestHealthHandler_NoAuthRequired(t *testing.T) {
+	// /healthz is not wrapped with authMiddleware — it should always return 200
+	withAuthToken(t, "test-secret-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	healthHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("healthz with auth enabled: expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestLoadAuthToken_ReadsFirstExisting(t *testing.T) {
+	// Create temp token files to simulate /root/ and /home/user/ paths
+	tmpDir := t.TempDir()
+	rootToken := filepath.Join(tmpDir, "root-token")
+	userToken := filepath.Join(tmpDir, "user-token")
+
+	if err := os.WriteFile(rootToken, []byte("root-secret\n"), 0644); err != nil {
+		t.Fatalf("write root token: %v", err)
+	}
+	if err := os.WriteFile(userToken, []byte("user-secret\n"), 0644); err != nil {
+		t.Fatalf("write user token: %v", err)
+	}
+
+	// Patch tokenPaths to point to temp files
+	prev := tokenPaths
+	tokenPaths = []string{rootToken, userToken}
+	t.Cleanup(func() { tokenPaths = prev })
+
+	token := loadAuthToken()
+	if token != "root-secret" {
+		t.Errorf("expected 'root-secret' (first path), got %q", token)
+	}
+}
+
+func TestLoadAuthToken_FallsBackToSecondPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	missingPath := filepath.Join(tmpDir, "nonexistent")
+	userToken := filepath.Join(tmpDir, "user-token")
+
+	if err := os.WriteFile(userToken, []byte("user-secret\n"), 0644); err != nil {
+		t.Fatalf("write user token: %v", err)
+	}
+
+	prev := tokenPaths
+	tokenPaths = []string{missingPath, userToken}
+	t.Cleanup(func() { tokenPaths = prev })
+
+	token := loadAuthToken()
+	if token != "user-secret" {
+		t.Errorf("expected 'user-secret' (fallback), got %q", token)
+	}
+}
+
+func TestLoadAuthToken_NoFiles_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	prev := tokenPaths
+	tokenPaths = []string{
+		filepath.Join(tmpDir, "nonexistent-1"),
+		filepath.Join(tmpDir, "nonexistent-2"),
+	}
+	t.Cleanup(func() { tokenPaths = prev })
+
+	token := loadAuthToken()
+	if token != "" {
+		t.Errorf("expected empty token, got %q", token)
+	}
+}
+
+func TestLoadAuthToken_EmptyFile_Skipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptyFile := filepath.Join(tmpDir, "empty")
+	goodFile := filepath.Join(tmpDir, "good")
+
+	if err := os.WriteFile(emptyFile, []byte("  \n"), 0644); err != nil {
+		t.Fatalf("write empty token: %v", err)
+	}
+	if err := os.WriteFile(goodFile, []byte("real-token"), 0644); err != nil {
+		t.Fatalf("write good token: %v", err)
+	}
+
+	prev := tokenPaths
+	tokenPaths = []string{emptyFile, goodFile}
+	t.Cleanup(func() { tokenPaths = prev })
+
+	token := loadAuthToken()
+	if token != "real-token" {
+		t.Errorf("expected 'real-token' (skip empty), got %q", token)
+	}
+}
+

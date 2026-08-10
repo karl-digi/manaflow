@@ -161,3 +161,80 @@ func TestWaitForExecReadyHonorsCancellation(t *testing.T) {
 		t.Fatalf("WaitForExecReady() error = %v, want canceled", err)
 	}
 }
+
+func TestExecCommandSendsBearerTokenWhenCached(t *testing.T) {
+	var receivedAuth string
+
+	client := newExecReadyTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/jsonlines")
+		_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+	})
+
+	// Pre-set the cached token so getExecToken doesn't try SSH.
+	client.execToken = "my-secret-token"
+
+	stdout, _, exitCode, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err != nil {
+		t.Fatalf("ExecCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("ExecCommand() exitCode = %d, want 0", exitCode)
+	}
+	if stdout != "ok" {
+		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+	}
+	if receivedAuth != "Bearer my-secret-token" {
+		t.Errorf("Authorization header = %q, want %q", receivedAuth, "Bearer my-secret-token")
+	}
+}
+
+func TestExecCommandRetriesOn401WithFreshToken(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		callCount   int
+		receivedAuth string
+	)
+
+	client := newExecReadyTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		callCount++
+		receivedAuth = r.Header.Get("Authorization")
+		mu.Unlock()
+
+		// First call: return 401 to simulate stale token.
+		// Second call: return success.
+		if callCount == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/jsonlines")
+		_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+	})
+
+	// Start with a stale token; the 401 should trigger invalidation + re-fetch.
+	// Since PVE_SSH_HOST isn't set, re-fetch returns "" — but the test handler
+	// doesn't check auth, so the second call succeeds regardless.
+	client.execToken = "stale-token"
+
+	stdout, _, exitCode, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err != nil {
+		t.Fatalf("ExecCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("ExecCommand() exitCode = %d, want 0", exitCode)
+	}
+	if stdout != "ok" {
+		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount != 2 {
+		t.Errorf("expected 2 calls (401 + retry), got %d", callCount)
+	}
+	// First call should have sent the stale token.
+	_ = receivedAuth // value is from the last call; we just verify it ran twice.
+}

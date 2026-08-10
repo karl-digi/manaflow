@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,62 @@ func ShellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+// fetchExecToken retrieves the /root/.worker-auth-token from inside the
+// container via SSH to the PVE host + pct exec. The token is cached on the
+// Client after the first successful fetch. Returns "" (no error) when
+// PVE_SSH_HOST is not set — in that case the execd daemon will be in no-auth
+// mode (if the token file doesn't exist) and requests pass through.
+func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
+	sshHost := SSHHostFromEnv()
+	if sshHost == "" {
+		return "", nil
+	}
+
+	out, err := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=5",
+		sshHost,
+		fmt.Sprintf("pct exec %d -- cat /root/.worker-auth-token 2>/dev/null || true", vmid),
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("fetch exec token via SSH+pct: %w", err)
+	}
+
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		// Token file doesn't exist in the container — execd is in no-auth mode.
+		return "", nil
+	}
+	return token, nil
+}
+
+// getExecToken returns the cached exec token, fetching it on first use.
+func (c *Client) getExecToken(ctx context.Context, vmid int) (string, error) {
+	c.execTokenMu.Lock()
+	token := c.execToken
+	c.execTokenMu.Unlock()
+	if token != "" {
+		return token, nil
+	}
+
+	fetched, err := c.fetchExecToken(ctx, vmid)
+	if err != nil {
+		return "", err
+	}
+
+	c.execTokenMu.Lock()
+	c.execToken = fetched
+	c.execTokenMu.Unlock()
+	return fetched, nil
+}
+
+// invalidateExecToken clears the cached token so the next call re-fetches.
+func (c *Client) invalidateExecToken() {
+	c.execTokenMu.Lock()
+	c.execToken = ""
+	c.execTokenMu.Unlock()
+}
+
 func VerifyTimezoneCommand(timezone string) string {
 	return fmt.Sprintf("TZ=%s; date +%%Z", ShellSingleQuote(timezone))
 }
@@ -96,7 +153,11 @@ func (c *Client) VerifyTimezone(ctx context.Context, instanceID string, timezone
 	return &ExecResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr}, nil
 }
 
-func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, timeout time.Duration) (*ExecResult, error) {
+// ErrExecUnauthorized indicates the execd server returned 401 Unauthorized,
+// signaling the cached token is stale or missing and should be re-fetched.
+var ErrExecUnauthorized = errors.New("execd returned 401 Unauthorized")
+
+func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, timeout time.Duration, token string) (*ExecResult, error) {
 	execURL, err := buildExecURL(host)
 	if err != nil {
 		return nil, err
@@ -127,6 +188,9 @@ func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, t
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := c.execHTTP.Do(req)
 	if err != nil {
@@ -137,6 +201,9 @@ func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, t
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrExecUnauthorized
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil
 	}
@@ -247,7 +314,7 @@ func (c *Client) WaitForExecReady(ctx context.Context, instanceID string, timeou
 	}
 	defer cancel()
 
-	_, candidates, err := c.resolveExecCandidates(waitCtx, instanceID)
+	vmid, candidates, err := c.resolveExecCandidates(waitCtx, instanceID)
 	if err != nil {
 		return err
 	}
@@ -270,9 +337,22 @@ func (c *Client) WaitForExecReady(ctx context.Context, instanceID string, timeou
 		}
 
 		for _, host := range candidates {
+			token, tokenErr := c.getExecToken(waitCtx, vmid)
+			if tokenErr != nil {
+				lastErr = fmt.Errorf("fetch exec token: %w", tokenErr)
+				continue
+			}
+
 			probeCtx, cancelProbe := context.WithTimeout(waitCtx, probeTimeout)
-			result, probeErr := c.tryHTTPExec(probeCtx, host, execReadyProbeCommand, probeTimeout)
+			result, probeErr := c.tryHTTPExec(probeCtx, host, execReadyProbeCommand, probeTimeout, token)
 			cancelProbe()
+
+			if errors.Is(probeErr, ErrExecUnauthorized) {
+				// Token is stale — invalidate and re-fetch on the next iteration.
+				c.invalidateExecToken()
+				lastErr = fmt.Errorf("probe via %s: 401 Unauthorized (token stale)", host)
+				continue
+			}
 
 			if probeErr != nil {
 				if waitCtx.Err() != nil {
@@ -327,10 +407,20 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 				return "", "", -1, ctx.Err()
 			}
 
-			result, err := c.tryHTTPExec(ctx, host, command, 0)
+			token, tokenErr := c.getExecToken(ctx, vmid)
+			if tokenErr != nil {
+				return "", "", -1, fmt.Errorf("fetch exec token: %w", tokenErr)
+			}
+
+			result, err := c.tryHTTPExec(ctx, host, command, 0, token)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return "", "", -1, err
+				}
+				// 401: invalidate token and retry with a fresh one (once per attempt).
+				if errors.Is(err, ErrExecUnauthorized) && attempt == 1 {
+					c.invalidateExecToken()
+					continue
 				}
 			}
 			if err == nil && result != nil {

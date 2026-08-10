@@ -401,6 +401,84 @@ import (
 	"time"
 )
 
+// authToken is loaded at startup from /root/.worker-auth-token (or
+// /home/user/.worker-auth-token as fallback). When non-empty, all /exec and
+// /files requests must present the token via Authorization: Bearer header,
+// ?token= query param, or _cmux_auth cookie. When empty (token file absent),
+// the daemon operates in no-auth mode for backward compatibility with older
+// containers that don't have cmux-token-init installed.
+var authToken string
+
+// tokenPaths lists the candidate paths for the auth token file, in priority
+// order. /root/ is the canonical location for PVE-LXC containers; /home/user/
+// is a legacy fallback for user-based containers.
+var tokenPaths = []string{
+	"/root/.worker-auth-token",
+	"/home/user/.worker-auth-token",
+}
+
+// loadAuthToken reads the auth token from the first existing token file.
+// Returns "" if no token file is found (no-auth mode).
+func loadAuthToken() string {
+	for _, p := range tokenPaths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		token := strings.TrimSpace(string(data))
+		if token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+// verifyAuth checks whether the request presents the expected auth token.
+// Supports Authorization: Bearer <token> header, ?token=<token> query param,
+// and _cmux_auth cookie — same as the cloudrouter worker's verifyAuth.
+func verifyAuth(r *http.Request) bool {
+	if authToken == "" {
+		return true // no token configured → no-auth mode
+	}
+
+	// Check Authorization header
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		if strings.HasPrefix(auth, "Bearer ") {
+			if auth[7:] == authToken {
+				return true
+			}
+		} else if auth == authToken {
+			return true
+		}
+	}
+
+	// Check query parameter
+	if r.URL.Query().Get("token") == authToken {
+		return true
+	}
+
+	// Check cookie
+	if cookie, err := r.Cookie("_cmux_auth"); err == nil && cookie.Value == authToken {
+		return true
+	}
+
+	return false
+}
+
+// authMiddleware wraps a handler with token authentication. When authToken
+// is empty (no token file), requests pass through without auth.
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !verifyAuth(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
+			return
+		}
+		next(w, r)
+	}
+}
+
 type execRequest struct {
 	Command   string `json:"command"`
 	TimeoutMs *int   `json:"timeout_ms"`
@@ -530,9 +608,25 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 	_ = writeJSONLine(w, flusher, execEvent{Type: "exit", Code: &exitCode})
 }
 
+func healthHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 func main() {
 	portFlag := flag.Int("port", 39375, "port")
 	flag.Parse()
+
+	// Load auth token at startup. When the token file is absent (e.g. older
+	// containers without cmux-token-init), authToken remains "" and the daemon
+	// operates in no-auth mode for backward compatibility.
+	authToken = loadAuthToken()
+	if authToken != "" {
+		log.Printf("auth enabled (token: %s...)", authToken[:8])
+	} else {
+		log.Printf("auth disabled (no token file found)")
+	}
+
 	port := *portFlag
 	if env := os.Getenv("EXECD_PORT"); env != "" {
 		if v, err := strconv.Atoi(env); err == nil {
@@ -540,10 +634,57 @@ func main() {
 		}
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	mux.HandleFunc("/exec", execHandler)
+	mux.HandleFunc("/healthz", healthHandler)
+	mux.HandleFunc("/exec", authMiddleware(execHandler))
+	mux.HandleFunc("/files", authMiddleware(filesHandler))
 	log.Printf("cmux-execd listening on :%d", port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
+}
+
+// filesHandler accepts a tar archive body and extracts it to /workspace.
+// This enables workspace file sync for PVE LXC containers.
+func filesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Create /workspace if it doesn't exist
+	if err := os.MkdirAll("/workspace", 0755); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream the request body directly to tar for extraction
+	cmd := exec.Command("tar", "-x", "-C", "/workspace")
+	cmd.Stdin = r.Body
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create stderr pipe: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to start tar: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Read stderr for error messages
+	stderrBytes, _ := io.ReadAll(stderr)
+	waitErr := cmd.Wait()
+
+	if waitErr != nil {
+		errMsg := strings.TrimSpace(string(stderrBytes))
+		if errMsg == "" {
+			errMsg = waitErr.Error()
+		}
+		http.Error(w, fmt.Sprintf("tar extraction failed: %s", errMsg), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Files extracted to /workspace")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }
 EXECD_SOURCE
 
@@ -562,8 +703,9 @@ GOMOD
     cat > /etc/systemd/system/cmux-execd.service << 'SERVICE'
 [Unit]
 Description=cmux exec daemon - HTTP command execution
-After=network-online.target
+After=network-online.target cmux-token-generator.service
 Wants=network-online.target
+Requires=cmux-token-generator.service
 
 [Service]
 Type=simple
