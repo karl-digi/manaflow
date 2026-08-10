@@ -100,22 +100,50 @@ http_exec() {
     hostname=$(get_container_hostname "$vmid")
     local url="https://port-39375-${hostname}.${PVE_PUBLIC_DOMAIN}/exec"
     local json_payload
-    json_payload=$(jq -n --arg cmd "$command" --argjson timeout "$timeout" '{command: $cmd, timeout: $timeout}')
+    json_payload=$(jq -n \
+        --arg cmd "$command" \
+        --argjson timeout_ms "$((timeout * 1000))" \
+        '{command: $cmd, timeout_ms: $timeout_ms}')
+
+    # cmux-token-init runs during the container setup; read the token through
+    # the PVE host's local pct interface and send it to cmux-execd.
+    local auth_token=""
+    if auth_token=$(pct exec "$vmid" -- sh -c '
+        for path in /root/.worker-auth-token /home/user/.worker-auth-token; do
+            if [ -s "$path" ]; then
+                cat "$path"
+                exit 0
+            fi
+        done
+        exit 42
+    ' 2>/dev/null); then
+        auth_token="$(printf '%s' "$auth_token" | tr -d '\r\n')"
+    else
+        auth_token=""
+    fi
+
+    local curl_args=(
+        -sS -X POST "$url"
+        -H "Content-Type: application/json"
+        -d "$json_payload"
+        --max-time "$timeout"
+    )
+    if [[ -n "$auth_token" ]]; then
+        curl_args+=( -H "Authorization: Bearer ${auth_token}" )
+    fi
 
     local result
-    result=$(curl -s -X POST "$url" \
-        -H "Content-Type: application/json" \
-        -d "$json_payload" \
-        --max-time "$timeout" 2>&1) || return 1
+    result=$(curl "${curl_args[@]}" 2>&1) || return 1
 
-    # Parse response
+    # Parse streaming JSON-lines response from cmux-execd.
     local exit_code stdout stderr
-    exit_code=$(echo "$result" | jq -r '.exit_code // 1')
-    stdout=$(echo "$result" | jq -r '.stdout // ""')
-    stderr=$(echo "$result" | jq -r '.stderr // ""')
+    stdout=$(printf '%s\n' "$result" | jq -r 'select(.type == "stdout") | .data // empty' 2>/dev/null | paste -sd '\n' -)
+    stderr=$(printf '%s\n' "$result" | jq -r 'select(.type == "stderr" or .type == "error") | (.data // .message // empty)' 2>/dev/null | paste -sd '\n' -)
+    exit_code=$(printf '%s\n' "$result" | jq -r 'select(.type == "exit") | .code // 1' 2>/dev/null | tail -n 1)
+    [[ "$exit_code" =~ ^-?[0-9]+$ ]] || exit_code=1
 
-    echo "$stdout"
-    [[ -n "$stderr" ]] && echo "$stderr" >&2
+    [[ -n "$stdout" ]] && printf '%s\n' "$stdout"
+    [[ -n "$stderr" ]] && printf '%s\n' "$stderr" >&2
 
     return "$exit_code"
 }
@@ -135,7 +163,8 @@ http_push() {
     local base64_content
     base64_content=$(base64 < "$local_path")
 
-    local decode_cmd="echo '${base64_content}' | base64 -d > ${remote_path}"
+    local decode_cmd
+    decode_cmd=$(printf 'printf %%s %q | base64 -d > %q' "$base64_content" "$remote_path")
     http_exec "$vmid" "$decode_cmd" 60
 }
 

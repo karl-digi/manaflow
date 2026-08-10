@@ -19,8 +19,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // =============================================================================
@@ -266,6 +267,12 @@ pub struct ResolvedPveConfig {
 pub struct PveClient {
     client: Client,
     config: ResolvedPveConfig,
+}
+
+/// Return the Authorization header value for a non-empty execd token.
+fn bearer_auth_value(token: &str) -> Option<String> {
+    let token = token.trim();
+    (!token.is_empty()).then(|| format!("Bearer {token}"))
 }
 
 impl PveClient {
@@ -638,6 +645,7 @@ impl PveClient {
         ip: std::net::Ipv4Addr,
         command: &[String],
         timeout_ms: Option<u64>,
+        exec_token: &str,
     ) -> SandboxResult<ExecResponse> {
         let cmd_str = command.join(" ");
         let exec_url = format!("http://{}:39375/exec", ip);
@@ -648,20 +656,23 @@ impl PveClient {
             "timeout_ms": timeout,
         });
 
-        let response = self
+        let mut request = self
             .client
             .post(&exec_url)
             .header("Content-Type", "application/json")
             .body(body.to_string())
-            .timeout(std::time::Duration::from_millis(timeout + 5000))
-            .send()
-            .await
-            .map_err(|e| {
-                SandboxError::Internal(format!(
-                    "HTTP exec request failed for container at {}: {}",
-                    ip, e
-                ))
-            })?;
+            .timeout(std::time::Duration::from_millis(timeout + 5000));
+
+        if let Some(auth) = bearer_auth_value(exec_token) {
+            request = request.header("Authorization", auth);
+        }
+
+        let response = request.send().await.map_err(|e| {
+            SandboxError::Internal(format!(
+                "HTTP exec request failed for container at {}: {}",
+                ip, e
+            ))
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -863,6 +874,10 @@ struct LxcSandboxEntry {
     correlation_id: Option<String>,
     #[allow(dead_code)]
     env: Vec<EnvVar>,
+    /// Auth token for cmux-execd (read from /root/.worker-auth-token inside
+    /// the container via `pct exec`). Empty when the token file is absent
+    /// (older containers without cmux-token-init → execd in no-auth mode).
+    exec_token: String,
 }
 
 impl LxcSandboxEntry {
@@ -962,6 +977,74 @@ impl PveLxcService {
             config.bridge, ip, config.gateway
         )
     }
+
+    /// Fetch the worker-auth-token from inside a container via `pct exec`.
+    /// Returns an empty string when neither supported token file exists
+    /// (execd in no-auth mode). This runs locally on the PVE host — no SSH
+    /// needed.
+    async fn fetch_exec_token(&self, vmid: u32) -> SandboxResult<String> {
+        const TOKEN_SCRIPT: &str = r#"
+for _ in $(seq 1 15); do
+    for path in /root/.worker-auth-token /home/user/.worker-auth-token; do
+        if [ -s "$path" ]; then
+            cat "$path"
+            exit 0
+        fi
+    done
+    sleep 1
+done
+exit 42
+"#;
+
+        for attempt in 1..=5 {
+            let output = tokio::process::Command::new("pct")
+                .arg("exec")
+                .arg(vmid.to_string())
+                .arg("--")
+                .arg("sh")
+                .arg("-c")
+                .arg(TOKEN_SCRIPT)
+                .output()
+                .await
+                .map_err(|error| {
+                    SandboxError::Internal(format!(
+                        "failed to run pct exec for container {vmid}: {error}"
+                    ))
+                })?;
+
+            if output.status.success() {
+                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !token.is_empty() {
+                    return Ok(token);
+                }
+                return Err(SandboxError::Internal(format!(
+                    "pct exec returned an empty auth token for container {vmid}"
+                )));
+            }
+
+            // Exit code 42 is the deliberate no-token result from TOKEN_SCRIPT.
+            if output.status.code() == Some(42) {
+                debug!("container {vmid} has no worker auth token; using execd no-auth compatibility mode");
+                return Ok(String::new());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if attempt < 5 {
+                warn!(
+                    "pct exec token lookup failed for container {vmid} (attempt {attempt}/5): {stderr}; retrying"
+                );
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            } else {
+                return Err(SandboxError::Internal(format!(
+                    "failed to read worker auth token for container {vmid}: {stderr}"
+                )));
+            }
+        }
+
+        Err(SandboxError::Internal(format!(
+            "failed to read worker auth token for container {vmid}"
+        )))
+    }
 }
 
 #[async_trait]
@@ -1007,6 +1090,11 @@ impl SandboxService for PveLxcService {
         // Start the container
         self.client.start_lxc(vmid).await?;
 
+        // Fetch the worker-auth-token from the container via pct exec.
+        // This runs locally on the PVE host. An absent token file preserves
+        // compatibility with older containers where execd has no auth.
+        let exec_token = self.fetch_exec_token(vmid).await?;
+
         let entry = LxcSandboxEntry {
             id,
             index,
@@ -1017,6 +1105,7 @@ impl SandboxService for PveLxcService {
             status: SandboxStatus::Running,
             correlation_id: request.tab_id,
             env: request.env,
+            exec_token,
         };
 
         let summary = entry.to_summary(config);
@@ -1064,7 +1153,7 @@ impl SandboxService for PveLxcService {
 
         // Execute command via HTTP exec daemon (cmux-execd) running in the container
         self.client
-            .exec_lxc(entry.ip, &exec.command, exec.timeout_ms)
+            .exec_lxc(entry.ip, &exec.command, exec.timeout_ms, &entry.exec_token)
             .await
     }
 
@@ -1131,20 +1220,23 @@ impl SandboxService for PveLxcService {
         // Send the archive to the container's /files endpoint
         // Note: We can't retry with streaming body, so we do a single attempt
         // The cmux-execd service should be ready by the time we start uploading
-        let response = self
+        let mut request = self
             .client
             .client
             .post(&files_url)
             .body(reqwest_body)
-            .timeout(std::time::Duration::from_secs(300))
-            .send()
-            .await
-            .map_err(|e| {
-                SandboxError::Internal(format!(
-                    "Failed to upload archive to container {}: {}",
-                    entry.ip, e
-                ))
-            })?;
+            .timeout(std::time::Duration::from_secs(300));
+
+        if let Some(auth) = bearer_auth_value(&entry.exec_token) {
+            request = request.header("Authorization", auth);
+        }
+
+        let response = request.send().await.map_err(|e| {
+            SandboxError::Internal(format!(
+                "Failed to upload archive to container {}: {}",
+                entry.ip, e
+            ))
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -1248,6 +1340,35 @@ impl SandboxService for PveLxcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bearer_auth_value() {
+        assert_eq!(bearer_auth_value("token"), Some("Bearer token".to_string()));
+        assert_eq!(
+            bearer_auth_value("  token\n"),
+            Some("Bearer token".to_string())
+        );
+        assert_eq!(bearer_auth_value("  "), None);
+    }
+
+    #[test]
+    fn test_token_script_supports_both_paths() {
+        let script = r#"
+for _ in $(seq 1 15); do
+    for path in /root/.worker-auth-token /home/user/.worker-auth-token; do
+        if [ -s "$path" ]; then
+            cat "$path"
+            exit 0
+        fi
+    done
+    sleep 1
+done
+exit 42
+"#;
+        assert!(script.contains("/root/.worker-auth-token"));
+        assert!(script.contains("/home/user/.worker-auth-token"));
+        assert!(script.contains("exit 42"));
+    }
 
     #[test]
     fn test_ip_pool_allocation() {

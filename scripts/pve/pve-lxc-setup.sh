@@ -350,15 +350,22 @@ else
     mark_done "07-criu"
 fi
 
-# Step 8: Go (for cmux-execd)
-if step_done "08-go"; then
-    echo "[8/10] Go... SKIP (already done)"
-elif command -v go &>/dev/null; then
+# Step 8: Go (for cmux-execd and worker-daemon)
+GO_VERSION="1.25.4"
+go_version_is_sufficient() {
+    local version
+    version="$(go env GOVERSION 2>/dev/null || true)"
+    [[ "$version" =~ ^go1\.([0-9]+)(\.|$) ]] && (( BASH_REMATCH[1] >= 25 ))
+}
+
+if step_done "08-go" && command -v go &>/dev/null && go_version_is_sufficient; then
+    echo "[8/10] Go... SKIP (already done: $(go version))"
+    mark_done "08-go"
+elif command -v go &>/dev/null && go_version_is_sufficient; then
     echo "[8/10] Go... SKIP (already installed: $(go version))"
     mark_done "08-go"
 else
-    echo "[8/10] Installing Go..."
-    GO_VERSION="1.23.4"
+    echo "[8/10] Installing Go ${GO_VERSION}..."
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
     ln -sf /usr/local/go/bin/go /usr/local/bin/go
     ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
@@ -375,329 +382,18 @@ elif [[ -f /usr/local/bin/cmux-execd ]]; then
 else
     echo "[9/10] Installing cmux-execd..."
 
-    # Create temp build directory
+    # Build the canonical execd source from the repository instead of keeping
+    # a second embedded copy in this setup script.
     EXECD_BUILD_DIR=$(mktemp -d)
-    cd "$EXECD_BUILD_DIR"
+    git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/karlorz/cmux.git "$EXECD_BUILD_DIR/cmux-repo"
+    git -C "$EXECD_BUILD_DIR/cmux-repo" sparse-checkout init --cone
+    git -C "$EXECD_BUILD_DIR/cmux-repo" sparse-checkout set scripts/execd
 
-    # Write the execd source code
-    cat > main.go << 'EXECD_SOURCE'
-package main
-
-import (
-	"bufio"
-	"context"
-	"encoding/json"
-	"errors"
-	"flag"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"os/exec"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-)
-
-// authToken is loaded at startup from /root/.worker-auth-token (or
-// /home/user/.worker-auth-token as fallback). When non-empty, all /exec and
-// /files requests must present the token via Authorization: Bearer header,
-// ?token= query param, or _cmux_auth cookie. When empty (token file absent),
-// the daemon operates in no-auth mode for backward compatibility with older
-// containers that don't have cmux-token-init installed.
-var authToken string
-
-// tokenPaths lists the candidate paths for the auth token file, in priority
-// order. /root/ is the canonical location for PVE-LXC containers; /home/user/
-// is a legacy fallback for user-based containers.
-var tokenPaths = []string{
-	"/root/.worker-auth-token",
-	"/home/user/.worker-auth-token",
-}
-
-// loadAuthToken reads the auth token from the first existing token file.
-// Returns "" if no token file is found (no-auth mode).
-func loadAuthToken() string {
-	for _, p := range tokenPaths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		token := strings.TrimSpace(string(data))
-		if token != "" {
-			return token
-		}
-	}
-	return ""
-}
-
-// verifyAuth checks whether the request presents the expected auth token.
-// Supports Authorization: Bearer <token> header, ?token=<token> query param,
-// and _cmux_auth cookie — same as the cloudrouter worker's verifyAuth.
-func verifyAuth(r *http.Request) bool {
-	if authToken == "" {
-		return true // no token configured → no-auth mode
-	}
-
-	// Check Authorization header
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		if strings.HasPrefix(auth, "Bearer ") {
-			if auth[7:] == authToken {
-				return true
-			}
-		} else if auth == authToken {
-			return true
-		}
-	}
-
-	// Check query parameter
-	if r.URL.Query().Get("token") == authToken {
-		return true
-	}
-
-	// Check cookie
-	if cookie, err := r.Cookie("_cmux_auth"); err == nil && cookie.Value == authToken {
-		return true
-	}
-
-	return false
-}
-
-// authMiddleware wraps a handler with token authentication. When authToken
-// is empty (no token file), requests pass through without auth.
-func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !verifyAuth(r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
-			return
-		}
-		next(w, r)
-	}
-}
-
-type execRequest struct {
-	Command   string `json:"command"`
-	TimeoutMs *int   `json:"timeout_ms"`
-}
-
-type execEvent struct {
-	Type    string `json:"type"`
-	Data    string `json:"data,omitempty"`
-	Code    *int   `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
-func writeJSONLine(w io.Writer, flusher http.Flusher, event execEvent) error {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	if _, err = w.Write(append(payload, '\n')); err != nil {
-		return err
-	}
-	flusher.Flush()
-	return nil
-}
-
-func readPipe(ctx context.Context, reader io.Reader, eventType string, wg *sync.WaitGroup, w io.Writer, flusher http.Flusher) {
-	defer wg.Done()
-	scanner := bufio.NewScanner(reader)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if line == "" {
-			continue
-		}
-		_ = writeJSONLine(w, flusher, execEvent{Type: eventType, Data: line})
-	}
-}
-
-func execHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
-		http.Error(w, "Unsupported Content-Type", http.StatusUnsupportedMediaType)
-		return
-	}
-
-	var payload execRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	command := strings.TrimSpace(payload.Command)
-	if command == "" {
-		http.Error(w, "Command required", http.StatusBadRequest)
-		return
-	}
-
-	var timeout time.Duration
-	timeoutMs := 0
-	if payload.TimeoutMs != nil && *payload.TimeoutMs > 0 {
-		timeoutMs = *payload.TimeoutMs
-		timeout = time.Duration(timeoutMs) * time.Millisecond
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/jsonlines")
-	w.WriteHeader(http.StatusOK)
-
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
-	defer cancel()
-
-	go func() {
-		<-r.Context().Done()
-		cancel()
-	}()
-
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		exitCode := 127
-		_ = writeJSONLine(w, flusher, execEvent{Type: "error", Message: err.Error()})
-		_ = writeJSONLine(w, flusher, execEvent{Type: "exit", Code: &exitCode})
-		return
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go readPipe(r.Context(), stdout, "stdout", &wg, w, flusher)
-	go readPipe(r.Context(), stderr, "stderr", &wg, w, flusher)
-
-	waitErr := cmd.Wait()
-	wg.Wait()
-
-	exitCode := 0
-	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			_ = writeJSONLine(w, flusher, execEvent{Type: "error", Message: fmt.Sprintf("timeout after %dms", timeoutMs)})
-			exitCode = 124
-		} else if errors.As(waitErr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
-	_ = writeJSONLine(w, flusher, execEvent{Type: "exit", Code: &exitCode})
-}
-
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
-}
-
-func main() {
-	portFlag := flag.Int("port", 39375, "port")
-	flag.Parse()
-
-	// Load auth token at startup. When the token file is absent (e.g. older
-	// containers without cmux-token-init), authToken remains "" and the daemon
-	// operates in no-auth mode for backward compatibility.
-	authToken = loadAuthToken()
-	if authToken != "" {
-		log.Printf("auth enabled (token: %s...)", authToken[:8])
-	} else {
-		log.Printf("auth disabled (no token file found)")
-	}
-
-	port := *portFlag
-	if env := os.Getenv("EXECD_PORT"); env != "" {
-		if v, err := strconv.Atoi(env); err == nil {
-			port = v
-		}
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthHandler)
-	mux.HandleFunc("/exec", authMiddleware(execHandler))
-	mux.HandleFunc("/files", authMiddleware(filesHandler))
-	log.Printf("cmux-execd listening on :%d", port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
-}
-
-// filesHandler accepts a tar archive body and extracts it to /workspace.
-// This enables workspace file sync for PVE LXC containers.
-func filesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Create /workspace if it doesn't exist
-	if err := os.MkdirAll("/workspace", 0755); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Stream the request body directly to tar for extraction
-	cmd := exec.Command("tar", "-x", "-C", "/workspace")
-	cmd.Stdin = r.Body
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create stderr pipe: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to start tar: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Read stderr for error messages
-	stderrBytes, _ := io.ReadAll(stderr)
-	waitErr := cmd.Wait()
-
-	if waitErr != nil {
-		errMsg := strings.TrimSpace(string(stderrBytes))
-		if errMsg == "" {
-			errMsg = waitErr.Error()
-		}
-		http.Error(w, fmt.Sprintf("tar extraction failed: %s", errMsg), http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("Files extracted to /workspace")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
-}
-EXECD_SOURCE
-
-    cat > go.mod << 'GOMOD'
-module cmux-execd
-go 1.21
-GOMOD
-
-    # Build the binary
     export PATH="/usr/local/go/bin:$PATH"
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o cmux-execd .
-    mv cmux-execd /usr/local/bin/cmux-execd
-    chmod +x /usr/local/bin/cmux-execd
+    CGO_ENABLED=0 go build -C "$EXECD_BUILD_DIR/cmux-repo/scripts/execd" \
+        -ldflags="-s -w" -o "$EXECD_BUILD_DIR/cmux-execd"
+    install -m 0755 "$EXECD_BUILD_DIR/cmux-execd" /usr/local/bin/cmux-execd
 
     # Create systemd service
     cat > /etc/systemd/system/cmux-execd.service << 'SERVICE'
@@ -720,14 +416,20 @@ StandardError=append:/var/log/cmux/cmux-execd.log
 WantedBy=multi-user.target
 SERVICE
 
-    # Enable and start the service
+    # Enable and start the service once the token generator unit exists.
+    # The generator is declared by the worker-daemon step below, so defer the
+    # initial start on a fresh container until that step has installed it.
     mkdir -p /var/log/cmux
     systemctl daemon-reload
-    systemctl enable cmux-execd
-    systemctl start cmux-execd
+    if [[ -f /etc/systemd/system/cmux-token-generator.service ]]; then
+        systemctl enable cmux-execd
+        systemctl start cmux-token-generator.service
+        systemctl start cmux-execd
+    else
+        log_info "cmux-token-generator.service not installed yet; deferring cmux-execd start"
+    fi
 
     # Cleanup
-    cd /
     rm -rf "$EXECD_BUILD_DIR"
 
     echo "    cmux-execd installed and running on port 39375"
@@ -847,7 +549,9 @@ SERVICE
     systemctl daemon-reload
     systemctl enable cmux-token-generator.service
     systemctl enable cmux-worker-daemon.service
+    systemctl enable cmux-execd
     systemctl start cmux-token-generator.service
+    systemctl start cmux-execd
     systemctl start cmux-worker-daemon.service
 
     cd /
