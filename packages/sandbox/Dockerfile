@@ -314,8 +314,13 @@ RUN bun add -g \
     @anthropic-ai/claude-code \
     @zed-industries/claude-code-acp \
     @google/gemini-cli \
-    opencode-ai \
-    @sourcegraph/amp && \
+    opencode-ai && \
+  # @sourcegraph/amp declares its bin as a nested path (node_modules/@ampcode/cli/
+  # bin/amp.exe) placed by a postinstall that downloads the platform-specific
+  # native binary. bun blocks that lifecycle script (untrusted) and does not
+  # link the amp bin, so install it via npm which runs the postinstall and
+  # links the binary correctly.
+  npm install -g @sourcegraph/amp && \
   find /usr/local/lib/bun/node_modules -name '*.map' -type f -delete && \
   find /usr/local/lib/bun/node_modules -name '*.ts' ! -name '*.d.ts' -type f -delete && \
   find /usr/local/lib/bun/node_modules -type d -name '__tests__' -exec rm -rf {} + 2>/dev/null || true && \
