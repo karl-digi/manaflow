@@ -81,6 +81,7 @@ RUN sed -i 's/"workspace:\*"/"file:..\/shared"/g' package.json && \
     npm install --legacy-peer-deps
 # Copy extension source and build
 COPY packages/vscode-extension/src ./src
+COPY packages/vscode-extension/webview ./webview
 COPY packages/vscode-extension/tsconfig.json ./
 RUN bun run compile && vsce package --allow-missing-repository --no-dependencies --allow-star-activation
 

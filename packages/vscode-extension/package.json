@@ -90,7 +90,7 @@
     "compile": "bun run compile-all",
     "compile-all": "bun run compile-bun && bun run compile-webview",
     "compile-bun": "bun build src/extension.ts --target node --outfile ./out/extension.cjs --external vscode --minify --format cjs",
-    "compile-webview": "bun build webview/ghostty-terminal.ts --outdir ./out/webview --minify && cp webview/ghostty-terminal.css ./out/webview/ && cp ../../node_modules/ghostty-web/ghostty-vt.wasm ./out/webview/",
+    "compile-webview": "bun build webview/ghostty-terminal.ts --outdir ./out/webview --minify && cp webview/ghostty-terminal.css ./out/webview/ && node -e \"require('fs').copyFileSync(require.resolve('ghostty-web/ghostty-vt.wasm'),'out/webview/ghostty-vt.wasm')\"",
     "compile-tsc": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint && npm run compile-tsc",
