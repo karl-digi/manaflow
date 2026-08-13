@@ -571,6 +571,12 @@ class PveLxcClient:
         self._ssh_host_explicit = ssh_host is not None
         self._ssh_host_derived = False
 
+        # Cache for cmux-execd auth tokens, keyed by vmid.
+        # The execd daemon reads /root/.worker-auth-token at startup and
+        # requires a Bearer token for /exec and /files. We fetch it via the
+        # PVE API file endpoint and send it with every HTTP exec request.
+        self._execd_auth_tokens: dict[int, str] = {}
+
         # SSH ControlMaster socket path for connection multiplexing
         # This allows multiple SSH sessions to share a single TCP connection
         self._ssh_control_path: str | None = None
@@ -628,6 +634,84 @@ class PveLxcClient:
     ) -> dict[str, t.Any]:
         """Async wrapper for API request."""
         return await asyncio.to_thread(self._request, method, endpoint, data)
+
+    # -----------------------------------------------------------------------
+    # Execd auth token management
+    # -----------------------------------------------------------------------
+
+    def fetch_execd_auth_token(self, vmid: int) -> str | None:
+        """Fetch the cmux-execd auth token for a container via PVE API.
+
+        Attempts to read /root/.worker-auth-token from the container filesystem
+        using the PVE API. This is a best-effort fallback for when the token
+        wasn't pre-fetched before the execd restart.
+
+        The primary mechanism is pre-fetching the token in
+        task_restart_execd_early() before the execd restarts, because the PVE
+        API file endpoint for LXC may not return file content directly.
+
+        Returns the token string, or None if the token file doesn't exist
+        or cannot be read (meaning the execd may be in no-auth mode, or the
+        token must be pre-fetched by other means).
+        """
+        node = self.get_node()
+        # Try the PVE API file endpoint. For LXC containers, this endpoint
+        # may return file content as raw bytes or JSON-wrapped data.
+        endpoint = (
+            f"/api2/json/nodes/{node}/lxc/{vmid}/files"
+            f"?path=/root/.worker-auth-token"
+        )
+        url = f"{self.api_url}{endpoint}"
+        headers = {
+            "Authorization": f"PVEAPIToken={self.token_id}={self.token_secret}",
+        }
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(
+                req, context=self._ssl_context, timeout=30
+            ) as response:
+                data = response.read()
+                # The PVE API may return raw file content or JSON.
+                # Try JSON first, then fall back to raw content.
+                try:
+                    result = json.loads(data.decode("utf-8", errors="replace"))
+                    if isinstance(result, dict):
+                        token = result.get("data", {}).get("content", "")
+                        if isinstance(token, str) and token.strip():
+                            token = token.strip()
+                            self._execd_auth_tokens[vmid] = token
+                            return token
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+                # Fall back to treating response as raw file content
+                token = data.decode("utf-8", errors="replace").strip()
+                if token and not token.startswith("{"):
+                    self._execd_auth_tokens[vmid] = token
+                    return token
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            pass
+        except Exception:
+            pass
+        return None
+
+    async def afetch_execd_auth_token(self, vmid: int) -> str | None:
+        """Async fetch execd auth token."""
+        return await asyncio.to_thread(self.fetch_execd_auth_token, vmid)
+
+    def get_execd_auth_token(self, vmid: int) -> str | None:
+        """Get the cached execd auth token, fetching it if needed.
+
+        Returns None if no token is configured (no-auth mode).
+        """
+        if vmid in self._execd_auth_tokens:
+            return self._execd_auth_tokens[vmid]
+        return self.fetch_execd_auth_token(vmid)
+
+    def clear_execd_auth_token(self, vmid: int) -> None:
+        """Clear the cached execd auth token (e.g. after a 401)."""
+        self._execd_auth_tokens.pop(vmid, None)
 
     def get_version(self) -> dict[str, t.Any]:
         """Get PVE version info."""
@@ -1243,19 +1327,41 @@ class PveLxcClient:
         if not exec_url:
             return None
 
+        return self._http_exec_with_auth(
+            exec_url, vmid, command, timeout=timeout, check=check
+        )
+
+    def _http_exec_with_auth(
+        self,
+        exec_url: str,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+        _retry_on_401: bool = True,
+    ) -> subprocess.CompletedProcess[str] | None:
+        """Execute HTTP exec with auth token, retrying once on 401."""
         timeout_ms = int((timeout or 600) * 1000)
         body = json.dumps({
             "command": f"HOME=/root {command}",
             "timeout_ms": timeout_ms,
         }).encode("utf-8")
 
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        # Include execd auth token if available. The execd daemon may require
+        # a Bearer token (loaded from /root/.worker-auth-token at startup).
+        auth_token = self.get_execd_auth_token(vmid)
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
         req = urllib.request.Request(
             exec_url,
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
+            headers=headers,
             method="POST",
         )
 
@@ -1295,6 +1401,23 @@ class PveLxcClient:
             # cmux-execd is not available or the request timed out.
             # Return None to trigger fallback to SSH+pct exec if available.
             if e.code in (502, 503, 504, 524):
+                return None
+            # 401 Unauthorized: the execd daemon requires an auth token but
+            # our cached token is missing or stale. Clear the cache and retry
+            # once with a fresh token. If the retry also fails, treat it as a
+            # transport failure (return None) so callers can retry or fall back.
+            if e.code == 401 and _retry_on_401:
+                self.clear_execd_auth_token(vmid)
+                # Re-fetch token via PVE API and retry
+                self.get_execd_auth_token(vmid)
+                return self._http_exec_with_auth(
+                    exec_url, vmid, command,
+                    timeout=timeout, check=check,
+                    _retry_on_401=False,
+                )
+            # 401 after retry, or other client errors: treat as transport failure
+            # so callers retry or fall back to SSH if available
+            if e.code == 401:
                 return None
             error_body = e.read().decode("utf-8", errors="replace")
             stderr_lines.append(f"HTTP exec error {e.code}: {e.reason}\n{error_body}")
@@ -1509,7 +1632,11 @@ class PveLxcClient:
             if self.http_push_file(vmid, local_path, remote_path, timeout=timeout):
                 return
         except RuntimeError as exc:
-            transport_failure = "HTTP exec timed out after" in str(exc) or "HTTP exec connection error:" in str(exc)
+            transport_failure = (
+                "HTTP exec timed out after" in str(exc)
+                or "HTTP exec connection error:" in str(exc)
+                or "HTTP exec error 401" in str(exc)
+            )
             if not transport_failure:
                 raise
 
@@ -4262,8 +4389,33 @@ async def task_restart_execd_early(ctx: PveTaskContext) -> None:
     We use nohup with a small delay because the current HTTP request is being
     handled by the old execd - we need to let the restart happen after this
     request returns.
+
+    Before restarting, we pre-fetch the execd auth token via the current
+    (old) execd so the client has it cached for all post-restart requests.
+    The new execd binary requires a Bearer token for /exec and /files, while
+    the old binary runs in no-auth mode.
     """
     import asyncio
+
+    # Pre-fetch the execd auth token before restarting. The old execd runs in
+    # no-auth mode, so we can read the token file now. After the restart, the
+    # new execd will require this token for all requests.
+    try:
+        token_result = await ctx.client.ahttp_exec(
+            ctx.vmid,
+            "cat /root/.worker-auth-token 2>/dev/null || true",
+            timeout=10,
+            check=False,
+        )
+        if token_result is not None and token_result.returncode == 0:
+            token = token_result.stdout.strip()
+            if token:
+                ctx.client._execd_auth_tokens[ctx.vmid] = token
+                ctx.console.info("[restart-execd-early] Pre-fetched execd auth token")
+            else:
+                ctx.console.info("[restart-execd-early] No auth token file found (no-auth mode)")
+    except Exception as e:
+        ctx.console.info(f"[restart-execd-early] Could not pre-fetch auth token: {e}")
 
     await ctx.run(
         "restart-execd-early",
@@ -5303,6 +5455,12 @@ async def update_existing_template(
         await wait_for_container_ready(work_vmid, client, console=console, require_http_exec=True)
     else:
         console.info(f"Container {work_vmid} is already running")
+        # For an already-running container, the execd may already require auth.
+        # Pre-fetch the auth token via the PVE API so the first exec call works.
+        # If the PVE API file endpoint is unavailable for LXC, this is a no-op
+        # and the token will be fetched on the first 401 retry or by
+        # restart-execd-early.
+        await client.afetch_execd_auth_token(work_vmid)
 
     # Detect which toolchains are installed
     console.always("\nDetecting installed toolchains...")
