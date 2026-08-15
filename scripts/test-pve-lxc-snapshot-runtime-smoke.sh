@@ -39,6 +39,10 @@ printf '%s\n' "${STALE_TOKEN}" >"${tmp_dir}/execd-token-snapshot-deadline.txt"
 chmod 644 "${tmp_dir}/execd-token-snapshot-deadline.txt"
 
 cat >"${tmp_dir}/bash_env" <<'EOF'
+# Unset first so SECONDS is an ordinary variable, not Bash's real-time
+# special one: otherwise a real one-second command sleep accrues wall-clock
+# time and reduces the virtual 600-second probe budget on slow hosts.
+unset SECONDS
 SECONDS=0
 sleep() {
   local duration="${1:-0}"
@@ -178,6 +182,38 @@ EOF
 
 printf '%s\n' '{"results":[{"presetId":"standard","snapshotId":"snapshot-deadline"}]}' >"${tmp_dir}/results.json"
 
+# Focused harness assertion: prove the generated BASH_ENV virtual clock does
+# not accrue real wall time. A real one-second CommandBuiltin sleep must not
+# advance SECONDS; the fake sleep must advance it by exactly its duration.
+clock_focus() {
+  (
+    cd "${tmp_dir}"
+    BASH_ENV="${tmp_dir}/bash_env" bash -s <<'FOCUS_EOF'
+set -euo pipefail
+before="${SECONDS:-0}"
+command sleep 1
+after="${SECONDS:-0}"
+if (( after != before )); then
+  echo "FAIL: real \`command sleep 1\` advanced the virtual clock by $((after - before))s" >&2
+  exit 1
+fi
+sleep 3
+if (( SECONDS != before + 3 )); then
+  echo "FAIL: fake \`sleep 3\` advanced the virtual clock to ${SECONDS}, expected $((before + 3))" >&2
+  exit 1
+fi
+echo "PASS: virtual clock ignores real time; fake sleep advances by exactly three"
+FOCUS_EOF
+  )
+}
+
+# Standalone focus run for TDD: PVE_SMOKE_CLOCK_FOCUS=1 runs only the clock
+# assertion and exits, so the change can be proven red-then-green in isolation.
+if [[ "${PVE_SMOKE_CLOCK_FOCUS:-}" == "1" ]]; then
+  clock_focus || exit 1
+  exit 0
+fi
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -223,6 +259,8 @@ record_field() {
 }
 
 echo "=== PVE LXC snapshot runtime-smoke deadline tests ==="
+
+clock_focus
 
 calls_file="${tmp_dir}/calls.success"
 start_record="${tmp_dir}/start.success"
