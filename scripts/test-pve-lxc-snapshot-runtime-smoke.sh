@@ -16,8 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 runtime_dir="${tmp_dir}/runtime"
-bin_dir="${tmp_dir}/bin"
-mkdir -p "${runtime_dir}" "${bin_dir}"
+mkdir -p "${runtime_dir}"
 cp "${source_script}" "${runtime_dir}/pve-lxc-snapshot-runtime-smoke.sh"
 
 cat >"${runtime_dir}/pve-lxc-networkd-verify.sh" <<'EOF'
@@ -32,56 +31,50 @@ exit 0
 EOF
 chmod +x "${runtime_dir}/pve-lxc-networkd-diag.sh"
 
-cat >"${bin_dir}/timeout" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-shift
-exec "$@"
-EOF
-chmod +x "${bin_dir}/timeout"
-
-cat >"${bin_dir}/devsh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-command_name="${1:-}"
-shift || true
-
-case "${command_name}" in
-  start)
-    echo "pvelxc-deadline"
-    ;;
-  exec)
-    calls=0
-    if [[ -f "${DEVSH_CALLS_FILE}" ]]; then
-      calls="$(<"${DEVSH_CALLS_FILE}")"
-    fi
-    calls=$((calls + 1))
-    printf '%s\n' "${calls}" >"${DEVSH_CALLS_FILE}"
-
-    if [[ "${DEVSH_MODE}" == "fail-then-succeed" && "${calls}" -gt 40 ]]; then
-      echo "exec_ready"
-      exit 0
-    fi
-
-    echo "exec endpoint not ready" >&2
-    exit 1
-    ;;
-  delete)
-    ;;
-  *)
-    echo "unexpected devsh command: ${command_name}" >&2
-    exit 1
-    ;;
-esac
-EOF
-chmod +x "${bin_dir}/devsh"
-
 cat >"${tmp_dir}/bash_env" <<'EOF'
 SECONDS=0
 sleep() {
   local duration="${1:-0}"
   SECONDS=$((SECONDS + duration))
+}
+# In-process fakes: probes must not spawn real subprocesses, or bash's
+# SECONDS variable accrues wall-clock time and the 600-second deadline
+# fires a probe early on slow machines.
+timeout() {
+  shift
+  "$@"
+}
+devsh() {
+  local command_name="${1:-}"
+  shift || true
+
+  case "${command_name}" in
+    start)
+      echo "pvelxc-deadline"
+      ;;
+    exec)
+      local calls=0
+      if [[ -f "${DEVSH_CALLS_FILE}" ]]; then
+        IFS= read -r calls <"${DEVSH_CALLS_FILE}" || true
+      fi
+      calls=$((calls + 1))
+      printf '%s\n' "${calls}" >"${DEVSH_CALLS_FILE}"
+
+      if [[ "${DEVSH_MODE}" == "fail-then-succeed" && "${calls}" -gt 40 ]]; then
+        echo "exec_ready"
+        return 0
+      fi
+
+      echo "exec endpoint not ready" >&2
+      return 1
+      ;;
+    delete)
+      ;;
+    *)
+      echo "unexpected devsh command: ${command_name}" >&2
+      return 1
+      ;;
+  esac
 }
 EOF
 
@@ -97,8 +90,7 @@ run_smoke() {
   local calls_file="$2"
   (
     cd "${tmp_dir}"
-    PATH="${bin_dir}:${PATH}" \
-      BASH_ENV="${tmp_dir}/bash_env" \
+    BASH_ENV="${tmp_dir}/bash_env" \
       DEVSH_MODE="${mode}" \
       DEVSH_CALLS_FILE="${calls_file}" \
       bash "${runtime_dir}/pve-lxc-snapshot-runtime-smoke.sh" "${tmp_dir}/results.json"
