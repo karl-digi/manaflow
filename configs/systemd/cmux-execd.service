@@ -1,6 +1,7 @@
 [Unit]
 Description=Cmux Exec Daemon - HTTP command execution service
-After=network-online.target
+After=network-online.target cmux-token-generator.service
+Requires=cmux-token-generator.service
 Wants=network-online.target
 
 [Service]

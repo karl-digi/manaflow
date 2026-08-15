@@ -13,15 +13,26 @@ LEGACY_BOOT_ID_FILE="/home/user/.token-boot-id"
 
 CURRENT_BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "unknown")
 
-# Only skip regeneration if ALL required token files exist and boot ID matches
-if [ -f "$BOOT_ID_FILE" ] && [ -f "$AUTH_TOKEN_FILE" ] && [ -f "$VSCODE_TOKEN_FILE" ]; then
-    SAVED_BOOT_ID=$(cat "$BOOT_ID_FILE" 2>/dev/null || echo "")
-    if [ "$CURRENT_BOOT_ID" = "$SAVED_BOOT_ID" ]; then
-        exit 0
-    fi
+AUTH_TOKEN="${CMUX_EXECD_AUTH_TOKEN:-}"
+if [[ -z "$AUTH_TOKEN" && -r /proc/1/environ ]]; then
+  AUTH_TOKEN="$({ tr '\0' '\n' </proc/1/environ | sed -n 's/^CMUX_EXECD_AUTH_TOKEN=//p' | head -n 1; } || true)"
 fi
+if [[ -n "$AUTH_TOKEN" ]]; then
+  [[ "$AUTH_TOKEN" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "cmux-token-init: invalid CMUX_EXECD_AUTH_TOKEN" >&2
+    exit 1
+  }
+else
+  # Only skip regeneration if ALL required token files exist and boot ID matches
+  if [ -f "$BOOT_ID_FILE" ] && [ -f "$AUTH_TOKEN_FILE" ] && [ -f "$VSCODE_TOKEN_FILE" ]; then
+      SAVED_BOOT_ID=$(cat "$BOOT_ID_FILE" 2>/dev/null || echo "")
+      if [ "$CURRENT_BOOT_ID" = "$SAVED_BOOT_ID" ]; then
+          exit 0
+      fi
+  fi
 
-AUTH_TOKEN=$(openssl rand -hex 32)
+  AUTH_TOKEN=$(openssl rand -hex 32)
+fi
 printf "%s" "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
 chmod 644 "$AUTH_TOKEN_FILE"
 
