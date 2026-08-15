@@ -24,21 +24,10 @@ func (t *rewriteExecTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-func newExecReadyTestClient(t *testing.T, execHandler http.HandlerFunc) *Client {
+func newExecTestClient(t *testing.T, apiHandler http.HandlerFunc, execHandler http.HandlerFunc) *Client {
 	t.Helper()
 
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/dns"):
-			_, _ = w.Write([]byte(`{"data":{"search":""}}`))
-		case strings.HasSuffix(r.URL.Path, "/config"):
-			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
-		default:
-			t.Fatalf("unexpected PVE API path: %s", r.URL.Path)
-		}
-	}))
+	apiServer := httptest.NewServer(apiHandler)
 	t.Cleanup(apiServer.Close)
 
 	execServer := httptest.NewServer(execHandler)
@@ -59,6 +48,27 @@ func newExecReadyTestClient(t *testing.T, execHandler http.HandlerFunc) *Client 
 		},
 		node: "test-node",
 	}
+}
+
+func newExecReadyTestClient(t *testing.T, execHandler http.HandlerFunc) *Client {
+	t.Helper()
+
+	return newExecTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/dns"):
+			_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+		case strings.HasSuffix(r.URL.Path, "/config"):
+			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			// Token file absent in the container — execd in no-auth mode.
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected PVE API path: %s", r.URL.Path)
+		}
+	}), execHandler)
 }
 
 func TestVerifyTimezoneCommand(t *testing.T) {
@@ -191,8 +201,8 @@ func TestExecCommandSendsBearerTokenWhenCached(t *testing.T) {
 
 func TestExecCommandRetriesOn401WithFreshToken(t *testing.T) {
 	var (
-		mu          sync.Mutex
-		callCount   int
+		mu           sync.Mutex
+		callCount    int
 		receivedAuth string
 	)
 
@@ -237,4 +247,186 @@ func TestExecCommandRetriesOn401WithFreshToken(t *testing.T) {
 	}
 	// First call should have sent the stale token.
 	_ = receivedAuth // value is from the last call; we just verify it ran twice.
+}
+
+func TestExecCommandTokenFetchViaAPI(t *testing.T) {
+	tests := []struct {
+		name        string
+		filesStatus int
+		filesBody   string
+		wantAuth    string
+	}{
+		{
+			name:        "json wrapped token",
+			filesStatus: http.StatusOK,
+			filesBody:   `{"data":{"content":"api-secret-token"}}`,
+			wantAuth:    "Bearer api-secret-token",
+		},
+		{
+			name:        "raw content token",
+			filesStatus: http.StatusOK,
+			filesBody:   "raw-secret-token\n",
+			wantAuth:    "Bearer raw-secret-token",
+		},
+		{
+			name:        "token file absent",
+			filesStatus: http.StatusNotFound,
+			filesBody:   `{"data":null}`,
+			wantAuth:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				mu         sync.Mutex
+				gotAuth    string
+				filesCalls int
+			)
+
+			client := newExecTestClient(t,
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch {
+					case strings.HasSuffix(r.URL.Path, "/dns"):
+						_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+					case strings.HasSuffix(r.URL.Path, "/config"):
+						_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+					case strings.HasSuffix(r.URL.Path, "/files"):
+						mu.Lock()
+						filesCalls++
+						mu.Unlock()
+						if got := r.Header.Get("Authorization"); got != "PVEAPIToken=token" {
+							t.Errorf("files request Authorization = %q, want %q", got, "PVEAPIToken=token")
+						}
+						if got := r.URL.Query().Get("path"); got != "/root/.worker-auth-token" {
+							t.Errorf("files request path = %q, want %q", got, "/root/.worker-auth-token")
+						}
+						w.WriteHeader(tt.filesStatus)
+						_, _ = w.Write([]byte(tt.filesBody))
+					default:
+						t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+					}
+				}),
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					gotAuth = r.Header.Get("Authorization")
+					mu.Unlock()
+					w.Header().Set("Content-Type", "application/jsonlines")
+					_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+				}),
+			)
+
+			stdout, _, exitCode, err := client.ExecCommand(context.Background(), "200", "echo ok")
+			if err != nil {
+				t.Fatalf("ExecCommand() error = %v", err)
+			}
+			if exitCode != 0 {
+				t.Fatalf("ExecCommand() exitCode = %d, want 0", exitCode)
+			}
+			if stdout != "ok" {
+				t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if gotAuth != tt.wantAuth {
+				t.Errorf("exec Authorization = %q, want %q", gotAuth, tt.wantAuth)
+			}
+			if filesCalls != 1 {
+				t.Errorf("files fetch calls = %d, want 1", filesCalls)
+			}
+		})
+	}
+}
+
+func TestExecCommandRetriesOn401WithFreshTokenViaAPI(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		execCalls  int
+		filesCalls int
+		auths      []string
+	)
+
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/dns"):
+				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+			case strings.HasSuffix(r.URL.Path, "/config"):
+				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+			case strings.HasSuffix(r.URL.Path, "/files"):
+				mu.Lock()
+				filesCalls++
+				mu.Unlock()
+				_, _ = w.Write([]byte(`{"data":{"content":"fresh-api-token"}}`))
+			default:
+				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+			}
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			execCalls++
+			auths = append(auths, r.Header.Get("Authorization"))
+			first := execCalls == 1
+			mu.Unlock()
+
+			if first {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/jsonlines")
+			_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+		}),
+	)
+
+	// Start with a stale token; the 401 should invalidate the cache and
+	// trigger exactly one re-fetch via the PVE API before the retry.
+	client.execToken = "stale-token"
+
+	stdout, _, exitCode, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err != nil {
+		t.Fatalf("ExecCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("ExecCommand() exitCode = %d, want 0", exitCode)
+	}
+	if stdout != "ok" {
+		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if execCalls != 2 {
+		t.Errorf("exec calls = %d, want 2 (401 + retry)", execCalls)
+	}
+	if filesCalls != 1 {
+		t.Errorf("files fetch calls = %d, want 1", filesCalls)
+	}
+	if len(auths) != 2 || auths[0] != "Bearer stale-token" || auths[1] != "Bearer fresh-api-token" {
+		t.Errorf("exec Authorization sequence = %q, want [Bearer stale-token Bearer fresh-api-token]", auths)
+	}
+}
+
+func TestFetchExecTokenPrefersSSHWhenHostSet(t *testing.T) {
+	t.Setenv("PVE_SSH_HOST", "127.0.0.1")
+
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("PVE API must not be called when PVE_SSH_HOST is set, got %s", r.URL.Path)
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("exec endpoint must not be called, got %s", r.URL.Path)
+		}),
+	)
+
+	// No sshd on 127.0.0.1 (or no ssh binary): the SSH path must be taken and
+	// must fail with a fetch error rather than touching the PVE API.
+	_, err := client.fetchExecToken(context.Background(), 200)
+	if err == nil {
+		t.Fatal("fetchExecToken() error = nil, want SSH fetch error")
+	}
+	if !strings.Contains(err.Error(), "fetch exec token via SSH") {
+		t.Errorf("fetchExecToken() error = %q, want SSH fetch error", err)
+	}
 }

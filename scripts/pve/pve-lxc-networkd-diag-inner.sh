@@ -72,3 +72,17 @@ echo ""
 
 echo "=== journalctl -u systemd-networkd -n 200 ==="
 journalctl -u systemd-networkd --no-pager -n 200 2>/dev/null || true
+echo ""
+
+echo "=== cmux-execd diagnostics ==="
+systemctl is-active cmux-execd.service cmux-token-generator.service 2>&1 || true
+echo ""
+systemctl status cmux-execd.service --no-pager -n 50 2>&1 || true
+echo ""
+ss -ltnp 2>/dev/null | grep -E '39375|39380' || echo "no 39375/39380 listeners"
+echo ""
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://127.0.0.1:39375/healthz 2>&1 || true
+echo ""
+ls -la /root/.worker-auth-token 2>/dev/null || echo "token file absent"
+echo ""
+tail -100 /var/log/cmux/cmux-execd.log 2>/dev/null || journalctl -u cmux-execd -n 100 --no-pager 2>/dev/null || echo "no execd logs available"

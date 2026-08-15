@@ -183,7 +183,11 @@ func ParseVMID(instanceID string) (int, bool) {
 	return 0, false
 }
 
-func (c *Client) apiRequestData(ctx context.Context, method, path string, params url.Values) (json.RawMessage, error) {
+// apiRequestRaw performs an authenticated PVE API request and returns the raw
+// response body and status code. Unlike apiRequestData it does not enforce a
+// 2xx status or decode the PVE JSON envelope, so callers can handle status
+// codes and raw payloads (e.g. file contents) themselves.
+func (c *Client) apiRequestRaw(ctx context.Context, method, path string, params url.Values) ([]byte, int, error) {
 	reqURL := c.apiURL + path
 	headers := http.Header{}
 	headers.Set("Authorization", "PVEAPIToken="+c.apiToken)
@@ -205,27 +209,35 @@ func (c *Client) apiRequestData(ctx context.Context, method, path string, params
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header = headers
 
 	resp, err := c.apiHTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
+		return nil, 0, err
+	}
+	return raw, resp.StatusCode, nil
+}
+
+func (c *Client) apiRequestData(ctx context.Context, method, path string, params url.Values) (json.RawMessage, error) {
+	raw, status, err := c.apiRequestRaw(ctx, method, path, params)
+	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		msg := strings.TrimSpace(string(raw))
 		if msg == "" {
 			msg = "(empty response)"
 		}
-		return nil, fmt.Errorf("PVE API error %d: %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("PVE API error %d: %s", status, msg)
 	}
 
 	var env pveEnvelope
