@@ -577,7 +577,9 @@ func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus in
 			rec.mu.Unlock()
 			if putStatus != 0 {
 				w.WriteHeader(putStatus)
-				_, _ = w.Write([]byte(`{"errors":{"env":"rejected"}}`))
+				// Deliberately echo the submitted env in the error body so
+				// a leak would surface the token in the returned error.
+				_, _ = w.Write([]byte(`{"errors":{"env":"` + r.Form.Get("env") + `"}}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":null}`))
@@ -655,6 +657,15 @@ func TestExecdTokenFileInjectedBeforeCloneStart(t *testing.T) {
 	if got := strings.Count(rec.putEnv, "CMUX_EXECD_AUTH_TOKEN="); got != 1 {
 		t.Errorf("PUT env has %d CMUX_EXECD_AUTH_TOKEN entries, want exactly 1: %q", got, rec.putEnv)
 	}
+	rec.mu.Lock()
+	configCalls, putCalls := rec.configCalls, rec.putCalls
+	rec.mu.Unlock()
+	if configCalls != 1 {
+		t.Errorf("config GET calls = %d, want exactly 1", configCalls)
+	}
+	if putCalls != 1 {
+		t.Errorf("config PUT calls = %d, want exactly 1", putCalls)
+	}
 
 	client.execTokenMu.Lock()
 	cached := client.execToken
@@ -683,6 +694,15 @@ func TestExecdTokenFileReplacesStaleEntry(t *testing.T) {
 	}
 	if got := strings.Count(rec.putEnv, "CMUX_EXECD_AUTH_TOKEN="); got != 1 {
 		t.Errorf("PUT env has %d CMUX_EXECD_AUTH_TOKEN entries, want exactly 1: %q", got, rec.putEnv)
+	}
+	rec.mu.Lock()
+	configCalls, putCalls := rec.configCalls, rec.putCalls
+	rec.mu.Unlock()
+	if configCalls != 1 {
+		t.Errorf("config GET calls = %d, want exactly 1", configCalls)
+	}
+	if putCalls != 1 {
+		t.Errorf("config PUT calls = %d, want exactly 1", putCalls)
 	}
 }
 
@@ -715,6 +735,12 @@ func TestExecdTokenFileNoUpdateWithoutFile(t *testing.T) {
 			srv, rec := newStartInstanceTestServer(t, "", 0)
 			client := newStartTestClient(t, srv)
 
+			// A prior smoke clone's cached token must be cleared so this
+			// instance falls back to its SSH/API token path.
+			client.execTokenMu.Lock()
+			client.execToken = testExecdToken
+			client.execTokenMu.Unlock()
+
 			if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err != nil {
 				t.Fatalf("StartInstance() error = %v", err)
 			}
@@ -733,7 +759,7 @@ func TestExecdTokenFileNoUpdateWithoutFile(t *testing.T) {
 			cached := client.execToken
 			client.execTokenMu.Unlock()
 			if cached != "" {
-				t.Errorf("cached exec token = %q, want empty (no injection)", cached)
+				t.Errorf("cached exec token = %q, want cleared (no injection)", cached)
 			}
 		})
 	}
@@ -773,6 +799,8 @@ func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
 
 	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err == nil {
 		t.Fatal("StartInstance() error = nil, want config injection error")
+	} else if strings.Contains(err.Error(), testExecdToken) {
+		t.Errorf("StartInstance() error leaks the injected token: %v", err)
 	}
 	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
 		t.Fatalf("clone deletion not requested after injection failure; requests: %v", rec.reqs)

@@ -65,7 +65,8 @@ type Client struct {
 	execToken   string
 
 	// execRetryBaseDelay is the base backoff between exec attempts; 0 means
-	// the default (2s). Tests set it to 0 to keep retry loops fast.
+	// the default (2s). Tests set a short nonzero delay to keep retry loops
+	// fast.
 	execRetryBaseDelay time.Duration
 }
 
@@ -399,20 +400,23 @@ func upsertRuntimeEnv(env, token string) string {
 
 // setContainerRuntimeEnv installs the execd smoke token in the container's
 // runtime env via the authenticated PVE config endpoint, preserving all
-// existing entries.
+// existing entries. Errors are sanitized: a PVE response body could echo the
+// submitted env (and with it the token), so only fixed messages are returned.
 func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) error {
 	cfg, err := c.getContainerConfig(ctx, vmid)
 	if err != nil {
-		return err
+		return errors.New("read container runtime env failed")
 	}
 	node, err := c.getNode(ctx)
 	if err != nil {
-		return err
+		return errors.New("read container runtime env failed")
 	}
-	_, err = c.apiRequestData(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
+	if _, err := c.apiRequestData(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
 		"env": []string{upsertRuntimeEnv(cfg.Env, token)},
-	})
-	return err
+	}); err != nil {
+		return errors.New("update container runtime env failed")
+	}
+	return nil
 }
 
 func (c *Client) getContainerIP(ctx context.Context, vmid int) (string, error) {
@@ -743,6 +747,12 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 		instanceID = generated
 	}
 	hostname := instanceID
+
+	// A previous start's injected token must not leak into this instance:
+	// without a token file the cache refills via the SSH/API fallback.
+	c.execTokenMu.Lock()
+	c.execToken = ""
+	c.execTokenMu.Unlock()
 
 	// Read/validate the optional execd smoke token before any clone side
 	// effects, so malformed content fails without creating a container.
