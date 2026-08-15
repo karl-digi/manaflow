@@ -48,9 +48,13 @@ func newExecTestClient(t *testing.T, apiHandler http.HandlerFunc, execHandler ht
 		execHTTP: &http.Client{
 			Transport: &rewriteExecTransport{target: targetURL},
 		},
-		node: "test-node",
+		node:               "test-node",
+		execRetryBaseDelay: time.Nanosecond,
 	}
 }
+
+// execTestToken is a synthetic 64-character lowercase hex token fixture.
+const execTestToken = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
 func newExecReadyTestClient(t *testing.T, execHandler http.HandlerFunc) *Client {
 	t.Helper()
@@ -349,7 +353,7 @@ func TestExecCommandTokenFetchViaAPI(t *testing.T) {
 
 func TestExecCommandTokenFromEnvFile(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "execd-token.txt")
-	if err := os.WriteFile(tokenFile, []byte("env-file-secret-token\n"), 0o600); err != nil {
+	if err := os.WriteFile(tokenFile, []byte(execTestToken+"\n"), 0o600); err != nil {
 		t.Fatalf("write token file: %v", err)
 	}
 	t.Setenv("PVE_EXECD_TOKEN_FILE", tokenFile)
@@ -399,56 +403,31 @@ func TestExecCommandTokenFromEnvFile(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if gotAuth != "Bearer env-file-secret-token" {
-		t.Errorf("exec Authorization = %q, want %q", gotAuth, "Bearer env-file-secret-token")
+	if gotAuth != "Bearer "+execTestToken {
+		t.Errorf("exec Authorization = %q, want %q", gotAuth, "Bearer "+execTestToken)
 	}
 	if filesCalls != 0 {
 		t.Errorf("files fetch calls = %d, want 0 (env file must bypass the PVE API)", filesCalls)
 	}
 }
 
-func TestExecCommandTokenFromEnvFileMissing(t *testing.T) {
-	// A configured-but-missing env token file means no persisted token was
-	// produced (no-auth execd); the exec must proceed without a token.
+func TestExecdTokenFileMissingRejected(t *testing.T) {
+	// A configured-but-missing token file is a misconfiguration: the exec
+	// cannot authenticate with the injected clone token, so the fetch must
+	// fail without touching SSH or the PVE API.
 	t.Setenv("PVE_EXECD_TOKEN_FILE", filepath.Join(t.TempDir(), "missing-token.txt"))
-
-	var (
-		mu      sync.Mutex
-		gotAuth string
-	)
 
 	client := newExecTestClient(t,
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case strings.HasSuffix(r.URL.Path, "/dns"):
-				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
-			case strings.HasSuffix(r.URL.Path, "/config"):
-				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
-			default:
-				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
-			}
+			t.Errorf("PVE API must not be reached for a missing token file, got %s", r.URL.Path)
 		}),
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			gotAuth = r.Header.Get("Authorization")
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/jsonlines")
-			_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+			t.Errorf("exec endpoint must not be reached for a missing token file, got %s", r.URL.Path)
 		}),
 	)
 
-	stdout, _, _, err := client.ExecCommand(context.Background(), "200", "echo ok")
-	if err != nil {
-		t.Fatalf("ExecCommand() error = %v", err)
-	}
-	if stdout != "ok" {
-		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if gotAuth != "" {
-		t.Errorf("exec Authorization = %q, want empty (no-auth mode)", gotAuth)
+	if _, err := client.fetchExecToken(context.Background(), 200); err == nil {
+		t.Fatal("fetchExecToken() error = nil, want missing-file error")
 	}
 }
 
@@ -541,5 +520,97 @@ func TestFetchExecTokenPrefersSSHWhenHostSet(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fetch exec token via SSH") {
 		t.Errorf("fetchExecToken() error = %q, want SSH fetch error", err)
+	}
+}
+
+func TestTryHTTPExecReturnsErrorOnNonOKStatus(t *testing.T) {
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/dns"):
+				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+			case strings.HasSuffix(r.URL.Path, "/config"):
+				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+			default:
+				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+			}
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"Bad Gateway"}`))
+		}),
+	)
+
+	_, err := client.tryHTTPExec(context.Background(), "https://port-39375-cmux-200.example.com", "echo ok", 0, "")
+	if err == nil {
+		t.Fatal("tryHTTPExec() error = nil, want HTTP 502 error")
+	}
+	if !strings.Contains(err.Error(), "HTTP 502") {
+		t.Errorf("tryHTTPExec() error = %v, want it to mention HTTP 502", err)
+	}
+}
+
+func TestTryHTTPExecReturnsErrorOnConnectionFailure(t *testing.T) {
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("exec handler must not be reached")
+		}),
+	)
+
+	// Point the exec transport at a closed listener so the request fails
+	// with a connection error instead of a response.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL, err := url.Parse(dead.URL)
+	if err != nil {
+		t.Fatalf("parse dead server URL: %v", err)
+	}
+	dead.Close()
+	client.execHTTP = &http.Client{Transport: &rewriteExecTransport{target: deadURL}}
+
+	_, err = client.tryHTTPExec(context.Background(), "https://port-39375-cmux-200.example.com", "echo ok", 0, "")
+	if err == nil {
+		t.Fatal("tryHTTPExec() error = nil, want connection error")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("tryHTTPExec() error = %v, want it to mention connection refused", err)
+	}
+}
+
+func TestExecCommandSurfacesLastError(t *testing.T) {
+	// A persistent 401 must surface in the final error (with the fast retry
+	// base delay of 0 set by the test client) instead of a generic message.
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/dns"):
+				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+			case strings.HasSuffix(r.URL.Path, "/config"):
+				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+			case strings.HasSuffix(r.URL.Path, "/files"):
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"data":null}`))
+			default:
+				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+			}
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
+		}),
+	)
+
+	_, _, _, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err == nil {
+		t.Fatal("ExecCommand() error = nil, want surfaced last error")
+	}
+	if !strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Errorf("ExecCommand() error = %v, want it to mention 401 Unauthorized", err)
+	}
+	if !strings.Contains(err.Error(), "last error:") {
+		t.Errorf("ExecCommand() error = %v, want it to mention last error", err)
 	}
 }

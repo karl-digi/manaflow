@@ -23,6 +23,9 @@ import (
 const (
 	defaultSnapshotID   = "snapshot_6b744b32"
 	defaultTemplateVMID = 9027
+
+	execTokenEnvVar = "PVE_EXECD_TOKEN_FILE"
+	execTokenEnvKey = "CMUX_EXECD_AUTH_TOKEN"
 )
 
 type SnapshotResolver func(snapshotID string) (templateVMID int, err error)
@@ -60,6 +63,10 @@ type Client struct {
 	// doesn't exist (older containers without cmux-token-init).
 	execTokenMu sync.Mutex
 	execToken   string
+
+	// execRetryBaseDelay is the base backoff between exec attempts; 0 means
+	// the default (2s). Tests set it to 0 to keep retry loops fast.
+	execRetryBaseDelay time.Duration
 }
 
 type Instance struct {
@@ -107,12 +114,14 @@ type pveContainerStatus struct {
 type pveContainerConfig struct {
 	Net0     string `json:"net0,omitempty"`
 	Hostname string `json:"hostname,omitempty"`
+	Env      string `json:"env,omitempty"`
 }
 
 var (
 	reDigits     = regexp.MustCompile(`^\d+$`)
 	reCmuxVmid   = regexp.MustCompile(`^cmux-(\d+)$`)
 	reSnapshotID = regexp.MustCompile(`^snapshot_[a-z0-9]+$`)
+	reExecdToken = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 func NewClient(cfg Config) (*Client, error) {
@@ -128,14 +137,15 @@ func NewClient(cfg Config) (*Client, error) {
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !cfg.VerifyTLS}
 
 	return &Client{
-		apiURL:           apiURL,
-		apiToken:         cfg.APIToken,
-		publicDomain:     strings.TrimSpace(cfg.PublicDomain),
-		verifyTLS:        cfg.VerifyTLS,
-		apiHTTP:          &http.Client{Transport: transport, Timeout: 180 * time.Second},
-		execHTTP:         &http.Client{Timeout: 0},
-		snapshotResolver: cfg.SnapshotResolver,
-		node:             strings.TrimSpace(cfg.Node),
+		apiURL:             apiURL,
+		apiToken:           cfg.APIToken,
+		publicDomain:       strings.TrimSpace(cfg.PublicDomain),
+		verifyTLS:          cfg.VerifyTLS,
+		apiHTTP:            &http.Client{Transport: transport, Timeout: 180 * time.Second},
+		execHTTP:           &http.Client{Timeout: 0},
+		snapshotResolver:   cfg.SnapshotResolver,
+		node:               strings.TrimSpace(cfg.Node),
+		execRetryBaseDelay: 2 * time.Second,
 	}, nil
 }
 
@@ -344,6 +354,65 @@ func (c *Client) getContainerConfig(ctx context.Context, vmid int) (pveContainer
 		return pveContainerConfig{}, err
 	}
 	return apiRequest[pveContainerConfig](ctx, c, http.MethodGet, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), nil)
+}
+
+// readExecTokenFile reads the optional execd smoke token from
+// PVE_EXECD_TOKEN_FILE. A blank/unset variable means no token. The trimmed
+// content must be exactly 64 lowercase hex characters; a trailing newline
+// from the token generator is accepted. Errors never include the file path
+// or the token content.
+func readExecTokenFile() (string, error) {
+	tokenFile := strings.TrimSpace(os.Getenv(execTokenEnvVar))
+	if tokenFile == "" {
+		return "", nil
+	}
+	raw, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return "", errors.New("read execd token file failed")
+	}
+	token := strings.TrimSpace(string(raw))
+	if !reExecdToken.MatchString(token) {
+		return "", errors.New("invalid execd token: expected exactly 64 lowercase hex characters")
+	}
+	return token, nil
+}
+
+// upsertRuntimeEnv replaces every CMUX_EXECD_AUTH_TOKEN entry in a
+// NUL-separated PVE runtime-env string with a single entry for token,
+// preserving all other entries exactly once. An empty token removes the
+// entry entirely.
+func upsertRuntimeEnv(env, token string) string {
+	prefix := execTokenEnvKey + "="
+	entries := strings.Split(env, "\x00")
+	out := make([]string, 0, len(entries)+1)
+	for _, entry := range entries {
+		if entry == "" || strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if token != "" {
+		out = append(out, prefix+token)
+	}
+	return strings.Join(out, "\x00")
+}
+
+// setContainerRuntimeEnv installs the execd smoke token in the container's
+// runtime env via the authenticated PVE config endpoint, preserving all
+// existing entries.
+func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) error {
+	cfg, err := c.getContainerConfig(ctx, vmid)
+	if err != nil {
+		return err
+	}
+	node, err := c.getNode(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = c.apiRequestData(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
+		"env": []string{upsertRuntimeEnv(cfg.Env, token)},
+	})
+	return err
 }
 
 func (c *Client) getContainerIP(ctx context.Context, vmid int) (string, error) {
@@ -675,6 +744,13 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 	}
 	hostname := instanceID
 
+	// Read/validate the optional execd smoke token before any clone side
+	// effects, so malformed content fails without creating a container.
+	token, err := readExecTokenFile()
+	if err != nil {
+		return nil, err
+	}
+
 	domainSuffix, _ := c.getDomainSuffix(ctx)
 	fqdn := ""
 	if domainSuffix != "" {
@@ -697,6 +773,18 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 				continue
 			}
 			return nil, err
+		}
+
+		if token != "" {
+			if err := c.setContainerRuntimeEnv(ctx, vmid, token); err != nil {
+				_ = c.deleteContainer(ctx, vmid)
+				return nil, fmt.Errorf("set container runtime env: %w", err)
+			}
+			// Cache the injected clone token so the immediate timezone call
+			// authenticates with it instead of re-fetching.
+			c.execTokenMu.Lock()
+			c.execToken = token
+			c.execTokenMu.Unlock()
 		}
 
 		if err := c.startContainer(ctx, vmid); err != nil {

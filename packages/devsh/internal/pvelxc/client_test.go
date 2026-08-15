@@ -1,13 +1,21 @@
 package pvelxc
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/karlorz/devsh/internal/provider"
 )
+
+// testExecdToken is a synthetic 64-character lowercase hex token fixture.
+const testExecdToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func TestIsPveLxcInstanceID(t *testing.T) {
 	tests := []struct {
@@ -380,5 +388,396 @@ func TestResolveSnapshotFromManifestOrDefaultUsesUpdatedFallback(t *testing.T) {
 	}
 	if templateVMID == 9045 {
 		t.Fatalf("resolveSnapshotFromManifestOrDefault(\"\") unexpectedly returned stale template VMID 9045")
+	}
+}
+
+func TestRuntimeEnvUpsert(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		token string
+		want  string
+	}{
+		{
+			name:  "empty env appends token",
+			env:   "",
+			token: testExecdToken,
+			want:  "CMUX_EXECD_AUTH_TOKEN=" + testExecdToken,
+		},
+		{
+			name:  "preserves unrelated entries exactly once",
+			env:   "EXISTING=value",
+			token: testExecdToken,
+			want:  "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken,
+		},
+		{
+			name:  "replaces stale entry instead of duplicating",
+			env:   "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=old",
+			token: testExecdToken,
+			want:  "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken,
+		},
+		{
+			name:  "removes all stale entries before appending",
+			env:   "A=1\x00CMUX_EXECD_AUTH_TOKEN=old\x00B=2\x00CMUX_EXECD_AUTH_TOKEN=older",
+			token: testExecdToken,
+			want:  "A=1\x00B=2\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken,
+		},
+		{
+			name:  "empty token removes entry",
+			env:   "A=1\x00CMUX_EXECD_AUTH_TOKEN=old\x00B=2",
+			token: "",
+			want:  "A=1\x00B=2",
+		},
+		{
+			name:  "keeps similarly named keys",
+			env:   "CMUX_EXECD_AUTH_TOKEN_EXTRA=x\x00CMUX_EXECD_AUTH_TOKEN=old",
+			token: testExecdToken,
+			want:  "CMUX_EXECD_AUTH_TOKEN_EXTRA=x\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := upsertRuntimeEnv(tt.env, tt.token)
+			if got != tt.want {
+				t.Errorf("upsertRuntimeEnv(%q, %q) = %q, want %q", tt.env, tt.token, got, tt.want)
+			}
+			if n := strings.Count(got, "CMUX_EXECD_AUTH_TOKEN="); n > 1 {
+				t.Errorf("upsertRuntimeEnv() output has %d CMUX_EXECD_AUTH_TOKEN entries, want at most 1: %q", n, got)
+			}
+		})
+	}
+}
+
+func TestExecdTokenFileReader(t *testing.T) {
+	valid := testExecdToken
+
+	tests := []struct {
+		name    string
+		env     string // used verbatim when usePath is false
+		usePath bool
+		content string
+		write   bool
+		want    string
+		wantErr bool
+	}{
+		{name: "unset or empty", env: ""},
+		{name: "blank value", env: "   "},
+		{name: "valid token with trailing newline", usePath: true, content: valid + "\n", write: true, want: valid},
+		{name: "valid token with trailing CRLF", usePath: true, content: valid + "\r\n", write: true, want: valid},
+		{name: "63 chars rejected", usePath: true, content: valid[:63], write: true, wantErr: true},
+		{name: "65 chars rejected", usePath: true, content: valid + "a", write: true, wantErr: true},
+		{name: "uppercase hex rejected", usePath: true, content: "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", write: true, wantErr: true},
+		{name: "non-hex rejected", usePath: true, content: "g" + valid[1:], write: true, wantErr: true},
+		{name: "embedded newline rejected", usePath: true, content: valid[:32] + "\n" + valid[32:], write: true, wantErr: true},
+		{name: "missing file rejected", usePath: true, write: false, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "smoke-token.txt")
+			if tt.usePath {
+				t.Setenv("PVE_EXECD_TOKEN_FILE", path)
+			} else {
+				t.Setenv("PVE_EXECD_TOKEN_FILE", tt.env)
+			}
+			if tt.write {
+				if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+					t.Fatalf("write token file: %v", err)
+				}
+			}
+
+			got, err := readExecTokenFile()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("readExecTokenFile() error = nil, want error")
+				}
+				if strings.Contains(err.Error(), path) {
+					t.Errorf("readExecTokenFile() error leaks token file path: %v", err)
+				}
+				if tt.content != "" && strings.Contains(err.Error(), strings.TrimSpace(tt.content)) {
+					t.Errorf("readExecTokenFile() error leaks token content: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readExecTokenFile() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("readExecTokenFile() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type startInstanceRecorder struct {
+	mu          sync.Mutex
+	reqs        []string
+	putEnv      string
+	cloneCalls  int
+	putCalls    int
+	configCalls int
+	startCalls  int
+}
+
+func (r *startInstanceRecorder) index(methodPath string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, req := range r.reqs {
+		if req == methodPath {
+			return i
+		}
+	}
+	return -1
+}
+
+// newStartInstanceTestServer serves a minimal PVE API for StartInstance:
+// empty node lists (VMID 200 is free), instant clone/start tasks, and the
+// given config env (JSON-escaped, e.g. "A=1\u0000B=2") on GET config.
+// putStatus != 0 makes the config PUT fail with that status.
+func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus int) (*httptest.Server, *startInstanceRecorder) {
+	t.Helper()
+	rec := &startInstanceRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		rec.mu.Lock()
+		rec.reqs = append(rec.reqs, r.Method+" "+path)
+		rec.mu.Unlock()
+		switch {
+		case strings.HasSuffix(path, "/dns"):
+			_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/lxc"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(path, "/qemu"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(path, "/clone"):
+			rec.mu.Lock()
+			rec.cloneCalls++
+			rec.mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":"UPID:0"}`))
+		case strings.HasSuffix(path, "/status/current"):
+			_, _ = w.Write([]byte(`{"data":{"status":"stopped","vmid":200}}`))
+		case strings.HasSuffix(path, "/status/start"):
+			rec.mu.Lock()
+			rec.startCalls++
+			rec.mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":"UPID:0"}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/config"):
+			rec.mu.Lock()
+			rec.configCalls++
+			rec.mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200","env":"` + configEnvJSON + `"}}`))
+		case r.Method == http.MethodPut && strings.HasSuffix(path, "/config"):
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("parse PUT config form: %v", err)
+			}
+			rec.mu.Lock()
+			rec.putCalls++
+			rec.putEnv = r.Form.Get("env")
+			rec.mu.Unlock()
+			if putStatus != 0 {
+				w.WriteHeader(putStatus)
+				_, _ = w.Write([]byte(`{"errors":{"env":"rejected"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && strings.HasSuffix(path, "/lxc/200"):
+			_, _ = w.Write([]byte(`{"data":"UPID:0"}`))
+		case strings.HasSuffix(path, "/status"):
+			_, _ = w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Errorf("unexpected PVE API request: %s %s", r.Method, path)
+			_, _ = w.Write([]byte(`{"data":null}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+func newStartTestClient(t *testing.T, srv *httptest.Server) *Client {
+	t.Helper()
+	return &Client{
+		apiURL:       srv.URL,
+		apiToken:     "token",
+		publicDomain: "example.com",
+		apiHTTP:      srv.Client(),
+		execHTTP:     &http.Client{Timeout: 0},
+		node:         "test-node",
+	}
+}
+
+func writeExecdTokenFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "smoke-token.txt")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	return path
+}
+
+func TestExecdTokenFileInjectedBeforeCloneStart(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken+"\n"))
+
+	srv, rec := newStartInstanceTestServer(t, "EXISTING=value", 0)
+	client := newStartTestClient(t, srv)
+
+	inst, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+	if err != nil {
+		t.Fatalf("StartInstance() error = %v", err)
+	}
+	if inst == nil || inst.VMID != 200 {
+		t.Fatalf("StartInstance() = %+v, want VMID 200", inst)
+	}
+
+	const (
+		cloneReq = "POST /api2/json/nodes/test-node/lxc/9027/clone"
+		putReq   = "PUT /api2/json/nodes/test-node/lxc/200/config"
+		startReq = "POST /api2/json/nodes/test-node/lxc/200/status/start"
+	)
+	idxClone, idxPut, idxStart := rec.index(cloneReq), rec.index(putReq), rec.index(startReq)
+	if idxClone < 0 {
+		t.Fatalf("clone request not recorded; requests: %v", rec.reqs)
+	}
+	if idxPut < 0 || idxStart < 0 || idxPut > idxStart {
+		t.Fatalf("config PUT must precede start POST; requests: %v", rec.reqs)
+	}
+	if idxPut < idxClone {
+		t.Fatalf("config PUT must follow clone POST; requests: %v", rec.reqs)
+	}
+
+	wantEnv := "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken
+	if rec.putEnv != wantEnv {
+		t.Errorf("PUT env = %q, want %q", rec.putEnv, wantEnv)
+	}
+	if got := strings.Count(rec.putEnv, "EXISTING=value"); got != 1 {
+		t.Errorf("PUT env preserves EXISTING=value %d times, want exactly 1: %q", got, rec.putEnv)
+	}
+	if got := strings.Count(rec.putEnv, "CMUX_EXECD_AUTH_TOKEN="); got != 1 {
+		t.Errorf("PUT env has %d CMUX_EXECD_AUTH_TOKEN entries, want exactly 1: %q", got, rec.putEnv)
+	}
+
+	client.execTokenMu.Lock()
+	cached := client.execToken
+	client.execTokenMu.Unlock()
+	if cached != testExecdToken {
+		t.Errorf("cached exec token = %q, want the injected token", cached)
+	}
+}
+
+func TestExecdTokenFileReplacesStaleEntry(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+
+	srv, rec := newStartInstanceTestServer(t, "EXISTING=value\\u0000CMUX_EXECD_AUTH_TOKEN=old", 0)
+	client := newStartTestClient(t, srv)
+
+	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err != nil {
+		t.Fatalf("StartInstance() error = %v", err)
+	}
+
+	wantEnv := "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken
+	if rec.putEnv != wantEnv {
+		t.Errorf("PUT env = %q, want %q", rec.putEnv, wantEnv)
+	}
+	if got := strings.Count(rec.putEnv, "EXISTING=value"); got != 1 {
+		t.Errorf("PUT env preserves EXISTING=value %d times, want exactly 1: %q", got, rec.putEnv)
+	}
+	if got := strings.Count(rec.putEnv, "CMUX_EXECD_AUTH_TOKEN="); got != 1 {
+		t.Errorf("PUT env has %d CMUX_EXECD_AUTH_TOKEN entries, want exactly 1: %q", got, rec.putEnv)
+	}
+}
+
+func TestExecdTokenFileNoUpdateWithoutFile(t *testing.T) {
+	// Unset and empty PVE_EXECD_TOKEN_FILE both mean no injection: the
+	// clone must start without any config update and without seeding the
+	// cached exec token.
+	for _, tc := range []struct {
+		name string
+		env  string
+	}{
+		{name: "unset", env: "unset"},
+		{name: "empty", env: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.env == "unset" {
+				old, had := os.LookupEnv("PVE_EXECD_TOKEN_FILE")
+				os.Unsetenv("PVE_EXECD_TOKEN_FILE")
+				t.Cleanup(func() {
+					if had {
+						os.Setenv("PVE_EXECD_TOKEN_FILE", old)
+					} else {
+						os.Unsetenv("PVE_EXECD_TOKEN_FILE")
+					}
+				})
+			} else {
+				t.Setenv("PVE_EXECD_TOKEN_FILE", "")
+			}
+
+			srv, rec := newStartInstanceTestServer(t, "", 0)
+			client := newStartTestClient(t, srv)
+
+			if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err != nil {
+				t.Fatalf("StartInstance() error = %v", err)
+			}
+
+			rec.mu.Lock()
+			putCalls, configCalls := rec.putCalls, rec.configCalls
+			rec.mu.Unlock()
+			if putCalls != 0 {
+				t.Errorf("config PUT calls = %d, want 0 (no token file)", putCalls)
+			}
+			if configCalls != 0 {
+				t.Errorf("config GET calls = %d, want 0 (no token file)", configCalls)
+			}
+
+			client.execTokenMu.Lock()
+			cached := client.execToken
+			client.execTokenMu.Unlock()
+			if cached != "" {
+				t.Errorf("cached exec token = %q, want empty (no injection)", cached)
+			}
+		})
+	}
+}
+
+func TestExecdTokenFileInvalidContentRejectedBeforeStart(t *testing.T) {
+	tokenFile := writeExecdTokenFile(t, "not-a-64-char-hex-token")
+	t.Setenv("PVE_EXECD_TOKEN_FILE", tokenFile)
+
+	srv, rec := newStartInstanceTestServer(t, "", 0)
+	client := newStartTestClient(t, srv)
+
+	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err == nil {
+		t.Fatal("StartInstance() error = nil, want invalid token error")
+	} else {
+		if strings.Contains(err.Error(), tokenFile) {
+			t.Errorf("StartInstance() error leaks token file path: %v", err)
+		}
+		if strings.Contains(err.Error(), "not-a-64-char-hex-token") {
+			t.Errorf("StartInstance() error leaks token content: %v", err)
+		}
+	}
+
+	rec.mu.Lock()
+	cloneCalls, putCalls, startCalls := rec.cloneCalls, rec.putCalls, rec.startCalls
+	rec.mu.Unlock()
+	if cloneCalls != 0 || putCalls != 0 || startCalls != 0 {
+		t.Errorf("requests after invalid token: clone=%d put=%d start=%d, want all 0", cloneCalls, putCalls, startCalls)
+	}
+}
+
+func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+
+	srv, rec := newStartInstanceTestServer(t, "", http.StatusInternalServerError)
+	client := newStartTestClient(t, srv)
+
+	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err == nil {
+		t.Fatal("StartInstance() error = nil, want config injection error")
+	}
+	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
+		t.Fatalf("clone deletion not requested after injection failure; requests: %v", rec.reqs)
+	}
+	if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
+		t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
 	}
 }
