@@ -14,8 +14,6 @@ if [[ ! -f "${results_json}" ]]; then
   exit 2
 fi
 
-results_dir="$(dirname -- "${results_json}")"
-
 if ! command -v devsh >/dev/null 2>&1; then
   echo "ERROR: devsh not found on PATH" >&2
   exit 2
@@ -66,11 +64,21 @@ if [[ ${#snapshot_lines[@]} -eq 0 ]]; then
 fi
 
 active_id=""
+token_files=()
 cleanup() {
   if [[ -n "${active_id}" ]]; then
     devsh delete "${active_id}" >/dev/null 2>&1 || true
   fi
-  rm -f "${results_dir}"/execd-token-*.txt
+  # Remove every disposable execd token file created for this run. The files
+  # live outside logs/ (which is uploaded as a GitHub artifact) and must never
+  # survive any exit path.
+  if (( ${#token_files[@]} > 0 )); then
+    local token_file
+    for token_file in "${token_files[@]}"; do
+      rm -f -- "${token_file}"
+    done
+  fi
+  unset PVE_EXECD_TOKEN_FILE
 }
 trap cleanup EXIT
 
@@ -78,16 +86,23 @@ for line in "${snapshot_lines[@]}"; do
   preset="$(printf '%s' "${line}" | cut -f1)"
   snapshot_id="$(printf '%s' "${line}" | cut -f2)"
 
-  # The snapshot build persists each template's execd auth token next to the
-  # results; clones keep that token until the PVE host reboots. Pass it to
-  # devsh so exec probes carry the Bearer token without SSH or a PVE API
-  # file endpoint (neither is available in CI).
-  token_file="${results_dir}/execd-token-${snapshot_id}.txt"
-  if [[ -f "${token_file}" ]]; then
-    export PVE_EXECD_TOKEN_FILE="${token_file}"
-  else
-    unset PVE_EXECD_TOKEN_FILE
-  fi
+  # Generate a fresh disposable execd auth token for this clone and hand its
+  # path to devsh via PVE_EXECD_TOKEN_FILE. devsh injects the token into the
+  # clone before start and uses it for every HTTP exec probe, so the same
+  # environment value must reach all devsh calls for this clone. The path is
+  # tracked as soon as mktemp succeeds so the EXIT cleanup trap also covers
+  # failures during chmod or token generation. The file lives in a temp dir
+  # (never under logs/) and is never printed.
+  token_file="$(mktemp "${TMPDIR:-/tmp}/cmux-execd-token.${snapshot_id}.XXXXXX")"
+  token_files+=("${token_file}")
+  chmod 600 "${token_file}"
+  python3 - "${token_file}" <<'PY'
+import secrets
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(secrets.token_hex(32) + "\n", encoding="ascii")
+PY
+  export PVE_EXECD_TOKEN_FILE="${token_file}"
 
   echo ""
   echo "=== Runtime smoke: ${preset} (${snapshot_id}) ==="
@@ -113,10 +128,27 @@ for line in "${snapshot_lines[@]}"; do
 
   echo "Instance: ${active_id}"
 
+  # Unauthenticated status-only probe of the public execd hostname. It never
+  # carries auth headers and its failure does not abort the readiness flow;
+  # it only separates tunnel/service reachability (non-200) from
+  # authentication (healthz 200 but /exec 401).
+  if [[ -n "${PVE_PUBLIC_DOMAIN:-}" ]]; then
+    healthz_status="$(
+      curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        "https://port-39375-${active_id}.${PVE_PUBLIC_DOMAIN}/healthz" 2>/dev/null \
+        || true
+    )"
+  else
+    healthz_status="skipped"
+  fi
+  echo "Healthz status: ${healthz_status}"
+
   echo "Waiting for exec..."
   exec_ready="false"
   saw_401="false"
   saw_token_fetch_fail="false"
+  saw_conn_error="false"
+  saw_edge_error="false"
   deadline=$((SECONDS + 600))
   while (( SECONDS < deadline )); do
     remaining=$((deadline - SECONDS))
@@ -134,6 +166,12 @@ for line in "${snapshot_lines[@]}"; do
     if [[ "${probe_out}" == *"fetch exec token"* ]]; then
       saw_token_fetch_fail="true"
     fi
+    if [[ "${probe_out}" == *"connection refused"* || "${probe_out}" == *"no such host"* || "${probe_out}" == *"i/o timeout"* ]]; then
+      saw_conn_error="true"
+    fi
+    if [[ "${probe_out}" == *"HTTP 502"* || "${probe_out}" == *"HTTP 503"* || "${probe_out}" == *"HTTP 504"* || "${probe_out}" == *"HTTP 524"* ]]; then
+      saw_edge_error="true"
+    fi
 
     remaining=$((deadline - SECONDS))
     if (( remaining <= 0 )); then
@@ -149,7 +187,11 @@ for line in "${snapshot_lines[@]}"; do
     if [[ "${saw_401}" == "true" ]]; then
       echo "exec endpoint returned HTTP 401 (auth) - execd token propagation broken; check execd auth token fetch" >&2
     elif [[ "${saw_token_fetch_fail}" == "true" ]]; then
-      echo "exec probe could not fetch the execd auth token - check snapshot token persistence (execd-token-*.txt) and PVE_EXECD_TOKEN_FILE" >&2
+      echo "exec probe could not fetch the execd auth token - check PVE_EXECD_TOKEN_FILE availability and clone token injection" >&2
+    elif [[ "${saw_edge_error}" == "true" ]]; then
+      echo "execd did not respond (edge/HTTP error) - check cmux-execd startup in the container and cloudflared/tailscale tunnel" >&2
+    elif [[ "${saw_conn_error}" == "true" ]]; then
+      echo "execd connection failed (refused/DNS/timeout) - check cmux-execd startup in the container and network routes" >&2
     else
       echo "exec endpoint unreachable (network) - check cloudflared/tailscale route and cmux-execd startup" >&2
     fi
@@ -197,6 +239,10 @@ for line in "${snapshot_lines[@]}"; do
 
   devsh delete "${active_id}" >/dev/null 2>&1 || true
   active_id=""
+  # The EXIT trap is the safety net for every exit path; dropping the file
+  # here keeps the next iteration free of dangling state.
+  rm -f -- "${token_file}"
+  unset PVE_EXECD_TOKEN_FILE
 done
 
 echo ""

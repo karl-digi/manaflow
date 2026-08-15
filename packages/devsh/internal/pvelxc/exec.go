@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -62,26 +61,20 @@ func ShellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// fetchExecToken retrieves the /root/.worker-auth-token from inside the
-// container. When PVE_EXECD_TOKEN_FILE is set, the token is read from that
-// file: CI snapshot runs persist the template's execd token there, because
-// the PVE API has no LXC file-read endpoint and CI runners cannot reach the
-// PVE host over SSH. Otherwise, when PVE_SSH_HOST is set it reads the file
-// via SSH to the PVE host + pct exec; without SSH it falls back to the PVE
-// API file endpoint. The token is cached on the Client after the first
-// successful fetch. Returns "" (no error) when the token file doesn't exist —
-// in that case the execd daemon is in no-auth mode and requests pass through.
+// fetchExecToken retrieves the execd auth token used for exec requests.
+// When PVE_EXECD_TOKEN_FILE is set, the clone-specific smoke token injected
+// by StartInstance is read from that file, so `devsh exec` authenticates
+// with the exact token installed before the clone started. Otherwise, when
+// PVE_SSH_HOST is set it reads /root/.worker-auth-token via SSH to the PVE
+// host + pct exec; without SSH it falls back to the PVE API file endpoint.
+// The token is cached on the Client after the first successful fetch.
 func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
-	if tokenFile := os.Getenv("PVE_EXECD_TOKEN_FILE"); tokenFile != "" {
-		raw, err := os.ReadFile(tokenFile)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// No persisted token — execd runs in no-auth mode.
-				return "", nil
-			}
-			return "", fmt.Errorf("fetch exec token from %s: %w", tokenFile, err)
-		}
-		return strings.TrimSpace(string(raw)), nil
+	token, err := readExecTokenFile()
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		return token, nil
 	}
 
 	sshHost := SSHHostFromEnv()
@@ -99,7 +92,7 @@ func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
 		return "", fmt.Errorf("fetch exec token via SSH+pct: %w", err)
 	}
 
-	token := strings.TrimSpace(string(out))
+	token = strings.TrimSpace(string(out))
 	if token == "" {
 		// Token file doesn't exist in the container — execd is in no-auth mode.
 		return "", nil
@@ -272,7 +265,7 @@ func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, t
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, nil
+		return nil, fmt.Errorf("request to %s failed: %w", execURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -280,7 +273,7 @@ func (c *Client) tryHTTPExec(ctx context.Context, host string, command string, t
 		return nil, ErrExecUnauthorized
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil
+		return nil, fmt.Errorf("execd at %s returned HTTP %d", execURL, resp.StatusCode)
 	}
 
 	var stdout strings.Builder
@@ -474,7 +467,11 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 	}
 
 	maxRetries := 5
-	baseDelay := 2 * time.Second
+	baseDelay := c.execRetryBaseDelay
+	if baseDelay <= 0 {
+		baseDelay = 2 * time.Second
+	}
+	var lastErr error
 
 	for _, host := range candidates {
 		for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -495,11 +492,16 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 				// 401: invalidate token and retry with a fresh one (once per attempt).
 				if errors.Is(err, ErrExecUnauthorized) && attempt == 1 {
 					c.invalidateExecToken()
+					lastErr = err
 					continue
 				}
+				lastErr = err
 			}
 			if err == nil && result != nil {
 				return result.Stdout, result.Stderr, result.ExitCode, nil
+			}
+			if err == nil {
+				lastErr = fmt.Errorf("execd at %s returned no result", host)
 			}
 
 			if attempt < maxRetries {
@@ -512,6 +514,9 @@ func (c *Client) ExecCommand(ctx context.Context, instanceID string, command str
 		}
 	}
 
+	if lastErr != nil {
+		return "", "", -1, fmt.Errorf("HTTP exec failed for container %d via candidates: %s; last error: %v", vmid, strings.Join(candidates, ", "), lastErr)
+	}
 	return "", "", -1, fmt.Errorf("HTTP exec failed for container %d via candidates: %s", vmid, strings.Join(candidates, ", "))
 }
 
