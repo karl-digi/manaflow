@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -62,12 +63,27 @@ func ShellSingleQuote(value string) string {
 }
 
 // fetchExecToken retrieves the /root/.worker-auth-token from inside the
-// container. When PVE_SSH_HOST is set it reads the file via SSH to the PVE
-// host + pct exec; otherwise it falls back to the PVE API file endpoint. The
-// token is cached on the Client after the first successful fetch. Returns ""
-// (no error) when the token file doesn't exist — in that case the execd
-// daemon is in no-auth mode and requests pass through.
+// container. When PVE_EXECD_TOKEN_FILE is set, the token is read from that
+// file: CI snapshot runs persist the template's execd token there, because
+// the PVE API has no LXC file-read endpoint and CI runners cannot reach the
+// PVE host over SSH. Otherwise, when PVE_SSH_HOST is set it reads the file
+// via SSH to the PVE host + pct exec; without SSH it falls back to the PVE
+// API file endpoint. The token is cached on the Client after the first
+// successful fetch. Returns "" (no error) when the token file doesn't exist —
+// in that case the execd daemon is in no-auth mode and requests pass through.
 func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
+	if tokenFile := os.Getenv("PVE_EXECD_TOKEN_FILE"); tokenFile != "" {
+		raw, err := os.ReadFile(tokenFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// No persisted token — execd runs in no-auth mode.
+				return "", nil
+			}
+			return "", fmt.Errorf("fetch exec token from %s: %w", tokenFile, err)
+		}
+		return strings.TrimSpace(string(raw)), nil
+	}
+
 	sshHost := SSHHostFromEnv()
 	if sshHost == "" {
 		return c.fetchExecTokenViaAPI(ctx, vmid)
@@ -95,7 +111,10 @@ func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
 // endpoint (used when PVE_SSH_HOST is not set). The endpoint may return the
 // content JSON-wrapped ({"data":{"content":"..."}}) or as raw file content;
 // both are handled. A 404 means the token file doesn't exist (execd in no-auth
-// mode) and yields "". Other HTTP errors are returned as errors.
+// mode) and yields "". A 501 means the endpoint itself is not implemented on
+// this PVE server, so the token cannot be fetched that way either — treat it
+// like no-auth and attempt the request without a token (the execd will answer
+// 401 if it does require auth). Other HTTP errors are returned as errors.
 func (c *Client) fetchExecTokenViaAPI(ctx context.Context, vmid int) (string, error) {
 	apiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -115,8 +134,10 @@ func (c *Client) fetchExecTokenViaAPI(ctx context.Context, vmid int) (string, er
 		return "", fmt.Errorf("fetch exec token via PVE API: %w", err)
 	}
 
-	if status == http.StatusNotFound {
-		// Token file doesn't exist in the container — execd is in no-auth mode.
+	if status == http.StatusNotFound || status == http.StatusNotImplemented {
+		// Token file doesn't exist, or the file endpoint is not implemented on
+		// this PVE server — proceed without a token (execd no-auth mode) rather
+		// than failing the exec outright.
 		return "", nil
 	}
 	if status < 200 || status >= 300 {

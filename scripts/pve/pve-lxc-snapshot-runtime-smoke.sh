@@ -14,6 +14,8 @@ if [[ ! -f "${results_json}" ]]; then
   exit 2
 fi
 
+results_dir="$(dirname -- "${results_json}")"
+
 if ! command -v devsh >/dev/null 2>&1; then
   echo "ERROR: devsh not found on PATH" >&2
   exit 2
@@ -68,12 +70,24 @@ cleanup() {
   if [[ -n "${active_id}" ]]; then
     devsh delete "${active_id}" >/dev/null 2>&1 || true
   fi
+  rm -f "${results_dir}"/execd-token-*.txt
 }
 trap cleanup EXIT
 
 for line in "${snapshot_lines[@]}"; do
   preset="$(printf '%s' "${line}" | cut -f1)"
   snapshot_id="$(printf '%s' "${line}" | cut -f2)"
+
+  # The snapshot build persists each template's execd auth token next to the
+  # results; clones keep that token until the PVE host reboots. Pass it to
+  # devsh so exec probes carry the Bearer token without SSH or a PVE API
+  # file endpoint (neither is available in CI).
+  token_file="${results_dir}/execd-token-${snapshot_id}.txt"
+  if [[ -f "${token_file}" ]]; then
+    export PVE_EXECD_TOKEN_FILE="${token_file}"
+  else
+    unset PVE_EXECD_TOKEN_FILE
+  fi
 
   echo ""
   echo "=== Runtime smoke: ${preset} (${snapshot_id}) ==="
@@ -102,6 +116,7 @@ for line in "${snapshot_lines[@]}"; do
   echo "Waiting for exec..."
   exec_ready="false"
   saw_401="false"
+  saw_token_fetch_fail="false"
   deadline=$((SECONDS + 600))
   while (( SECONDS < deadline )); do
     remaining=$((deadline - SECONDS))
@@ -115,6 +130,9 @@ for line in "${snapshot_lines[@]}"; do
     fi
     if [[ "${probe_out}" == *401* ]]; then
       saw_401="true"
+    fi
+    if [[ "${probe_out}" == *"fetch exec token"* ]]; then
+      saw_token_fetch_fail="true"
     fi
 
     remaining=$((deadline - SECONDS))
@@ -130,6 +148,8 @@ for line in "${snapshot_lines[@]}"; do
   if [[ "${exec_ready}" != "true" ]]; then
     if [[ "${saw_401}" == "true" ]]; then
       echo "exec endpoint returned HTTP 401 (auth) - execd token propagation broken; check execd auth token fetch" >&2
+    elif [[ "${saw_token_fetch_fail}" == "true" ]]; then
+      echo "exec probe could not fetch the execd auth token - check snapshot token persistence (execd-token-*.txt) and PVE_EXECD_TOKEN_FILE" >&2
     else
       echo "exec endpoint unreachable (network) - check cloudflared/tailscale route and cmux-execd startup" >&2
     fi

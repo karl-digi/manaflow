@@ -1761,6 +1761,7 @@ def _write_results_json(
     base_template_vmid: int,
     ide_provider: str,
     results_payload: list[dict[str, t.Any]],
+    execd_tokens: dict[int, str] | None = None,
 ) -> None:
     payload = {
         "schemaVersion": 1,
@@ -1773,6 +1774,23 @@ def _write_results_json(
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # Persist the execd auth token of each built template next to the results
+    # so the runtime smoke test can pass it to devsh via PVE_EXECD_TOKEN_FILE.
+    # Clones of a template keep the template's token while the PVE host stays
+    # booted (boot-id rotation only fires on host reboot), so the token cached
+    # during the build is valid for the smoke containers. The token files are
+    # not part of the results payload and are cleaned up by the smoke script.
+    if execd_tokens:
+        for result in results_payload:
+            template_vmid = result.get("templateVmid")
+            snapshot_id = result.get("snapshotId")
+            if not template_vmid or not snapshot_id:
+                continue
+            token = execd_tokens.get(template_vmid)
+            if token:
+                token_path = out_path.parent / f"execd-token-{snapshot_id}.txt"
+                token_path.write_text(token.strip() + "\n", encoding="utf-8")
 
 
 def _iso_timestamp() -> str:
@@ -6318,6 +6336,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             base_template_vmid=args.template_vmid,
             ide_provider=args.ide_provider,
             results_payload=[_serialize_template_result(r) for r in results],
+            execd_tokens=client._execd_auth_tokens,
         )
         console.always(f"Results JSON written: {out_path}")
 
@@ -6574,6 +6593,7 @@ async def run_update_mode(args: argparse.Namespace) -> None:
                 base_template_vmid=args.update_vmid,
                 ide_provider=args.ide_provider,
                 results_payload=[result],
+                execd_tokens=client._execd_auth_tokens,
             )
             console.always(f"Results JSON written: {out_path}")
     finally:
