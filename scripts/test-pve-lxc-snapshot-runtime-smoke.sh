@@ -65,6 +65,11 @@ devsh() {
         return 0
       fi
 
+      if [[ "${DEVSH_MODE}" == "token-fetch-fail" ]]; then
+        echo "Error: failed to execute command: fetch exec token: HTTP 501" >&2
+        return 1
+      fi
+
       echo "exec endpoint not ready" >&2
       return 1
       ;;
@@ -126,3 +131,17 @@ if [[ "${deadline_output}" != *"exec endpoint unreachable (network)"* ]]; then
 fi
 
 echo "PASS: readiness probes honor the 600-second deadline"
+
+calls_file="${tmp_dir}/calls.token"
+if token_output="$(run_smoke token-fetch-fail "${calls_file}" 2>&1)"; then
+  printf '%s\n' "${token_output}" >&2
+  fail "runtime smoke must fail when the execd auth token cannot be fetched"
+fi
+if [[ "${token_output}" != *"could not fetch the execd auth token"* ]]; then
+  fail "token-fetch failure lost its diagnostic: ${token_output}"
+fi
+if [[ "${token_output}" == *"exec endpoint unreachable (network)"* ]]; then
+  fail "token-fetch failure was misclassified as a network failure"
+fi
+
+echo "PASS: token-fetch failures are classified distinctly from network failures"

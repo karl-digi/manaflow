@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -274,6 +276,12 @@ func TestExecCommandTokenFetchViaAPI(t *testing.T) {
 			filesBody:   `{"data":null}`,
 			wantAuth:    "",
 		},
+		{
+			name:        "file endpoint not implemented",
+			filesStatus: http.StatusNotImplemented,
+			filesBody:   `{"data":null}`,
+			wantAuth:    "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -336,6 +344,111 @@ func TestExecCommandTokenFetchViaAPI(t *testing.T) {
 				t.Errorf("files fetch calls = %d, want 1", filesCalls)
 			}
 		})
+	}
+}
+
+func TestExecCommandTokenFromEnvFile(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "execd-token.txt")
+	if err := os.WriteFile(tokenFile, []byte("env-file-secret-token\n"), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	t.Setenv("PVE_EXECD_TOKEN_FILE", tokenFile)
+
+	var (
+		mu         sync.Mutex
+		gotAuth    string
+		filesCalls int
+	)
+
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/dns"):
+				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+			case strings.HasSuffix(r.URL.Path, "/config"):
+				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+			case strings.HasSuffix(r.URL.Path, "/files"):
+				mu.Lock()
+				filesCalls++
+				mu.Unlock()
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"data":null}`))
+			default:
+				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+			}
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			gotAuth = r.Header.Get("Authorization")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/jsonlines")
+			_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+		}),
+	)
+
+	stdout, _, exitCode, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err != nil {
+		t.Fatalf("ExecCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("ExecCommand() exitCode = %d, want 0", exitCode)
+	}
+	if stdout != "ok" {
+		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotAuth != "Bearer env-file-secret-token" {
+		t.Errorf("exec Authorization = %q, want %q", gotAuth, "Bearer env-file-secret-token")
+	}
+	if filesCalls != 0 {
+		t.Errorf("files fetch calls = %d, want 0 (env file must bypass the PVE API)", filesCalls)
+	}
+}
+
+func TestExecCommandTokenFromEnvFileMissing(t *testing.T) {
+	// A configured-but-missing env token file means no persisted token was
+	// produced (no-auth execd); the exec must proceed without a token.
+	t.Setenv("PVE_EXECD_TOKEN_FILE", filepath.Join(t.TempDir(), "missing-token.txt"))
+
+	var (
+		mu      sync.Mutex
+		gotAuth string
+	)
+
+	client := newExecTestClient(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/dns"):
+				_, _ = w.Write([]byte(`{"data":{"search":""}}`))
+			case strings.HasSuffix(r.URL.Path, "/config"):
+				_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200"}}`))
+			default:
+				t.Errorf("unexpected PVE API path: %s", r.URL.Path)
+			}
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			gotAuth = r.Header.Get("Authorization")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/jsonlines")
+			_, _ = w.Write([]byte("{\"type\":\"stdout\",\"data\":\"ok\"}\n{\"type\":\"exit\",\"code\":0}\n"))
+		}),
+	)
+
+	stdout, _, _, err := client.ExecCommand(context.Background(), "200", "echo ok")
+	if err != nil {
+		t.Fatalf("ExecCommand() error = %v", err)
+	}
+	if stdout != "ok" {
+		t.Errorf("ExecCommand() stdout = %q, want %q", stdout, "ok")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotAuth != "" {
+		t.Errorf("exec Authorization = %q, want empty (no-auth mode)", gotAuth)
 	}
 }
 
