@@ -62,14 +62,15 @@ func ShellSingleQuote(value string) string {
 }
 
 // fetchExecToken retrieves the /root/.worker-auth-token from inside the
-// container via SSH to the PVE host + pct exec. The token is cached on the
-// Client after the first successful fetch. Returns "" (no error) when
-// PVE_SSH_HOST is not set — in that case the execd daemon will be in no-auth
-// mode (if the token file doesn't exist) and requests pass through.
+// container. When PVE_SSH_HOST is set it reads the file via SSH to the PVE
+// host + pct exec; otherwise it falls back to the PVE API file endpoint. The
+// token is cached on the Client after the first successful fetch. Returns ""
+// (no error) when the token file doesn't exist — in that case the execd
+// daemon is in no-auth mode and requests pass through.
 func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
 	sshHost := SSHHostFromEnv()
 	if sshHost == "" {
-		return "", nil
+		return c.fetchExecTokenViaAPI(ctx, vmid)
 	}
 
 	out, err := exec.CommandContext(ctx, "ssh",
@@ -85,6 +86,59 @@ func (c *Client) fetchExecToken(ctx context.Context, vmid int) (string, error) {
 	token := strings.TrimSpace(string(out))
 	if token == "" {
 		// Token file doesn't exist in the container — execd is in no-auth mode.
+		return "", nil
+	}
+	return token, nil
+}
+
+// fetchExecTokenViaAPI retrieves /root/.worker-auth-token via the PVE API file
+// endpoint (used when PVE_SSH_HOST is not set). The endpoint may return the
+// content JSON-wrapped ({"data":{"content":"..."}}) or as raw file content;
+// both are handled. A 404 means the token file doesn't exist (execd in no-auth
+// mode) and yields "". Other HTTP errors are returned as errors.
+func (c *Client) fetchExecTokenViaAPI(ctx context.Context, vmid int) (string, error) {
+	apiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	node, err := c.getNode(apiCtx)
+	if err != nil {
+		return "", fmt.Errorf("fetch exec token via PVE API: %w", err)
+	}
+
+	raw, status, err := c.apiRequestRaw(apiCtx, http.MethodGet,
+		fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/files", node, vmid),
+		url.Values{"path": []string{"/root/.worker-auth-token"}})
+	if err != nil {
+		if apiCtx.Err() != nil {
+			return "", apiCtx.Err()
+		}
+		return "", fmt.Errorf("fetch exec token via PVE API: %w", err)
+	}
+
+	if status == http.StatusNotFound {
+		// Token file doesn't exist in the container — execd is in no-auth mode.
+		return "", nil
+	}
+	if status < 200 || status >= 300 {
+		msg := strings.TrimSpace(string(raw))
+		if msg == "" {
+			msg = "(empty response)"
+		}
+		return "", fmt.Errorf("fetch exec token via PVE API: HTTP %d: %s", status, msg)
+	}
+
+	// Try JSON-wrapped content first, then fall back to raw file content.
+	// JSON-looking responses without usable content mean no token.
+	var env struct {
+		Data struct {
+			Content string `json:"content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err == nil && strings.TrimSpace(env.Data.Content) != "" {
+		return strings.TrimSpace(env.Data.Content), nil
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" || strings.HasPrefix(token, "{") {
 		return "", nil
 	}
 	return token, nil

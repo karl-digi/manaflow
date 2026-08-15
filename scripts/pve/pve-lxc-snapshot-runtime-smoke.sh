@@ -101,14 +101,38 @@ for line in "${snapshot_lines[@]}"; do
 
   echo "Waiting for exec..."
   exec_ready="false"
-  for _ in $(seq 1 40); do
-    if devsh exec "${active_id}" "echo exec_ready" >/dev/null 2>&1; then
+  saw_401="false"
+  deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      break
+    fi
+
+    if probe_out="$(timeout "${remaining}s" devsh exec "${active_id}" "echo exec_ready" 2>&1)"; then
       exec_ready="true"
       break
     fi
-    sleep 3
+    if [[ "${probe_out}" == *401* ]]; then
+      saw_401="true"
+    fi
+
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      break
+    fi
+    if (( remaining > 3 )); then
+      sleep 3
+    else
+      sleep "${remaining}"
+    fi
   done
   if [[ "${exec_ready}" != "true" ]]; then
+    if [[ "${saw_401}" == "true" ]]; then
+      echo "exec endpoint returned HTTP 401 (auth) - execd token propagation broken; check execd auth token fetch" >&2
+    else
+      echo "exec endpoint unreachable (network) - check cloudflared/tailscale route and cmux-execd startup" >&2
+    fi
     echo "ERROR: exec not ready for ${active_id}" >&2
     "${diag}" "${active_id}" "${log_dir}/diag.runtime.${preset}.${snapshot_id}.${active_id}.${timestamp}.txt" || true
     exit 1

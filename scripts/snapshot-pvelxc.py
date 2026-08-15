@@ -3874,7 +3874,9 @@ async def task_install_agy(ctx: PveTaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -euo pipefail
-        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        if [ ! -x /root/.local/bin/agy ]; then
+            curl -fsSL https://antigravity.google/cli/install.sh | bash
+        fi
         /root/.local/bin/agy --version
         """
     )
@@ -5635,6 +5637,7 @@ async def _verify_template_artifacts(
         ("/builtins/build/node_modules/path-to-regexp/package.json", "worker path-to-regexp runtime dependency"),
         ("/usr/local/bin/worker-daemon", "Go worker-daemon (SSH/PTY proxy)"),
         ("/usr/local/bin/cmux-token-init", "Auth token generator script"),
+        ("/usr/local/bin/cmux-execd", "cmux-execd HTTP exec daemon binary"),
         (NOVNC_MARKER_FILE, "managed noVNC version marker"),
         (f"{NOVNC_DIR}/vnc.html", "managed noVNC vnc.html"),
         (f"{NOVNC_DIR}/core/rfb.js", "managed noVNC core/rfb.js"),
@@ -5671,6 +5674,29 @@ async def _verify_template_artifacts(
                 console.info(f"[verify] OK: {description}")
         except Exception as e:
             missing.append(f"  - {description}: {path} (check failed: {e})")
+            console.info(f"[verify] ERROR checking {description}: {e}")
+
+    # Verify cmux-execd systemd unit files and state so the template does not
+    # ship with a disabled or dead exec daemon. Unit files may live under
+    # /etc/systemd/system or /usr/lib/systemd/system (wants-symlink enablement).
+    # Both call sites run this before template conversion while the container
+    # is still running, so is-active is valid.
+    systemd_state_checks: list[tuple[str, str]] = [
+        ("test -e /etc/systemd/system/cmux-execd.service -o -e /usr/lib/systemd/system/cmux-execd.service && echo present || echo not-present", "cmux-execd systemd unit file"),
+        ("test -e /etc/systemd/system/cmux-token-generator.service -o -e /usr/lib/systemd/system/cmux-token-generator.service && echo present || echo not-present", "cmux-token-generator systemd unit file"),
+        ("systemctl is-enabled cmux-execd.service 2>/dev/null && echo enabled || echo not-enabled", "cmux-execd systemd unit enabled"),
+        ("systemctl is-active cmux-execd.service 2>/dev/null && echo active || echo not-active", "cmux-execd HTTP exec daemon active"),
+    ]
+    for cmd, description in systemd_state_checks:
+        try:
+            result = await client.aexec_in_container(vmid, cmd, timeout=30, check=False)
+            if result.returncode != 0 or "not-" in result.stdout:
+                missing.append(f"  - {description}")
+                console.info(f"[verify] MISSING: {description}")
+            else:
+                console.info(f"[verify] OK: {description}")
+        except Exception as e:
+            missing.append(f"  - {description} (check failed: {e})")
             console.info(f"[verify] ERROR checking {description}: {e}")
 
     # Check for cmux extension specifically (critical for IDE functionality)

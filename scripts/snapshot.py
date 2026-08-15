@@ -1637,7 +1637,9 @@ async def task_install_agy(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -euo pipefail
-        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        if [ ! -x /root/.local/bin/agy ]; then
+            curl -fsSL https://antigravity.google/cli/install.sh | bash
+        fi
         /root/.local/bin/agy --version
         """
     )
