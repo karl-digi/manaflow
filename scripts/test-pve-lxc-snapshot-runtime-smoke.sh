@@ -63,7 +63,7 @@ record_token_state() {
     printf 'path=%s\n' "${PVE_EXECD_TOKEN_FILE:-}"
     if [[ -n "${PVE_EXECD_TOKEN_FILE:-}" && -f "${PVE_EXECD_TOKEN_FILE}" ]]; then
       printf 'exists=yes\n'
-      printf 'content=%s\n' "$(cat "${PVE_EXECD_TOKEN_FILE}")"
+      printf 'content=%s\n' "$(<"${PVE_EXECD_TOKEN_FILE}")"
       printf 'mode=%s\n' "$(stat -c '%a' "${PVE_EXECD_TOKEN_FILE}" 2>/dev/null || stat -f '%Lp' "${PVE_EXECD_TOKEN_FILE}" 2>/dev/null || printf 'unknown')"
     else
       printf 'exists=no\n'
@@ -118,7 +118,18 @@ devsh() {
       echo "pvelxc-deadline"
       ;;
     exec)
-      record_token_state "${DEVSH_EXEC_RECORD:-/dev/null}"
+      # Record the token state at most once per smoke invocation: the record
+      # helper spawns external programs, which must not run on every
+      # readiness probe (real wall time would accrue in SECONDS and skew the
+      # virtual 600-second deadline test).
+      local recorded=0
+      if [[ -f "${DEVSH_EXEC_RECORD_COUNT:-}" ]]; then
+        IFS= read -r recorded <"${DEVSH_EXEC_RECORD_COUNT:-}" || true
+      fi
+      if (( recorded == 0 )); then
+        record_token_state "${DEVSH_EXEC_RECORD:-/dev/null}"
+        printf '%s\n' "$((recorded + 1))" >"${DEVSH_EXEC_RECORD_COUNT:-/dev/null}"
+      fi
 
       local calls=0
       if [[ -f "${DEVSH_CALLS_FILE}" ]]; then
@@ -183,6 +194,7 @@ run_smoke() {
   local results_file="${8:-${tmp_dir}/results.json}"
   local start_count_file="${9:-}"
   local mktemp_record="${10:-}"
+  local exec_record_count="${11:-}"
   (
     cd "${tmp_dir}"
     BASH_ENV="${tmp_dir}/bash_env" \
@@ -194,6 +206,7 @@ run_smoke() {
       DEVSH_HEALTHZ_STATUS="${healthz_status}" \
       DEVSH_START_COUNT_FILE="${start_count_file}" \
       DEVSH_MKTEMP_RECORD="${mktemp_record}" \
+      DEVSH_EXEC_RECORD_COUNT="${exec_record_count}" \
       PVE_PUBLIC_DOMAIN="${public_domain}" \
       bash "${runtime_dir}/pve-lxc-snapshot-runtime-smoke.sh" "${results_file}"
   )
@@ -227,7 +240,8 @@ if [[ "${success_output}" != *"All runtime smoke checks passed"* ]]; then
 fi
 
 calls_file="${tmp_dir}/calls.deadline"
-if deadline_output="$(run_smoke always-fail "${calls_file}" "${tmp_dir}/start.deadline" "${tmp_dir}/exec.deadline" "${tmp_dir}/curl.deadline" 2>&1)"; then
+exec_count_file="${tmp_dir}/exec.deadline.count"
+if deadline_output="$(run_smoke always-fail "${calls_file}" "${tmp_dir}/start.deadline" "${tmp_dir}/exec.deadline" "${tmp_dir}/curl.deadline" "" "" "" "" "" "${exec_count_file}" 2>&1)"; then
   printf '%s\n' "${deadline_output}" >&2
   fail "runtime smoke must fail when readiness never arrives"
 fi
@@ -241,6 +255,13 @@ fi
 deadline_token_path="$(record_field "${tmp_dir}/start.deadline" path)"
 if [[ -z "${deadline_token_path}" || -e "${deadline_token_path}" ]]; then
   fail "temporary token file was not removed after readiness failure"
+fi
+exec_recordings="0"
+if [[ -f "${exec_count_file}" ]]; then
+  IFS= read -r exec_recordings <"${exec_count_file}" || true
+fi
+if [[ "${exec_recordings}" != "1" ]]; then
+  fail "exec token state was recorded ${exec_recordings} times across 200 probes (expected exactly 1)"
 fi
 
 echo "PASS: readiness probes honor the 600-second deadline"
@@ -382,7 +403,8 @@ echo "=== PVE LXC snapshot runtime-smoke cleanup-path tests ==="
 # token array must still remove the temporary file via the EXIT trap.
 calls_file="${tmp_dir}/calls.genfail"
 mktemp_record="${tmp_dir}/mktemp.genfail"
-if genfail_output="$(run_smoke token-gen-fail "${calls_file}" "${tmp_dir}/start.genfail" "${tmp_dir}/exec.genfail" "${tmp_dir}/curl.genfail" "" "" "${tmp_dir}/results.json" "" "${mktemp_record}" 2>&1)"; then
+start_count_file="${tmp_dir}/starts.genfail"
+if genfail_output="$(run_smoke token-gen-fail "${calls_file}" "${tmp_dir}/start.genfail" "${tmp_dir}/exec.genfail" "${tmp_dir}/curl.genfail" "" "" "${tmp_dir}/results.json" "${start_count_file}" "${mktemp_record}" 2>&1)"; then
   printf '%s\n' "${genfail_output}" >&2
   fail "runtime smoke must fail when token generation fails"
 fi
@@ -392,6 +414,18 @@ if [[ -z "${genfail_path}" ]]; then
 fi
 if [[ -e "${genfail_path}" ]]; then
   fail "temporary token file leaked after token generation failure"
+fi
+if [[ -f "${tmp_dir}/start.genfail" ]]; then
+  fail "devsh start was reached despite token generation failure"
+fi
+if [[ -f "${start_count_file}" ]]; then
+  fail "devsh start was invoked despite token generation failure"
+fi
+if [[ "${genfail_output}" == *"Waiting for exec"* ]]; then
+  fail "token generation failure was misreported as a readiness deadline failure"
+fi
+if [[ "${genfail_output}" == *"Runtime smoke"* ]]; then
+  fail "smoke run proceeded past token generation despite the failure"
 fi
 
 echo "PASS: EXIT cleanup covers failures between mktemp and devsh start"
