@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -341,6 +343,51 @@ func TestLoadAuthToken_EmptyFile_Skipped(t *testing.T) {
 	token := loadAuthToken()
 	if token != "real-token" {
 		t.Errorf("expected 'real-token' (skip empty), got %q", token)
+	}
+}
+
+// captureLogger redirects the package's standard logger to a buffer and
+// returns a function to read the captured output. It restores the original
+// logger on cleanup.
+func captureLogger(t *testing.T) func() string {
+	t.Helper()
+	orig := log.Writer()
+	origFlag := log.Flags()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(orig)
+		log.SetFlags(origFlag)
+	})
+	return func() string { return buf.String() }
+}
+
+func TestLogAuthState_Enabled_DoesNotLeakTokenMaterial(t *testing.T) {
+	synthetic := "supersecret-token-value-42"
+	out := captureLogger(t)
+
+	logAuthState(synthetic)
+
+	logged := strings.TrimSpace(out())
+	if !strings.Contains(logged, "auth enabled") {
+		t.Errorf("expected 'auth enabled' state signal, got %q", logged)
+	}
+	if strings.Contains(logged, synthetic) {
+		t.Errorf("startup log leaked the full auth token: %q", logged)
+	}
+	if strings.Contains(logged, synthetic[:8]) {
+		t.Errorf("startup log leaked the first eight token characters: %q", logged)
+	}
+}
+
+func TestLogAuthState_Disabled_EmitsStateSignal(t *testing.T) {
+	out := captureLogger(t)
+
+	logAuthState("")
+
+	logged := strings.TrimSpace(out())
+	if !strings.Contains(logged, "auth disabled") {
+		t.Errorf("expected 'auth disabled' state signal, got %q", logged)
 	}
 }
 

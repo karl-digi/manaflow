@@ -82,6 +82,17 @@ func verifyAuth(r *http.Request) bool {
 	return false
 }
 
+// logAuthState logs whether authentication is enabled or disabled at startup.
+// It must never emit token content, its prefix, a hash, a length, or the token
+// file path — only the enabled/disabled state signal.
+func logAuthState(token string) {
+	if token != "" {
+		log.Printf("auth enabled")
+	} else {
+		log.Printf("auth disabled (no token file found)")
+	}
+}
+
 // authMiddleware wraps a handler with token authentication. When authToken
 // is empty (no token file), requests pass through without auth.
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -357,11 +368,7 @@ func main() {
 	// containers without cmux-token-init), authToken remains "" and the daemon
 	// operates in no-auth mode for backward compatibility.
 	authToken = loadAuthToken()
-	if authToken != "" {
-		log.Printf("auth enabled (token: %s...)", authToken[:8])
-	} else {
-		log.Printf("auth disabled (no token file found)")
-	}
+	logAuthState(authToken)
 
 	port := determinePort(*portFlag)
 	mux := http.NewServeMux()
