@@ -89,10 +89,12 @@ for line in "${snapshot_lines[@]}"; do
   # Generate a fresh disposable execd auth token for this clone and hand its
   # path to devsh via PVE_EXECD_TOKEN_FILE. devsh injects the token into the
   # clone before start and uses it for every HTTP exec probe, so the same
-  # environment value must reach all devsh calls for this clone. The file is
-  # created with mktemp in a temp dir (never under logs/) and removed by the
-  # EXIT cleanup trap. Never print the token or its path.
+  # environment value must reach all devsh calls for this clone. The path is
+  # tracked as soon as mktemp succeeds so the EXIT cleanup trap also covers
+  # failures during chmod or token generation. The file lives in a temp dir
+  # (never under logs/) and is never printed.
   token_file="$(mktemp "${TMPDIR:-/tmp}/cmux-execd-token.${snapshot_id}.XXXXXX")"
+  token_files+=("${token_file}")
   chmod 600 "${token_file}"
   python3 - "${token_file}" <<'PY'
 import secrets
@@ -100,7 +102,6 @@ import sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(secrets.token_hex(32) + "\n", encoding="ascii")
 PY
-  token_files+=("${token_file}")
   export PVE_EXECD_TOKEN_FILE="${token_file}"
 
   echo ""
