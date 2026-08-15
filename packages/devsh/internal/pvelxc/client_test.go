@@ -809,3 +809,59 @@ func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
 		t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
 	}
 }
+
+// TestStartInstanceDeletesCloneWhenServiceURLUnbuildable exercises the
+// post-start cleanup gap: when no public domain, no DNS search suffix, and
+// no container IP are available, buildServiceURL cannot construct the
+// service URLs and StartInstance must still delete the already-started clone
+// (whose PVE runtime env carries the disposable execd token).
+func TestStartInstanceDeletesCloneWhenServiceURLUnbuildable(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+
+	// The httptest server returns an empty DNS search suffix and a container
+	// config without net0 (no IP). The client below leaves publicDomain empty,
+	// so every buildServiceURL call has nothing to build from and must fail.
+	srv, rec := newStartInstanceTestServer(t, "", 0)
+	client := &Client{
+		apiURL:       srv.URL,
+		apiToken:     "token",
+		publicDomain: "",
+		apiHTTP:      srv.Client(),
+		execHTTP:     &http.Client{Timeout: 0},
+		node:         "test-node",
+	}
+
+	inst, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+	if err == nil {
+		t.Fatal("StartInstance() error = nil, want a service-URL build error")
+	}
+	if !strings.Contains(err.Error(), "no public domain") {
+		t.Fatalf("StartInstance() error = %q, want a service-URL build error", err)
+	}
+	if inst != nil {
+		t.Fatalf("StartInstance() returned instance %+v despite error", inst)
+	}
+
+	// Start must have happened before the URL build failure.
+	idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start")
+	if idxStart < 0 {
+		t.Fatalf("start request not recorded; requests: %v", rec.reqs)
+	}
+
+	// The already-started, token-bearing clone must be deleted best-effort.
+	idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200")
+	if idxDelete < 0 {
+		t.Fatalf("clone deletion not requested after service-URL build failure; requests: %v", rec.reqs)
+	}
+	rec.mu.Lock()
+	deleteIdx := -1
+	for i, req := range rec.reqs {
+		if req == "DELETE /api2/json/nodes/test-node/lxc/200" {
+			deleteIdx = i
+		}
+	}
+	rec.mu.Unlock()
+	if deleteIdx <= idxStart {
+		t.Fatalf("DELETE must follow start; DELETE index %d, start index %d; requests: %v", deleteIdx, idxStart, rec.reqs)
+	}
+}

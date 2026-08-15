@@ -806,18 +806,24 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 
 		vscodeURL, err := c.buildServiceURL(ctx, 39378, vmid, hostname, domainSuffix, hostname)
 		if err != nil {
+			// Best-effort cleanup: the clone is started and its PVE runtime
+			// env carries the disposable execd token.
+			_ = c.deleteContainer(ctx, vmid)
 			return nil, err
 		}
 		workerURL, err := c.buildServiceURL(ctx, 39376, vmid, hostname, domainSuffix, hostname)
 		if err != nil {
+			_ = c.deleteContainer(ctx, vmid)
 			return nil, err
 		}
 		vncURL, err := c.buildServiceURL(ctx, 39380, vmid, hostname, domainSuffix, hostname)
 		if err != nil {
+			_ = c.deleteContainer(ctx, vmid)
 			return nil, err
 		}
 		xtermURL, err := c.buildServiceURL(ctx, 39383, vmid, hostname, domainSuffix, hostname)
 		if err != nil {
+			_ = c.deleteContainer(ctx, vmid)
 			return nil, err
 		}
 
