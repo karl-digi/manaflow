@@ -102,22 +102,30 @@ for line in "${snapshot_lines[@]}"; do
   echo "Waiting for exec..."
   exec_ready="false"
   saw_401="false"
-  timed_out="false"
   deadline=$((SECONDS + 600))
-  for _ in $(seq 1 40); do
-    if probe_out="$(devsh exec "${active_id}" "echo exec_ready" 2>&1)"; then
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      break
+    fi
+
+    if probe_out="$(timeout "${remaining}s" devsh exec "${active_id}" "echo exec_ready" 2>&1)"; then
       exec_ready="true"
       break
     fi
     if [[ "${probe_out}" == *401* ]]; then
       saw_401="true"
     fi
-    if (( SECONDS >= deadline )); then
-      # shellcheck disable=SC2034 # deadline-break marker required by Change 4 spec
-      timed_out="true"
+
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
       break
     fi
-    sleep 3
+    if (( remaining > 3 )); then
+      sleep 3
+    else
+      sleep "${remaining}"
+    fi
   done
   if [[ "${exec_ready}" != "true" ]]; then
     if [[ "${saw_401}" == "true" ]]; then
