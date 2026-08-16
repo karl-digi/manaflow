@@ -109,6 +109,46 @@ curl -fsSL https://raw.githubusercontent.com/karlorz/cmux/main/scripts/pve/pve-l
 curl -fsSL https://raw.githubusercontent.com/karlorz/cmux/main/scripts/pve/pve-lxc-setup.sh | bash -s -- 9000 --memory 8192 --cores 8
 ```
 
+### cmux-lxc-execd-token-hook.sh (PVE 8.x fallback)
+
+devsh injects a disposable execd auth token into each cloned container before
+first boot. On PVE 9.1+ (pve-container 6.0.15+) it uses the container config
+`env` parameter; on older hosts (e.g. PVE 8) that PUT is rejected with HTTP
+400, and devsh automatically falls back to this pre-start hookscript. The
+token is written to the clone's PVE `description` field as a
+`cmux-execd-auth-token=<hex>` marker, and the hook appends
+`lxc.environment = CMUX_EXECD_AUTH_TOKEN=<token>` to the generated LXC config
+before boot, so the token lands in `/proc/1/environ` where the in-container
+cmux-token-init reads and validates it.
+
+No code changes are needed for the fallback — it triggers automatically on an
+HTTP 400. It only requires the hook script staged once per node (run as root
+on the PVE host):
+
+```bash
+# Copy the hook script to the host (e.g. scp) and install it:
+install -m 0755 cmux-lxc-execd-token-hook.sh /var/lib/vz/snippets/cmux-lxc-execd-token-hook.sh
+```
+
+That is the whole staging: PVE's hookscript validation only resolves the
+volume path and checks the file exists and is executable, so a `snippets/`
+directory under any `dir` storage works even without the Snippets content
+type enabled (verified on PVE 8.4; enabling `content snippets` is only
+needed if you want to upload snippets through the web UI).
+
+The volume spec defaults to `local:snippets/cmux-lxc-execd-token-hook.sh` and
+can be overridden with `PVE_HOOKSCRIPT_VOLUME` (e.g. for a different storage
+or path).
+
+**Security note:** the per-clone token is visible in the clone's PVE
+description to anyone with VM.Audit on that VMID — the same people who control
+the host. It is never exposed through the container itself or the public execd
+endpoint, and the hook fails open by design, so a broken hook can never block
+a container boot.
+
+PVE 9.1+ hosts keep using the native `env` path untouched and never invoke
+the hook.
+
 ### pve-lxc-template.sh
 Manage LXC templates for cmux sandboxes.
 

@@ -26,6 +26,13 @@ const (
 
 	execTokenEnvVar = "PVE_EXECD_TOKEN_FILE"
 	execTokenEnvKey = "CMUX_EXECD_AUTH_TOKEN"
+
+	// execdTokenDescriptionMarker marks the per-clone execd token inside the
+	// container description; the pre-start hookscript transports it into the
+	// generated LXC config on hosts without env-parameter support.
+	execdTokenDescriptionMarker = "cmux-execd-auth-token="
+	hookscriptEnvVar            = "PVE_HOOKSCRIPT_VOLUME"
+	defaultHookscriptVolume     = "local:snippets/cmux-lxc-execd-token-hook.sh"
 )
 
 type SnapshotResolver func(snapshotID string) (templateVMID int, err error)
@@ -50,6 +57,11 @@ type Client struct {
 	execHTTP *http.Client
 
 	snapshotResolver SnapshotResolver
+
+	// hookscriptVolume is the PVE volume spec for the pre-start hookscript
+	// that carries the execd token into the generated LXC config on hosts
+	// that reject the env config option (PVE < 9.1).
+	hookscriptVolume string
 
 	nodeMu sync.Mutex
 	node   string
@@ -113,9 +125,10 @@ type pveContainerStatus struct {
 }
 
 type pveContainerConfig struct {
-	Net0     string `json:"net0,omitempty"`
-	Hostname string `json:"hostname,omitempty"`
-	Env      string `json:"env,omitempty"`
+	Net0        string `json:"net0,omitempty"`
+	Hostname    string `json:"hostname,omitempty"`
+	Env         string `json:"env,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 var (
@@ -146,6 +159,7 @@ func NewClient(cfg Config) (*Client, error) {
 		execHTTP:           &http.Client{Timeout: 0},
 		snapshotResolver:   cfg.SnapshotResolver,
 		node:               strings.TrimSpace(cfg.Node),
+		hookscriptVolume:   defaultHookscriptVolume,
 		execRetryBaseDelay: 2 * time.Second,
 	}, nil
 }
@@ -159,7 +173,7 @@ func NewClientFromEnv() (*Client, error) {
 		verifyTLS = true
 	}
 
-	return NewClient(Config{
+	c, err := NewClient(Config{
 		APIURL:           apiURL,
 		APIToken:         apiToken,
 		Node:             os.Getenv("PVE_NODE"),
@@ -167,6 +181,13 @@ func NewClientFromEnv() (*Client, error) {
 		VerifyTLS:        verifyTLS,
 		SnapshotResolver: resolveSnapshotFromManifestOrDefault,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if v := strings.TrimSpace(os.Getenv(hookscriptEnvVar)); v != "" {
+		c.hookscriptVolume = v
+	}
+	return c, nil
 }
 
 func normalizeHostID(value string) string {
@@ -398,33 +419,86 @@ func upsertRuntimeEnv(env, token string) string {
 	return strings.Join(out, "\x00")
 }
 
+// upsertDescriptionToken replaces every cmux-execd-auth-token marker line in
+// a newline-separated PVE container description with a single marker line
+// for token, preserving all other lines exactly. The marker rides in the
+// description so the pre-start hookscript can inject the token into the
+// generated LXC config on hosts without env-parameter support. Only call
+// with a valid non-empty token.
+func upsertDescriptionToken(desc, token string) string {
+	lines := strings.Split(desc, "\n")
+	out := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), execdTokenDescriptionMarker) {
+			continue
+		}
+		out = append(out, line)
+	}
+	out = append(out, execdTokenDescriptionMarker+token)
+	return strings.Join(out, "\n")
+}
+
 // setContainerRuntimeEnv installs the execd smoke token in the container's
 // runtime env via the authenticated PVE config endpoint, preserving all
-// existing entries. Errors are sanitized: a PVE response body could echo the
-// submitted env (and with it the token), so only fixed messages plus the HTTP
-// status code are returned. A 400 may mean that the PVE version does not
-// support the env parameter: the LXC runtime env option requires PVE 9.1+
-// (pve-container 6.0.15+).
-func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) error {
+// existing entries. It returns the PUT's HTTP status (0 when the preceding
+// GET or the request itself failed) alongside the error. Errors are
+// sanitized: a PVE response body could echo the submitted env (and with it
+// the token), so only fixed messages plus the HTTP status code are returned.
+// A 400 may mean that the PVE version does not support the env parameter:
+// the LXC runtime env option requires PVE 9.1+ (pve-container 6.0.15+), and
+// callers fall back to the description+hookscript transport.
+func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) (int, error) {
 	cfg, err := c.getContainerConfig(ctx, vmid)
 	if err != nil {
-		return errors.New("read container runtime env failed")
+		return 0, errors.New("read container runtime env failed")
 	}
 	node, err := c.getNode(ctx)
 	if err != nil {
-		return errors.New("read container runtime env failed")
+		return 0, errors.New("read container runtime env failed")
 	}
 	_, status, err := c.apiRequestRaw(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
 		"env": []string{upsertRuntimeEnv(cfg.Env, token)},
 	})
 	if err != nil {
-		return errors.New("update container runtime env failed")
+		return 0, errors.New("update container runtime env failed")
 	}
 	if status == http.StatusBadRequest {
-		return errors.New("update container runtime env failed: PVE rejected the env parameter (HTTP 400); if env is unsupported, the LXC runtime env option requires PVE 9.1+ (pve-container 6.0.15+)")
+		return status, errors.New("update container runtime env failed: PVE rejected the env parameter (HTTP 400); if env is unsupported, the LXC runtime env option requires PVE 9.1+ (pve-container 6.0.15+)")
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("update container runtime env failed (HTTP %d)", status)
+		return status, fmt.Errorf("update container runtime env failed (HTTP %d)", status)
+	}
+	return status, nil
+}
+
+// setContainerExecdTokenViaHookscript installs the execd smoke token on PVE
+// hosts that reject the env config option: it writes a cmux-execd-auth-token
+// marker into the container description and points the container at the
+// host-staged pre-start hookscript, which appends the token to the generated
+// LXC config before boot. Errors are sanitized: a PVE response body could
+// echo the submitted description (and with it the token), so only fixed
+// messages plus the HTTP status code are returned.
+func (c *Client) setContainerExecdTokenViaHookscript(ctx context.Context, vmid int, token string) error {
+	cfg, err := c.getContainerConfig(ctx, vmid)
+	if err != nil {
+		return errors.New("read container config failed")
+	}
+	node, err := c.getNode(ctx)
+	if err != nil {
+		return errors.New("read container config failed")
+	}
+	_, status, err := c.apiRequestRaw(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
+		"description": []string{upsertDescriptionToken(cfg.Description, token)},
+		"hookscript":  []string{c.hookscriptVolume},
+	})
+	if err != nil {
+		return errors.New("update container config failed")
+	}
+	if status == http.StatusBadRequest {
+		return fmt.Errorf("update container config failed: PVE rejected the hookscript parameter (HTTP 400); stage the hook script volume %s on a storage with the Snippets content type enabled", c.hookscriptVolume)
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("update container config failed (HTTP %d)", status)
 	}
 	return nil
 }
@@ -796,7 +870,16 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 		}
 
 		if token != "" {
-			if err := c.setContainerRuntimeEnv(ctx, vmid, token); err != nil {
+			status, err := c.setContainerRuntimeEnv(ctx, vmid, token)
+			// A 400 means the host's PVE rejects the env config option
+			// (PVE < 9.1 / pve-container < 6.0.15): fall back to carrying
+			// the token via the description marker + a pre-start hookscript.
+			if err != nil && status == http.StatusBadRequest {
+				if ferr := c.setContainerExecdTokenViaHookscript(ctx, vmid, token); ferr != nil {
+					_ = c.deleteContainer(ctx, vmid)
+					return nil, fmt.Errorf("set container execd token via hookscript: %w", ferr)
+				}
+			} else if err != nil {
 				_ = c.deleteContainer(ctx, vmid)
 				return nil, fmt.Errorf("set container runtime env: %w", err)
 			}
