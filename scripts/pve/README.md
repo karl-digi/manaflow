@@ -126,14 +126,15 @@ HTTP 400. It only requires the hook script staged once per node (run as root
 on the PVE host):
 
 ```bash
-# 1. Enable the Snippets content type on the storage, keeping the types
-#    already enabled (check with: pvesm config local). Example:
-pvesm set local --content iso,vztmpl,backup,snippets
-#    Or via the UI: Datacenter -> Storage -> local -> Edit -> Content -> Snippets
-
-# 2. Copy the hook script to the host (e.g. scp) and install it:
+# Copy the hook script to the host (e.g. scp) and install it:
 install -m 0755 cmux-lxc-execd-token-hook.sh /var/lib/vz/snippets/cmux-lxc-execd-token-hook.sh
 ```
+
+That is the whole staging: PVE's hookscript validation only resolves the
+volume path and checks the file exists and is executable, so a `snippets/`
+directory under any `dir` storage works even without the Snippets content
+type enabled (verified on PVE 8.4; enabling `content snippets` is only
+needed if you want to upload snippets through the web UI).
 
 The volume spec defaults to `local:snippets/cmux-lxc-execd-token-hook.sh` and
 can be overridden with `PVE_HOOKSCRIPT_VOLUME` (e.g. for a different storage
