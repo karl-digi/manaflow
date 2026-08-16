@@ -6,9 +6,10 @@
 # the config endpoint's `env` parameter; older hosts (e.g. PVE 8) reject it
 # with HTTP 400. On those hosts devsh falls back to writing the per-clone
 # token into the container description as a cmux-execd-auth-token=<hex>
-# marker and pointing the container at this script via the hookscript config
-# option. PVE invokes this script at pre-start, after generating
-# /var/lib/lxc/<vmid>/config and before boot, so appending
+# marker. This script is inherited from the base template's hookscript
+# config (the API forbids non-root@pam callers from setting it), so devsh
+# only writes the description marker. PVE invokes it at pre-start, after
+# generating /var/lib/lxc/<vmid>/config and before boot, so appending
 # `lxc.environment = CMUX_EXECD_AUTH_TOKEN=<token>` here lands in the
 # container's /proc/1/environ where the in-container cmux-token-init reads it.
 #

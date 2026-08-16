@@ -129,6 +129,7 @@ type pveContainerConfig struct {
 	Hostname    string `json:"hostname,omitempty"`
 	Env         string `json:"env,omitempty"`
 	Description string `json:"description,omitempty"`
+	Hookscript  string `json:"hookscript,omitempty"`
 }
 
 var (
@@ -473,11 +474,13 @@ func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token str
 
 // setContainerExecdTokenViaHookscript installs the execd smoke token on PVE
 // hosts that reject the env config option: it writes a cmux-execd-auth-token
-// marker into the container description and points the container at the
-// host-staged pre-start hookscript, which appends the token to the generated
-// LXC config before boot. Errors are sanitized: a PVE response body could
-// echo the submitted description (and with it the token), so only fixed
-// messages plus the HTTP status code are returned.
+// marker into the container description, and the pre-start hookscript the
+// clone inherited from its template transports it into the generated LXC
+// config before boot. The hookscript is never set here: PVE only allows
+// root@pam to change it, so it must already be present on the clone
+// (inherited at clone time from the template). Errors are sanitized: a PVE
+// response body could echo the submitted description (and with it the token),
+// so only fixed messages plus the HTTP status code are returned.
 func (c *Client) setContainerExecdTokenViaHookscript(ctx context.Context, vmid int, token string) error {
 	cfg, err := c.getContainerConfig(ctx, vmid)
 	if err != nil {
@@ -487,15 +490,14 @@ func (c *Client) setContainerExecdTokenViaHookscript(ctx context.Context, vmid i
 	if err != nil {
 		return errors.New("read container config failed")
 	}
+	if cfg.Hookscript != c.hookscriptVolume {
+		return fmt.Errorf("clone %d did not inherit hookscript %s from its template; the clone's hookscript can only be changed by root@pam, so it must be pre-set on the base template (see scripts/pve/README.md for staging)", vmid, c.hookscriptVolume)
+	}
 	_, status, err := c.apiRequestRaw(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
 		"description": []string{upsertDescriptionToken(cfg.Description, token)},
-		"hookscript":  []string{c.hookscriptVolume},
 	})
 	if err != nil {
 		return errors.New("update container config failed")
-	}
-	if status == http.StatusBadRequest {
-		return fmt.Errorf("update container config failed: PVE rejected the hookscript parameter (HTTP 400); stage the hook script volume %s on a storage with the Snippets content type enabled", c.hookscriptVolume)
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("update container config failed (HTTP %d)", status)
@@ -873,7 +875,8 @@ func (c *Client) StartInstance(ctx context.Context, opts StartOptions) (*Instanc
 			status, err := c.setContainerRuntimeEnv(ctx, vmid, token)
 			// A 400 means the host's PVE rejects the env config option
 			// (PVE < 9.1 / pve-container < 6.0.15): fall back to carrying
-			// the token via the description marker + a pre-start hookscript.
+			// the token via the description marker. The hookscript is not
+			// written here — it is inherited from the template at clone time.
 			if err != nil && status == http.StatusBadRequest {
 				if ferr := c.setContainerExecdTokenViaHookscript(ctx, vmid, token); ferr != nil {
 					_ = c.deleteContainer(ctx, vmid)
