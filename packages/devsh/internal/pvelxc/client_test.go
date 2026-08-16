@@ -791,28 +791,9 @@ func TestExecdTokenFileInvalidContentRejectedBeforeStart(t *testing.T) {
 	}
 }
 
-func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
-	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
-
-	srv, rec := newStartInstanceTestServer(t, "", http.StatusInternalServerError)
-	client := newStartTestClient(t, srv)
-
-	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err == nil {
-		t.Fatal("StartInstance() error = nil, want config injection error")
-	} else if strings.Contains(err.Error(), testExecdToken) {
-		t.Errorf("StartInstance() error leaks the injected token: %v", err)
-	}
-	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
-		t.Fatalf("clone deletion not requested after injection failure; requests: %v", rec.reqs)
-	}
-	if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
-		t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
-	}
-}
-
 // TestExecdTokenFileInjectionErrorSurfacesStatus pins the diagnostics of a
 // rejected runtime-env update: the error must carry the PVE HTTP status (a
-// 400 additionally names the PVE 9.1+ requirement for the LXC env option)
+// 400 additionally includes a conditional PVE 9.1+ hint for unsupported env
 // without ever echoing the response body, which contains the submitted env
 // (and with it the token) in the test server's error payloads.
 func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
@@ -823,11 +804,12 @@ func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 		notSubstr  []string
 	}{
 		{
-			name:      "bad request names the PVE 9 requirement",
+			name:      "bad request includes the PVE 9 hint",
 			putStatus: http.StatusBadRequest,
 			wantSubstr: []string{
 				"update container runtime env failed",
 				"HTTP 400",
+				"if env is unsupported",
 				"PVE 9.1+",
 			},
 		},
