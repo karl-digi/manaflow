@@ -122,23 +122,37 @@ before boot, so the token lands in `/proc/1/environ` where the in-container
 cmux-token-init reads and validates it.
 
 No code changes are needed for the fallback — it triggers automatically on an
-HTTP 400. It only requires the hook script staged once per node (run as root
-on the PVE host):
+HTTP 400. Staging takes TWO steps, both run as root on the PVE host:
+
+1. Install the hook script once per node:
 
 ```bash
 # Copy the hook script to the host (e.g. scp) and install it:
 install -m 0755 cmux-lxc-execd-token-hook.sh /var/lib/vz/snippets/cmux-lxc-execd-token-hook.sh
 ```
 
-That is the whole staging: PVE's hookscript validation only resolves the
-volume path and checks the file exists and is executable, so a `snippets/`
-directory under any `dir` storage works even without the Snippets content
-type enabled (verified on PVE 8.4; enabling `content snippets` is only
-needed if you want to upload snippets through the web UI).
+2. Set the hookscript on the base template so every clone inherits it. devsh
+cannot set it at clone time — PVE only allows root@pam to change the
+hookscript option — so it must be pre-set once on the template:
+
+```bash
+pct set 9000 --hookscript local:snippets/cmux-lxc-execd-token-hook.sh
+grep ^hookscript /etc/pve/lxc/9000.conf
+```
+
+The weekly snapshot build clones from this base (default
+`PVE_TEMPLATE_VMID=9000`), so newly built templates — and their smoke
+clones — inherit the hookscript automatically.
+
+PVE's hookscript validation only resolves the volume path and checks the file
+exists and is executable, so a `snippets/` directory under any `dir` storage
+works even without the Snippets content type enabled (verified on PVE 8.4;
+enabling `content snippets` is only needed if you want to upload snippets
+through the web UI).
 
 The volume spec defaults to `local:snippets/cmux-lxc-execd-token-hook.sh` and
 can be overridden with `PVE_HOOKSCRIPT_VOLUME` (e.g. for a different storage
-or path).
+or path); the override must match the template's hookscript value.
 
 **Security note:** the per-clone token is visible in the clone's PVE
 description to anyone with VM.Audit on that VMID — the same people who control

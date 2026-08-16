@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -536,19 +537,24 @@ func (r *startInstanceRecorder) index(methodPath string) int {
 // newStartInstanceTestServer serves a minimal PVE API for StartInstance:
 // empty node lists (VMID 200 is free), instant clone/start tasks, and the
 // given config env (JSON-escaped, e.g. "A=1\u0000B=2") plus a static
-// description on GET config. putStatus != 0 makes the env config PUT fail
-// with that status.
+// description on GET config, with no inherited hookscript. putStatus != 0
+// makes the env config PUT fail with that status.
 func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus int) (*httptest.Server, *startInstanceRecorder) {
 	t.Helper()
-	return newStartInstanceTestServerWithHookStatus(t, configEnvJSON, putStatus, 0)
+	return newStartInstanceTestServerWithHookScript(t, configEnvJSON, putStatus, 0, "")
 }
 
-// newStartInstanceTestServerWithHookStatus extends newStartInstanceTestServer
-// with a separate failure status for config PUTs that carry a hookscript
-// parameter (the description+hookscript fallback path). Failing PUTs echo
-// the submitted env or description in the error body so a leak would surface
-// the token in the returned error.
-func newStartInstanceTestServerWithHookStatus(t *testing.T, configEnvJSON string, putStatus, hookStatus int) (*httptest.Server, *startInstanceRecorder) {
+// newStartInstanceTestServerWithHookScript extends newStartInstanceTestServer
+// with hookStatus, applied to config PUTs that carry a description marker but
+// no env (the PVE < 9.1 fallback path), and inheritedHookscript, the
+// hookscript value returned by GET config ("" when the clone inherited none,
+// so the client must abort its fallback before mutating anything). A PUT
+// carrying a hookscript form key is a tripwire: the hookscript is inherited
+// from the template because PVE only lets root@pam set it, so the client must
+// never send it — such a PUT fails the test. Failing PUTs echo the submitted
+// env or description in the error body so a leak would surface the token in
+// the returned error.
+func newStartInstanceTestServerWithHookScript(t *testing.T, configEnvJSON string, putStatus, hookStatus int, inheritedHookscript string) (*httptest.Server, *startInstanceRecorder) {
 	t.Helper()
 	rec := &startInstanceRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -579,21 +585,36 @@ func newStartInstanceTestServerWithHookStatus(t *testing.T, configEnvJSON string
 			rec.mu.Lock()
 			rec.configCalls++
 			rec.mu.Unlock()
-			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200","description":"template description","env":"` + configEnvJSON + `"}}`))
+			hookscriptField := ""
+			if inheritedHookscript != "" {
+				hookscriptField = `,"hookscript":` + strconv.Quote(inheritedHookscript)
+			}
+			configJSON := `{"hostname":"cmux-200","description":"template description","env":"` + configEnvJSON + `"` + hookscriptField + `}`
+			_, _ = w.Write([]byte(`{"data":` + configJSON + `}`))
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/config"):
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse PUT config form: %v", err)
 			}
+			// Tripwire: the client must never set hookscript via the API
+			// (root@pam-only on PVE); it is inherited from the template.
 			if hookscript := r.Form.Get("hookscript"); hookscript != "" {
 				rec.mu.Lock()
-				rec.putDescription = r.Form.Get("description")
 				rec.putHookscript = hookscript
+				rec.mu.Unlock()
+				t.Errorf("unexpected hookscript param %q in config PUT; the hookscript is inherited from the template, not set via the API", hookscript)
+				_, _ = w.Write([]byte(`{"data":null}`))
+				return
+			}
+			if desc := r.Form.Get("description"); desc != "" && r.Form.Get("env") == "" {
+				// Description-marker PUT (PVE < 9.1 fallback path).
+				rec.mu.Lock()
+				rec.putDescription = desc
 				rec.mu.Unlock()
 				if hookStatus != 0 {
 					w.WriteHeader(hookStatus)
 					// Deliberately echo the submitted description in the
 					// error body so a leak would surface the token.
-					_, _ = w.Write([]byte(`{"errors":{"description":"` + r.Form.Get("description") + `"}}`))
+					_, _ = w.Write([]byte(`{"errors":{"description":"` + desc + `"}}`))
 					return
 				}
 				_, _ = w.Write([]byte(`{"data":null}`))
@@ -823,29 +844,30 @@ func TestExecdTokenFileInvalidContentRejectedBeforeStart(t *testing.T) {
 // TestExecdTokenFileInjectionErrorSurfacesStatus pins the diagnostics of a
 // rejected runtime-env update: a non-400 failure returns the fixed message
 // with the PVE HTTP status, while a 400 (which on PVE < 9.1 means the env
-// parameter is unsupported) falls back to the description+hookscript path,
-// whose own failure surfaces only the fixed message and status. Neither path
-// may echo the PVE response body, which contains the submitted env/description
+// parameter is unsupported) falls back to the description-marker path, whose
+// own failure surfaces only the fixed message and status. Neither path may
+// echo the PVE response body, which contains the submitted env/description
 // (and with it the token) in the test server's error payloads.
 func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		putStatus  int
-		hookStatus int
-		wantSubstr []string
-		notSubstr  []string
+		name             string
+		putStatus        int
+		hookStatus       int
+		hookscriptConfig string
+		wantSubstr       []string
+		notSubstr        []string
 	}{
 		{
-			name:       "env rejection falls back to hookscript and fails sanitized",
-			putStatus:  http.StatusBadRequest,
-			hookStatus: http.StatusBadRequest,
+			name:             "env rejection falls back to description and fails sanitized",
+			putStatus:        http.StatusBadRequest,
+			hookStatus:       http.StatusBadRequest,
+			hookscriptConfig: defaultHookscriptVolume,
 			wantSubstr: []string{
 				"set container execd token via hookscript",
 				"update container config failed",
 				"HTTP 400",
-				"Snippets",
 			},
-			notSubstr: []string{"PVE 9.1+"},
+			notSubstr: []string{"PVE 9.1+", "Snippets"},
 		},
 		{
 			name:       "server error carries only the status",
@@ -860,7 +882,7 @@ func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
 
-			srv, rec := newStartInstanceTestServerWithHookStatus(t, "", tc.putStatus, tc.hookStatus)
+			srv, rec := newStartInstanceTestServerWithHookScript(t, "", tc.putStatus, tc.hookStatus, tc.hookscriptConfig)
 			client := newStartTestClient(t, srv)
 
 			_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
@@ -941,12 +963,13 @@ func TestDescriptionTokenUpsert(t *testing.T) {
 
 // TestExecdTokenViaHookscriptFallbackOnEnvRejection exercises the PVE < 9.1
 // fallback: when the env config PUT is rejected with HTTP 400, StartInstance
-// retries via the container description plus the hookscript option, then
-// starts the clone.
+// verifies the clone inherited the hookscript from its template (the client
+// never sets it via the API, which PVE restricts to root@pam), retries via
+// the container description marker only, then starts the clone.
 func TestExecdTokenViaHookscriptFallbackOnEnvRejection(t *testing.T) {
 	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken+"\n"))
 
-	srv, rec := newStartInstanceTestServerWithHookStatus(t, "EXISTING=value", http.StatusBadRequest, 0)
+	srv, rec := newStartInstanceTestServerWithHookScript(t, "EXISTING=value", http.StatusBadRequest, 0, defaultHookscriptVolume)
 	client := newStartTestClient(t, srv)
 
 	inst, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
@@ -978,12 +1001,12 @@ func TestExecdTokenViaHookscriptFallbackOnEnvRejection(t *testing.T) {
 		t.Fatalf("start request not recorded; requests: %v", rec.reqs)
 	}
 	if len(putIdxs) != 2 {
-		t.Fatalf("config PUT calls = %d, want 2 (env then hookscript); requests: %v", len(putIdxs), rec.reqs)
+		t.Fatalf("config PUT calls = %d, want 2 (env then description); requests: %v", len(putIdxs), rec.reqs)
 	}
-	idxEnvPut, idxHookPut := putIdxs[0], putIdxs[1]
-	if idxEnvPut < idxClone || idxHookPut < idxEnvPut || idxStart < idxHookPut {
-		t.Fatalf("expected clone -> env PUT -> hookscript PUT -> start; clone=%d envPut=%d hookPut=%d start=%d; requests: %v",
-			idxClone, idxEnvPut, idxHookPut, idxStart, rec.reqs)
+	idxEnvPut, idxDescPut := putIdxs[0], putIdxs[1]
+	if idxEnvPut < idxClone || idxDescPut < idxEnvPut || idxStart < idxDescPut {
+		t.Fatalf("expected clone -> env PUT -> description PUT -> start; clone=%d envPut=%d descPut=%d start=%d; requests: %v",
+			idxClone, idxEnvPut, idxDescPut, idxStart, rec.reqs)
 	}
 
 	// The rejected env PUT still used the runtime-env path with the token.
@@ -992,26 +1015,28 @@ func TestExecdTokenViaHookscriptFallbackOnEnvRejection(t *testing.T) {
 		t.Errorf("env PUT env = %q, want %q", rec.putEnv, wantEnv)
 	}
 
-	// The fallback PUT carries the preserved description + default volume.
-	if rec.putHookscript != defaultHookscriptVolume {
-		t.Errorf("hookscript PUT volume = %q, want %q", rec.putHookscript, defaultHookscriptVolume)
-	}
+	// The fallback PUT carries the preserved template description + one marker.
 	wantDesc := "template description\n" + execdTokenDescriptionMarker + testExecdToken
 	if rec.putDescription != wantDesc {
-		t.Errorf("hookscript PUT description = %q, want %q", rec.putDescription, wantDesc)
+		t.Errorf("description PUT description = %q, want %q", rec.putDescription, wantDesc)
 	}
 	if got := strings.Count(rec.putDescription, execdTokenDescriptionMarker); got != 1 {
-		t.Errorf("hookscript PUT description has %d marker lines, want exactly 1: %q", got, rec.putDescription)
+		t.Errorf("description PUT description has %d marker lines, want exactly 1: %q", got, rec.putDescription)
 	}
 	if got := strings.Count(rec.putDescription, testExecdToken); got != 1 {
-		t.Errorf("hookscript PUT description has %d token occurrences, want exactly 1: %q", got, rec.putDescription)
+		t.Errorf("description PUT description has %d token occurrences, want exactly 1: %q", got, rec.putDescription)
+	}
+
+	// The hookscript is inherited from the template, never sent via the API.
+	if rec.putHookscript != "" {
+		t.Errorf("config PUT carried a hookscript form key %q, want none (inherited from template)", rec.putHookscript)
 	}
 
 	rec.mu.Lock()
 	configCalls := rec.configCalls
 	rec.mu.Unlock()
 	if configCalls != 2 {
-		t.Errorf("config GET calls = %d, want 2 (env lookup + hookscript lookup)", configCalls)
+		t.Errorf("config GET calls = %d, want 2 (env lookup + fallback lookup)", configCalls)
 	}
 
 	client.execTokenMu.Lock()
@@ -1023,14 +1048,14 @@ func TestExecdTokenViaHookscriptFallbackOnEnvRejection(t *testing.T) {
 }
 
 // TestExecdTokenViaHookscriptErrorSanitized pins that a failing
-// description+hookscript PUT surfaces only a fixed message plus the HTTP
-// status: the mock server deliberately echoes the submitted description
-// (which carries the token) in the error body, so any body reflection would
-// leak the token into the returned error.
+// description-marker PUT surfaces only a fixed message plus the HTTP status:
+// the mock server deliberately echoes the submitted description (which
+// carries the token) in the error body, so any body reflection would leak the
+// token into the returned error.
 func TestExecdTokenViaHookscriptErrorSanitized(t *testing.T) {
 	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
 
-	srv, rec := newStartInstanceTestServerWithHookStatus(t, "", http.StatusBadRequest, http.StatusInternalServerError)
+	srv, rec := newStartInstanceTestServerWithHookScript(t, "", http.StatusBadRequest, http.StatusInternalServerError, defaultHookscriptVolume)
 	client := newStartTestClient(t, srv)
 
 	_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
@@ -1057,26 +1082,28 @@ func TestExecdTokenViaHookscriptErrorSanitized(t *testing.T) {
 	}
 }
 
-// TestExecdTokenViaHookscriptConfigRejected covers the un-staged-hook failure
-// mode: a 400 from the fallback PUT must explain that the snippet volume must
-// be staged on a storage with Snippets content enabled, without exposing the
-// token.
-func TestExecdTokenViaHookscriptConfigRejected(t *testing.T) {
+// TestExecdTokenViaHookscriptInheritanceMissing pins the fail-fast guard on
+// the PVE < 9.1 fallback: when the clone's GET config shows no inherited
+// hookscript, the fallback must abort before any PUT. The hookscript option
+// is root@pam-only on PVE, so it can only be pre-set on the template; the
+// fixed error names the expected volume and staging docs, never the token.
+func TestExecdTokenViaHookscriptInheritanceMissing(t *testing.T) {
 	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
 
-	srv, rec := newStartInstanceTestServerWithHookStatus(t, "", http.StatusBadRequest, http.StatusBadRequest)
+	// The 3-arg constructor returns a GET config without a hookscript field.
+	srv, rec := newStartInstanceTestServer(t, "", http.StatusBadRequest)
 	client := newStartTestClient(t, srv)
 
 	_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
 	if err == nil {
-		t.Fatal("StartInstance() error = nil, want hookscript 400 failure")
+		t.Fatal("StartInstance() error = nil, want missing-inheritance failure")
 	}
 	for _, want := range []string{
 		"set container execd token via hookscript",
-		"update container config failed",
-		"HTTP 400",
-		"Snippets",
 		defaultHookscriptVolume,
+		"root@pam",
+		"template",
+		"scripts/pve/README.md",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("StartInstance() error = %q, want substring %q", err, want)
@@ -1085,8 +1112,15 @@ func TestExecdTokenViaHookscriptConfigRejected(t *testing.T) {
 	if strings.Contains(err.Error(), testExecdToken) {
 		t.Errorf("StartInstance() error leaks the injected token: %v", err)
 	}
+	// Fail-fast before mutation: no description PUT may reach the server.
+	if rec.putDescription != "" {
+		t.Errorf("description PUT issued despite missing inherited hookscript: %q", rec.putDescription)
+	}
 	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
-		t.Fatalf("clone deletion not requested after hookscript 400; requests: %v", rec.reqs)
+		t.Fatalf("clone deletion not requested after missing-inheritance failure; requests: %v", rec.reqs)
+	}
+	if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
+		t.Fatalf("start requested despite missing-inheritance failure; requests: %v", rec.reqs)
 	}
 }
 
