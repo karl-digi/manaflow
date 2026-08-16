@@ -57,6 +57,34 @@ export function formatPackageInstallSpec(
   return isRemotePackageSource(value) ? value : `${packageName}@${value}`;
 }
 
+// bun add -g fails extracting @anthropic-ai/claude-code@2.1.89 on linux/amd64
+// ("Fail extracting tarball"). Keep this list in sync with
+// scripts/snapshot/helpers.py:NPM_GLOBAL_INSTALL_PACKAGES.
+export const NPM_GLOBAL_INSTALL_PACKAGES = new Set<string>([
+  "@anthropic-ai/claude-code",
+]);
+
+export function selectGlobalPackageInstaller(
+  packageName: string,
+  value: string,
+): "npm" | "bun" {
+  if (
+    isRemotePackageSource(value) ||
+    NPM_GLOBAL_INSTALL_PACKAGES.has(packageName)
+  ) {
+    return "npm";
+  }
+  return "bun";
+}
+
+export function formatGlobalPackageInstallLines(deps: IdeDeps): string {
+  const lines = Object.entries(deps.packages).map(([packageName, value]) => {
+    const installer = selectGlobalPackageInstaller(packageName, value);
+    return `${installer}|${packageName}|${formatPackageInstallSpec(packageName, value)}`;
+  });
+  return `${lines.join("\n")}\n`;
+}
+
 export function parsePackageOverrides(raw: string): IdePackageOverrides {
   const parsed = packageOverridesSchema.parse(JSON.parse(raw));
   const normalizedEntries = Object.entries(parsed).map(([packageName, value]) => {

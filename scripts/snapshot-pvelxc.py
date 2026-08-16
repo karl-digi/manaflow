@@ -73,6 +73,7 @@ from snapshot import (
     format_dependency_graph,
     is_remote_package_source,
     maybe_apply_ide_package_overrides,
+    select_global_package_installer,
 )
 
 # ---------------------------------------------------------------------------
@@ -3913,6 +3914,7 @@ async def task_install_global_cli(ctx: PveTaskContext) -> None:
 
     for index, (name, spec, install_spec) in enumerate(package_specs, 1):
         is_remote = is_remote_package_source(spec)
+        installer = select_global_package_installer(name, spec)
         install_label = spec if is_remote else install_spec
         ctx.console.info(
             f"Installing package {index}/{len(package_specs)}: {install_label}"
@@ -3925,7 +3927,7 @@ async def task_install_global_cli(ctx: PveTaskContext) -> None:
             try:
                 cmd = (
                     f"npm install -g {quoted_install_spec}"
-                    if is_remote
+                    if installer == "npm"
                     else f"bun add -g {quoted_install_spec}"
                 )
                 await ctx.run(f"install-pkg-{task_label}", cmd)

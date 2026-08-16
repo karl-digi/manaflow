@@ -30,6 +30,7 @@ from .helpers import (
     format_package_task_label,
     is_remote_package_source,
     maybe_apply_ide_package_overrides,
+    select_global_package_installer,
 )
 
 __all__ = [
@@ -54,4 +55,5 @@ __all__ = [
     "format_package_task_label",
     "is_remote_package_source",
     "maybe_apply_ide_package_overrides",
+    "select_global_package_installer",
 ]
