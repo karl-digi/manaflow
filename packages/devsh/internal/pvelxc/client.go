@@ -401,7 +401,10 @@ func upsertRuntimeEnv(env, token string) string {
 // setContainerRuntimeEnv installs the execd smoke token in the container's
 // runtime env via the authenticated PVE config endpoint, preserving all
 // existing entries. Errors are sanitized: a PVE response body could echo the
-// submitted env (and with it the token), so only fixed messages are returned.
+// submitted env (and with it the token), so only fixed messages plus the HTTP
+// status code are returned. A 400 may mean that the PVE version does not
+// support the env parameter: the LXC runtime env option requires PVE 9.1+
+// (pve-container 6.0.15+).
 func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) error {
 	cfg, err := c.getContainerConfig(ctx, vmid)
 	if err != nil {
@@ -411,10 +414,17 @@ func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token str
 	if err != nil {
 		return errors.New("read container runtime env failed")
 	}
-	if _, err := c.apiRequestData(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
+	_, status, err := c.apiRequestRaw(ctx, http.MethodPut, fmt.Sprintf("/api2/json/nodes/%s/lxc/%d/config", node, vmid), url.Values{
 		"env": []string{upsertRuntimeEnv(cfg.Env, token)},
-	}); err != nil {
+	})
+	if err != nil {
 		return errors.New("update container runtime env failed")
+	}
+	if status == http.StatusBadRequest {
+		return errors.New("update container runtime env failed: PVE rejected the env parameter (HTTP 400); if env is unsupported, the LXC runtime env option requires PVE 9.1+ (pve-container 6.0.15+)")
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("update container runtime env failed (HTTP %d)", status)
 	}
 	return nil
 }

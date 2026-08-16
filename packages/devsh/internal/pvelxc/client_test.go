@@ -791,22 +791,67 @@ func TestExecdTokenFileInvalidContentRejectedBeforeStart(t *testing.T) {
 	}
 }
 
-func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
-	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+// TestExecdTokenFileInjectionErrorSurfacesStatus pins the diagnostics of a
+// rejected runtime-env update: the error must carry the PVE HTTP status (a
+// 400 additionally includes a conditional PVE 9.1+ hint for unsupported env
+// without ever echoing the response body, which contains the submitted env
+// (and with it the token) in the test server's error payloads.
+func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		putStatus  int
+		wantSubstr []string
+		notSubstr  []string
+	}{
+		{
+			name:      "bad request includes the PVE 9 hint",
+			putStatus: http.StatusBadRequest,
+			wantSubstr: []string{
+				"update container runtime env failed",
+				"HTTP 400",
+				"if env is unsupported",
+				"PVE 9.1+",
+			},
+		},
+		{
+			name:      "server error carries only the status",
+			putStatus: http.StatusInternalServerError,
+			wantSubstr: []string{
+				"update container runtime env failed (HTTP 500)",
+			},
+			notSubstr: []string{"PVE 9.1+"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
 
-	srv, rec := newStartInstanceTestServer(t, "", http.StatusInternalServerError)
-	client := newStartTestClient(t, srv)
+			srv, rec := newStartInstanceTestServer(t, "", tc.putStatus)
+			client := newStartTestClient(t, srv)
 
-	if _, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID}); err == nil {
-		t.Fatal("StartInstance() error = nil, want config injection error")
-	} else if strings.Contains(err.Error(), testExecdToken) {
-		t.Errorf("StartInstance() error leaks the injected token: %v", err)
-	}
-	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
-		t.Fatalf("clone deletion not requested after injection failure; requests: %v", rec.reqs)
-	}
-	if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
-		t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
+			_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+			if err == nil {
+				t.Fatal("StartInstance() error = nil, want config injection error")
+			}
+			for _, want := range tc.wantSubstr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("StartInstance() error = %q, want substring %q", err, want)
+				}
+			}
+			for _, unwanted := range tc.notSubstr {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("StartInstance() error = %q, must not contain %q", err, unwanted)
+				}
+			}
+			if strings.Contains(err.Error(), testExecdToken) {
+				t.Errorf("StartInstance() error leaks the injected token: %v", err)
+			}
+			if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
+				t.Fatalf("clone deletion not requested after injection failure; requests: %v", rec.reqs)
+			}
+			if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
+				t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
+			}
+		})
 	}
 }
 
