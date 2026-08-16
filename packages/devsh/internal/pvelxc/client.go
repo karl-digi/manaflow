@@ -403,7 +403,7 @@ func upsertRuntimeEnv(env, token string) string {
 // existing entries. Errors are sanitized: a PVE response body could echo the
 // submitted env (and with it the token), so only fixed messages plus the HTTP
 // status code are returned. A 400 means PVE rejected the env parameter
-// itself: the LXC runtime env option only exists on PVE 9.0+ (pve-container
+// itself: the LXC runtime env option only exists on PVE 9.1+ (pve-container
 // 6.0.15+), so PVE 8.x hosts always fail this way.
 func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token string) error {
 	cfg, err := c.getContainerConfig(ctx, vmid)
@@ -421,7 +421,7 @@ func (c *Client) setContainerRuntimeEnv(ctx context.Context, vmid int, token str
 		return errors.New("update container runtime env failed")
 	}
 	if status == http.StatusBadRequest {
-		return errors.New("update container runtime env failed: PVE rejected the env parameter (HTTP 400); the LXC runtime env option requires PVE 9.0+ (pve-container 6.0.15+)")
+		return errors.New("update container runtime env failed: PVE rejected the env parameter (HTTP 400); the LXC runtime env option requires PVE 9.1+ (pve-container 6.0.15+)")
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("update container runtime env failed (HTTP %d)", status)

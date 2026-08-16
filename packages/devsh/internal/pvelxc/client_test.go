@@ -812,7 +812,7 @@ func TestExecdTokenFileInjectionFailureDeletesClone(t *testing.T) {
 
 // TestExecdTokenFileInjectionErrorSurfacesStatus pins the diagnostics of a
 // rejected runtime-env update: the error must carry the PVE HTTP status (a
-// 400 additionally names the PVE 9.0+ requirement for the LXC env option)
+// 400 additionally names the PVE 9.1+ requirement for the LXC env option)
 // without ever echoing the response body, which contains the submitted env
 // (and with it the token) in the test server's error payloads.
 func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
@@ -828,7 +828,7 @@ func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 			wantSubstr: []string{
 				"update container runtime env failed",
 				"HTTP 400",
-				"PVE 9.0+",
+				"PVE 9.1+",
 			},
 		},
 		{
@@ -837,7 +837,7 @@ func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 			wantSubstr: []string{
 				"update container runtime env failed (HTTP 500)",
 			},
-			notSubstr: []string{"PVE 9.0+"},
+			notSubstr: []string{"PVE 9.1+"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
