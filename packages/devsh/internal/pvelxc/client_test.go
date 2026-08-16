@@ -511,13 +511,15 @@ func TestExecdTokenFileReader(t *testing.T) {
 }
 
 type startInstanceRecorder struct {
-	mu          sync.Mutex
-	reqs        []string
-	putEnv      string
-	cloneCalls  int
-	putCalls    int
-	configCalls int
-	startCalls  int
+	mu             sync.Mutex
+	reqs           []string
+	putEnv         string
+	putDescription string
+	putHookscript  string
+	cloneCalls     int
+	putCalls       int
+	configCalls    int
+	startCalls     int
 }
 
 func (r *startInstanceRecorder) index(methodPath string) int {
@@ -533,9 +535,20 @@ func (r *startInstanceRecorder) index(methodPath string) int {
 
 // newStartInstanceTestServer serves a minimal PVE API for StartInstance:
 // empty node lists (VMID 200 is free), instant clone/start tasks, and the
-// given config env (JSON-escaped, e.g. "A=1\u0000B=2") on GET config.
-// putStatus != 0 makes the config PUT fail with that status.
+// given config env (JSON-escaped, e.g. "A=1\u0000B=2") plus a static
+// description on GET config. putStatus != 0 makes the env config PUT fail
+// with that status.
 func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus int) (*httptest.Server, *startInstanceRecorder) {
+	t.Helper()
+	return newStartInstanceTestServerWithHookStatus(t, configEnvJSON, putStatus, 0)
+}
+
+// newStartInstanceTestServerWithHookStatus extends newStartInstanceTestServer
+// with a separate failure status for config PUTs that carry a hookscript
+// parameter (the description+hookscript fallback path). Failing PUTs echo
+// the submitted env or description in the error body so a leak would surface
+// the token in the returned error.
+func newStartInstanceTestServerWithHookStatus(t *testing.T, configEnvJSON string, putStatus, hookStatus int) (*httptest.Server, *startInstanceRecorder) {
 	t.Helper()
 	rec := &startInstanceRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -566,10 +579,25 @@ func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus in
 			rec.mu.Lock()
 			rec.configCalls++
 			rec.mu.Unlock()
-			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200","env":"` + configEnvJSON + `"}}`))
+			_, _ = w.Write([]byte(`{"data":{"hostname":"cmux-200","description":"template description","env":"` + configEnvJSON + `"}}`))
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/config"):
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse PUT config form: %v", err)
+			}
+			if hookscript := r.Form.Get("hookscript"); hookscript != "" {
+				rec.mu.Lock()
+				rec.putDescription = r.Form.Get("description")
+				rec.putHookscript = hookscript
+				rec.mu.Unlock()
+				if hookStatus != 0 {
+					w.WriteHeader(hookStatus)
+					// Deliberately echo the submitted description in the
+					// error body so a leak would surface the token.
+					_, _ = w.Write([]byte(`{"errors":{"description":"` + r.Form.Get("description") + `"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"data":null}`))
+				return
 			}
 			rec.mu.Lock()
 			rec.putCalls++
@@ -599,12 +627,13 @@ func newStartInstanceTestServer(t *testing.T, configEnvJSON string, putStatus in
 func newStartTestClient(t *testing.T, srv *httptest.Server) *Client {
 	t.Helper()
 	return &Client{
-		apiURL:       srv.URL,
-		apiToken:     "token",
-		publicDomain: "example.com",
-		apiHTTP:      srv.Client(),
-		execHTTP:     &http.Client{Timeout: 0},
-		node:         "test-node",
+		apiURL:           srv.URL,
+		apiToken:         "token",
+		publicDomain:     "example.com",
+		apiHTTP:          srv.Client(),
+		execHTTP:         &http.Client{Timeout: 0},
+		node:             "test-node",
+		hookscriptVolume: defaultHookscriptVolume,
 	}
 }
 
@@ -792,40 +821,46 @@ func TestExecdTokenFileInvalidContentRejectedBeforeStart(t *testing.T) {
 }
 
 // TestExecdTokenFileInjectionErrorSurfacesStatus pins the diagnostics of a
-// rejected runtime-env update: the error must carry the PVE HTTP status (a
-// 400 additionally includes a conditional PVE 9.1+ hint for unsupported env
-// without ever echoing the response body, which contains the submitted env
+// rejected runtime-env update: a non-400 failure returns the fixed message
+// with the PVE HTTP status, while a 400 (which on PVE < 9.1 means the env
+// parameter is unsupported) falls back to the description+hookscript path,
+// whose own failure surfaces only the fixed message and status. Neither path
+// may echo the PVE response body, which contains the submitted env/description
 // (and with it the token) in the test server's error payloads.
 func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		putStatus  int
+		hookStatus int
 		wantSubstr []string
 		notSubstr  []string
 	}{
 		{
-			name:      "bad request includes the PVE 9 hint",
-			putStatus: http.StatusBadRequest,
+			name:       "env rejection falls back to hookscript and fails sanitized",
+			putStatus:  http.StatusBadRequest,
+			hookStatus: http.StatusBadRequest,
 			wantSubstr: []string{
-				"update container runtime env failed",
+				"set container execd token via hookscript",
+				"update container config failed",
 				"HTTP 400",
-				"if env is unsupported",
-				"PVE 9.1+",
+				"Snippets",
 			},
+			notSubstr: []string{"PVE 9.1+"},
 		},
 		{
-			name:      "server error carries only the status",
-			putStatus: http.StatusInternalServerError,
+			name:       "server error carries only the status",
+			putStatus:  http.StatusInternalServerError,
+			hookStatus: 0,
 			wantSubstr: []string{
 				"update container runtime env failed (HTTP 500)",
 			},
-			notSubstr: []string{"PVE 9.1+"},
+			notSubstr: []string{"PVE 9.1+", "hookscript"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
 
-			srv, rec := newStartInstanceTestServer(t, "", tc.putStatus)
+			srv, rec := newStartInstanceTestServerWithHookStatus(t, "", tc.putStatus, tc.hookStatus)
 			client := newStartTestClient(t, srv)
 
 			_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
@@ -852,6 +887,206 @@ func TestExecdTokenFileInjectionErrorSurfacesStatus(t *testing.T) {
 				t.Fatalf("start requested despite injection failure; requests: %v", rec.reqs)
 			}
 		})
+	}
+}
+
+func TestDescriptionTokenUpsert(t *testing.T) {
+	tests := []struct {
+		name  string
+		desc  string
+		token string
+		want  string
+	}{
+		{
+			name:  "empty description gets a marker line",
+			desc:  "",
+			token: testExecdToken,
+			want:  "\n" + execdTokenDescriptionMarker + testExecdToken,
+		},
+		{
+			name:  "preserves unrelated lines exactly and appends marker once",
+			desc:  "template description\nsecond line",
+			token: testExecdToken,
+			want:  "template description\nsecond line\n" + execdTokenDescriptionMarker + testExecdToken,
+		},
+		{
+			name:  "replaces a prior marker line",
+			desc:  "template description\n" + execdTokenDescriptionMarker + strings.Repeat("a", 64),
+			token: testExecdToken,
+			want:  "template description\n" + execdTokenDescriptionMarker + testExecdToken,
+		},
+		{
+			name:  "replaces stale markers anywhere in the description",
+			desc:  execdTokenDescriptionMarker + strings.Repeat("b", 64) + "\nkeep me\n" + execdTokenDescriptionMarker + strings.Repeat("c", 64),
+			token: testExecdToken,
+			want:  "keep me\n" + execdTokenDescriptionMarker + testExecdToken,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := upsertDescriptionToken(tt.desc, tt.token)
+			if got != tt.want {
+				t.Errorf("upsertDescriptionToken(%q, %q) = %q, want %q", tt.desc, tt.token, got, tt.want)
+			}
+			if n := strings.Count(got, execdTokenDescriptionMarker); n > 1 {
+				t.Errorf("upsertDescriptionToken() output has %d marker lines, want at most 1: %q", n, got)
+			}
+			if strings.Contains(got, strings.Repeat("a", 64)) || strings.Contains(got, strings.Repeat("b", 64)) || strings.Contains(got, strings.Repeat("c", 64)) {
+				t.Errorf("upsertDescriptionToken() output kept a stale marker value: %q", got)
+			}
+		})
+	}
+}
+
+// TestExecdTokenViaHookscriptFallbackOnEnvRejection exercises the PVE < 9.1
+// fallback: when the env config PUT is rejected with HTTP 400, StartInstance
+// retries via the container description plus the hookscript option, then
+// starts the clone.
+func TestExecdTokenViaHookscriptFallbackOnEnvRejection(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken+"\n"))
+
+	srv, rec := newStartInstanceTestServerWithHookStatus(t, "EXISTING=value", http.StatusBadRequest, 0)
+	client := newStartTestClient(t, srv)
+
+	inst, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+	if err != nil {
+		t.Fatalf("StartInstance() error = %v", err)
+	}
+	if inst == nil || inst.VMID != 200 {
+		t.Fatalf("StartInstance() = %+v, want VMID 200", inst)
+	}
+
+	const (
+		cloneReq = "POST /api2/json/nodes/test-node/lxc/9027/clone"
+		putReq   = "PUT /api2/json/nodes/test-node/lxc/200/config"
+		startReq = "POST /api2/json/nodes/test-node/lxc/200/status/start"
+	)
+	idxClone, idxStart := rec.index(cloneReq), rec.index(startReq)
+	rec.mu.Lock()
+	putIdxs := []int{}
+	for i, req := range rec.reqs {
+		if req == putReq {
+			putIdxs = append(putIdxs, i)
+		}
+	}
+	rec.mu.Unlock()
+	if idxClone < 0 {
+		t.Fatalf("clone request not recorded; requests: %v", rec.reqs)
+	}
+	if idxStart < 0 {
+		t.Fatalf("start request not recorded; requests: %v", rec.reqs)
+	}
+	if len(putIdxs) != 2 {
+		t.Fatalf("config PUT calls = %d, want 2 (env then hookscript); requests: %v", len(putIdxs), rec.reqs)
+	}
+	idxEnvPut, idxHookPut := putIdxs[0], putIdxs[1]
+	if idxEnvPut < idxClone || idxHookPut < idxEnvPut || idxStart < idxHookPut {
+		t.Fatalf("expected clone -> env PUT -> hookscript PUT -> start; clone=%d envPut=%d hookPut=%d start=%d; requests: %v",
+			idxClone, idxEnvPut, idxHookPut, idxStart, rec.reqs)
+	}
+
+	// The rejected env PUT still used the runtime-env path with the token.
+	wantEnv := "EXISTING=value\x00CMUX_EXECD_AUTH_TOKEN=" + testExecdToken
+	if rec.putEnv != wantEnv {
+		t.Errorf("env PUT env = %q, want %q", rec.putEnv, wantEnv)
+	}
+
+	// The fallback PUT carries the preserved description + default volume.
+	if rec.putHookscript != defaultHookscriptVolume {
+		t.Errorf("hookscript PUT volume = %q, want %q", rec.putHookscript, defaultHookscriptVolume)
+	}
+	wantDesc := "template description\n" + execdTokenDescriptionMarker + testExecdToken
+	if rec.putDescription != wantDesc {
+		t.Errorf("hookscript PUT description = %q, want %q", rec.putDescription, wantDesc)
+	}
+	if got := strings.Count(rec.putDescription, execdTokenDescriptionMarker); got != 1 {
+		t.Errorf("hookscript PUT description has %d marker lines, want exactly 1: %q", got, rec.putDescription)
+	}
+	if got := strings.Count(rec.putDescription, testExecdToken); got != 1 {
+		t.Errorf("hookscript PUT description has %d token occurrences, want exactly 1: %q", got, rec.putDescription)
+	}
+
+	rec.mu.Lock()
+	configCalls := rec.configCalls
+	rec.mu.Unlock()
+	if configCalls != 2 {
+		t.Errorf("config GET calls = %d, want 2 (env lookup + hookscript lookup)", configCalls)
+	}
+
+	client.execTokenMu.Lock()
+	cached := client.execToken
+	client.execTokenMu.Unlock()
+	if cached != testExecdToken {
+		t.Errorf("cached exec token = %q, want the injected token", cached)
+	}
+}
+
+// TestExecdTokenViaHookscriptErrorSanitized pins that a failing
+// description+hookscript PUT surfaces only a fixed message plus the HTTP
+// status: the mock server deliberately echoes the submitted description
+// (which carries the token) in the error body, so any body reflection would
+// leak the token into the returned error.
+func TestExecdTokenViaHookscriptErrorSanitized(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+
+	srv, rec := newStartInstanceTestServerWithHookStatus(t, "", http.StatusBadRequest, http.StatusInternalServerError)
+	client := newStartTestClient(t, srv)
+
+	_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+	if err == nil {
+		t.Fatal("StartInstance() error = nil, want hookscript injection failure")
+	}
+	if !strings.Contains(err.Error(), "set container execd token via hookscript") {
+		t.Errorf("StartInstance() error = %q, want hookscript fallback wrap", err)
+	}
+	if !strings.Contains(err.Error(), "update container config failed (HTTP 500)") {
+		t.Errorf("StartInstance() error = %q, want sanitized failure status", err)
+	}
+	if strings.Contains(err.Error(), testExecdToken) {
+		t.Errorf("StartInstance() error leaks the injected token: %v", err)
+	}
+	if strings.Contains(err.Error(), "template description") {
+		t.Errorf("StartInstance() error echoes the PVE response body: %v", err)
+	}
+	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
+		t.Fatalf("clone deletion not requested after hookscript injection failure; requests: %v", rec.reqs)
+	}
+	if idxStart := rec.index("POST /api2/json/nodes/test-node/lxc/200/status/start"); idxStart >= 0 {
+		t.Fatalf("start requested despite hookscript injection failure; requests: %v", rec.reqs)
+	}
+}
+
+// TestExecdTokenViaHookscriptConfigRejected covers the un-staged-hook failure
+// mode: a 400 from the fallback PUT must explain that the snippet volume must
+// be staged on a storage with Snippets content enabled, without exposing the
+// token.
+func TestExecdTokenViaHookscriptConfigRejected(t *testing.T) {
+	t.Setenv("PVE_EXECD_TOKEN_FILE", writeExecdTokenFile(t, testExecdToken))
+
+	srv, rec := newStartInstanceTestServerWithHookStatus(t, "", http.StatusBadRequest, http.StatusBadRequest)
+	client := newStartTestClient(t, srv)
+
+	_, err := client.StartInstance(context.Background(), StartOptions{SnapshotID: defaultSnapshotID})
+	if err == nil {
+		t.Fatal("StartInstance() error = nil, want hookscript 400 failure")
+	}
+	for _, want := range []string{
+		"set container execd token via hookscript",
+		"update container config failed",
+		"HTTP 400",
+		"Snippets",
+		defaultHookscriptVolume,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("StartInstance() error = %q, want substring %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), testExecdToken) {
+		t.Errorf("StartInstance() error leaks the injected token: %v", err)
+	}
+	if idxDelete := rec.index("DELETE /api2/json/nodes/test-node/lxc/200"); idxDelete < 0 {
+		t.Fatalf("clone deletion not requested after hookscript 400; requests: %v", rec.reqs)
 	}
 }
 
