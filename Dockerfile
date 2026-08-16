@@ -365,6 +365,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 COPY configs/ide-deps.json ./configs/ide-deps.json
 COPY scripts/bump-ide-deps.ts ./scripts/bump-ide-deps.ts
 COPY scripts/apply-ide-deps-package-overrides.ts ./scripts/apply-ide-deps-package-overrides.ts
+COPY scripts/print-ide-deps-package-installs.ts ./scripts/print-ide-deps-package-installs.ts
 COPY scripts/lib ./scripts/lib
 COPY scripts/snapshot.py ./scripts/snapshot.py
 COPY Dockerfile ./Dockerfile
@@ -377,6 +378,7 @@ RUN if [ -n "${IDE_DEPS_PACKAGE_OVERRIDES:-}" ]; then \
     else \
       echo "No IDE_DEPS_PACKAGE_OVERRIDES provided; skipping."; \
     fi
+RUN bun run ./scripts/print-ide-deps-package-installs.ts > /cmux/configs/ide-deps-installs.txt
 
 RUN mkdir -p /builtins && \
   echo '{"name":"builtins","type":"module","version":"1.0.0"}' > /builtins/package.json
@@ -880,38 +882,24 @@ RUN curl -fsSL https://bun.sh/install | bash && \
 ENV PATH="/usr/local/bin:$PATH"
 ENV BUN_INSTALL_CACHE_DIR=/cmux/node_modules/.bun
 
-# Global CLIs are sourced from configs/ide-deps.json.
+# Global CLIs are sourced from configs/ide-deps.json. The builder writes
+# installer|name|spec lines so Claude Code uses npm (bun fails extracting 2.1.89).
 COPY --from=builder /cmux/configs/ide-deps.json /tmp/ide-deps.json
+COPY --from=builder /cmux/configs/ide-deps-installs.txt /tmp/ide-deps-installs.txt
 RUN --mount=type=cache,target=/root/.bun/install/cache <<'EOF'
 set -eux
-packages="$(node - <<'NODE'
-const fs = require("node:fs");
-const deps = JSON.parse(fs.readFileSync("/tmp/ide-deps.json", "utf8"));
-const entries = Object.entries(deps.packages ?? {});
-for (const [name, value] of entries) {
-  if (typeof name !== "string" || typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Invalid package entry ${name}: ${value}`);
-  }
-  const trimmedValue = value.trim();
-  const installMode = /^https?:\/\//.test(trimmedValue) ? "remote" : "version";
-  process.stdout.write(`${name}|${installMode}|${trimmedValue}\n`);
-}
-NODE
-)"
-if [ -z "${packages}" ]; then
-  echo "No packages found in /tmp/ide-deps.json" >&2
+if [ ! -s /tmp/ide-deps-installs.txt ]; then
+  echo "No packages found in /tmp/ide-deps-installs.txt" >&2
   exit 1
 fi
-while IFS='|' read -r package_name install_mode install_value; do
+while IFS='|' read -r installer package_name install_spec; do
   [ -z "${package_name}" ] && continue
-  if [ "${install_mode}" = "remote" ]; then
-    npm install -g "${install_value}"
+  if [ "${installer}" = "npm" ]; then
+    npm install -g "${install_spec}"
   else
-    bun add -g "${package_name}@${install_value}"
+    bun add -g "${install_spec}"
   fi
-done <<EOF_PACKAGES
-${packages}
-EOF_PACKAGES
+done < /tmp/ide-deps-installs.txt
 EOF
 
 # Install cursor cli

@@ -55,6 +55,7 @@ from snapshot import (
     HttpExecClient,
     run_task_graph,
     format_dependency_graph,
+    select_global_package_installer,
 )
 
 # ---------------------------------------------------------------------------
@@ -1680,11 +1681,12 @@ async def task_install_global_cli(ctx: TaskContext) -> None:
 
     for index, (name, spec, install_spec) in enumerate(package_specs, 1):
         is_remote = is_remote_package_source(spec)
+        installer = select_global_package_installer(name, spec)
         task_label = format_package_task_label(name)
         quoted_install_spec = shlex.quote(install_spec)
         install_cmd = (
             f"npm install -g {quoted_install_spec}"
-            if is_remote
+            if installer == "npm"
             else f"bun add -g {quoted_install_spec}"
         )
         install_label = spec if is_remote else install_spec

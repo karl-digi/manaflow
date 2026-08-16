@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyPackageOverrides,
+  formatGlobalPackageInstallLines,
   formatPackageInstallSpec,
   isRemotePackageSource,
   parsePackageOverrides,
+  selectGlobalPackageInstaller,
   type IdeDeps,
 } from "./ideDeps";
 
@@ -54,5 +56,44 @@ describe("ideDeps package overrides", () => {
         "https://example.com/releases/download/pkg.tgz",
       ),
     ).toBe("https://example.com/releases/download/pkg.tgz");
+  });
+});
+
+describe("global package installer selection", () => {
+  it("uses npm for Claude Code versions because bun fails extracting the 2.1.89 tarball", () => {
+    expect(selectGlobalPackageInstaller("@anthropic-ai/claude-code", "2.1.89")).toBe(
+      "npm",
+    );
+  });
+
+  it("uses npm for remote tarball URLs and bun for other versioned packages", () => {
+    expect(
+      selectGlobalPackageInstaller(
+        "@openai/codex",
+        "https://example.com/releases/download/codex.tgz",
+      ),
+    ).toBe("npm");
+    expect(selectGlobalPackageInstaller("@openai/codex", "0.147.0")).toBe("bun");
+    expect(selectGlobalPackageInstaller("@sourcegraph/amp", "0.0.1")).toBe("bun");
+  });
+
+  it("formats installer|name|spec lines for the Docker/snapshot install loop", () => {
+    const deps: IdeDeps = {
+      extensions: [],
+      packages: {
+        "@openai/codex": "0.147.0",
+        "@anthropic-ai/claude-code": "2.1.89",
+        "@sourcegraph/amp": "https://example.com/amp.tgz",
+      },
+    };
+
+    expect(formatGlobalPackageInstallLines(deps)).toBe(
+      [
+        "bun|@openai/codex|@openai/codex@0.147.0",
+        "npm|@anthropic-ai/claude-code|@anthropic-ai/claude-code@2.1.89",
+        "npm|@sourcegraph/amp|https://example.com/amp.tgz",
+        "",
+      ].join("\n"),
+    );
   });
 });

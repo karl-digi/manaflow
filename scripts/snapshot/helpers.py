@@ -25,6 +25,17 @@ def is_remote_package_source(spec: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
+# bun add -g fails extracting @anthropic-ai/claude-code@2.1.89 on linux/amd64.
+# Keep this list in sync with scripts/lib/ideDeps.ts:NPM_GLOBAL_INSTALL_PACKAGES.
+NPM_GLOBAL_INSTALL_PACKAGES = frozenset({"@anthropic-ai/claude-code"})
+
+
+def select_global_package_installer(package_name: str, spec: str) -> str:
+    if is_remote_package_source(spec) or package_name in NPM_GLOBAL_INSTALL_PACKAGES:
+        return "npm"
+    return "bun"
+
+
 def maybe_apply_ide_package_overrides(repo_root: Path, console: Console) -> None:
     raw_overrides = os.environ.get("IDE_DEPS_PACKAGE_OVERRIDES", "").strip()
     if not raw_overrides:
