@@ -45,6 +45,7 @@
     "prepare": "git config core.hooksPath .githooks || true",
     "clean": "bash scripts/clean.sh",
     "clean:node_modules": "bash scripts/clean.sh",
+    "clean:fresh": "bash scripts/clean.sh --fresh",
     "check": "bun scripts/check.ts",
     "lint": "eslint .",
     "test": "bun run scripts/test.ts",
