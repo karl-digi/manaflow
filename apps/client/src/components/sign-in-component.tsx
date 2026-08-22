@@ -1,7 +1,6 @@
 "use client";
 
-import { isElectron } from "@/lib/electron";
-import { getElectronBridge } from "@/lib/electron";
+import { isElectron, getElectronBridge } from "@/lib/electron";
 import { env } from "@/client-env";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { SignIn, useUser } from "@stackframe/react";
@@ -37,7 +36,9 @@ function resolveDeeplinkScheme(status: ProtocolStatus | null): string {
 export function SignInComponent() {
   const user = useUser({ or: "return-null" });
   const showSignIn = !user;
-  const [state, setState] = useState<SignInState>({ kind: "idle" });
+  const [state, setState] = useState<SignInState>(() =>
+    isElectron && import.meta.env.DEV ? { kind: "embedded" } : { kind: "idle" }
+  );
   const [protocolStatus, setProtocolStatus] = useState<ProtocolStatus | null>(
     null
   );

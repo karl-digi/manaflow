@@ -20,6 +20,12 @@ export type AuthNavDecision =
 export type ClassifyMainWindowNavigationOptions = {
   /** Origins considered the cmux SPA (e.g. http://localhost:5173, https://cmux.local) */
   spaOrigins: readonly string[];
+  /**
+   * When false (electron-vite dev / browser history), leave path-style
+   * /handler/* callbacks alone so Stack Auth can exchange the OAuth code.
+   * Default true for packaged hash-router builds.
+   */
+  hashRouter?: boolean;
 };
 
 const OAUTH_HOST_SUFFIXES = [
@@ -72,10 +78,10 @@ export function isOAuthProviderUrl(rawUrl: string): boolean {
 /**
  * Convert path-style Stack handler URLs to hash-router form.
  * http://localhost:5173/handler/oauth-callback?x=1
- *   → http://localhost:5173/#/handler/oauth-callback?x=1
+ *   → http://localhost:5173/?x=1#/handler/oauth-callback
  *
- * Query string is kept on the hash path so TanStack hash history + StackHandler
- * receive the OAuth code (location.pathname + location.search).
+ * Hash history needs the handler path in the hash. Stack's callOAuthCallback
+ * reads window.location.search (not the hash), so OAuth query stays on search.
  *
  * Returns null when no rewrite is needed.
  */
@@ -87,30 +93,35 @@ export function rewriteHandlerPathToHash(rawUrl: string): string | null {
     return null;
   }
 
-  // Already hash-routed (optionally normalize query-on-search → query-in-hash)
-  if (url.hash.startsWith("#/handler")) {
-    // e.g. http://host/#/handler/x with ?code= on the outer search is unusual;
-    // leave as-is if already hash-only.
-    if (!url.search) {
-      return null;
-    }
-    // Rare: path empty, search on origin, hash has path — merge search into hash
-    const hashBody = url.hash.slice(1); // drop leading #
-    if (hashBody.includes("?")) {
-      return null;
-    }
-    const rewritten = new URL(url.origin);
-    rewritten.hash = `${hashBody}${url.search}`;
-    return rewritten.toString();
-  }
-
-  if (!url.pathname.startsWith("/handler")) {
+  const hashBody = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+  const hashQueryIndex = hashBody.indexOf("?");
+  const hashPath =
+    hashQueryIndex >= 0 ? hashBody.slice(0, hashQueryIndex) : hashBody;
+  const hashSearch =
+    hashQueryIndex >= 0 ? hashBody.slice(hashQueryIndex + 1) : "";
+  const hashIsHandler = hashPath.startsWith("/handler");
+  const pathIsHandler = url.pathname.startsWith("/handler");
+  if (!hashIsHandler && !pathIsHandler) {
     return null;
   }
 
+  const handlerPath = pathIsHandler ? url.pathname : hashPath;
+  const merged = new URLSearchParams(url.search);
+  const hashParams = new URLSearchParams(hashSearch);
+  for (const [key, value] of hashParams.entries()) {
+    if (!merged.has(key)) {
+      merged.set(key, value);
+    }
+  }
+
   const rewritten = new URL(url.origin);
-  // URL.hash setter prefixes "#"; pathname already starts with "/"
-  rewritten.hash = `${url.pathname}${url.search}`;
+  rewritten.pathname = pathIsHandler ? "/" : url.pathname;
+  rewritten.search = merged.toString();
+  rewritten.hash = handlerPath;
+
+  if (rewritten.toString() === url.toString()) {
+    return null;
+  }
   return rewritten.toString();
 }
 
@@ -120,7 +131,8 @@ export function rewriteHandlerPathToHash(rawUrl: string): string | null {
  */
 function classifySpaNavigation(
   rawUrl: string,
-  spaOrigins: readonly string[]
+  spaOrigins: readonly string[],
+  hashRouter: boolean
 ): AuthNavDecision | null {
   let url: URL;
   try {
@@ -135,6 +147,10 @@ function classifySpaNavigation(
 
   if (!isSpaOrigin(rawUrl, spaOrigins)) {
     return null;
+  }
+
+  if (!hashRouter) {
+    return { action: "allow" };
   }
 
   const rewritten = rewriteHandlerPathToHash(rawUrl);
@@ -152,7 +168,11 @@ export function classifyMainWindowNavigation(
   rawUrl: string,
   options: ClassifyMainWindowNavigationOptions
 ): AuthNavDecision {
-  const spaDecision = classifySpaNavigation(rawUrl, options.spaOrigins);
+  const spaDecision = classifySpaNavigation(
+    rawUrl,
+    options.spaOrigins,
+    options.hashRouter ?? true
+  );
   if (spaDecision) {
     return spaDecision;
   }
@@ -172,7 +192,11 @@ export function classifyAuthWindowNavigation(
   rawUrl: string,
   options: ClassifyMainWindowNavigationOptions
 ): AuthNavDecision {
-  const spaDecision = classifySpaNavigation(rawUrl, options.spaOrigins);
+  const spaDecision = classifySpaNavigation(
+    rawUrl,
+    options.spaOrigins,
+    options.hashRouter ?? true
+  );
   if (spaDecision) {
     return spaDecision;
   }

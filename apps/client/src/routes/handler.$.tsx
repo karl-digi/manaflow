@@ -1,6 +1,8 @@
 import { stackClientApp } from "@/lib/stack";
+import { liftOAuthQueryToWindowSearch } from "@/lib/stack-handler-location";
 import { StackHandler } from "@stackframe/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { useLayoutEffect } from "react";
 
 export const Route = createFileRoute("/handler/$")({
   component: HandlerComponent,
@@ -8,11 +10,12 @@ export const Route = createFileRoute("/handler/$")({
 
 function HandlerComponent() {
   const location = useLocation();
-  // Hash history: OAuth query lands on location.search (or sometimes in the
-  // hash fragment). Stack needs path + query to exchange the code.
-  const handlerLocation = `${location.pathname}${location.search}`;
+  // StackHandler matches pathname only; callOAuthCallback reads window.location.search.
+  useLayoutEffect(() => {
+    liftOAuthQueryToWindowSearch(location.searchStr);
+  }, [location.searchStr]);
 
   return (
-    <StackHandler app={stackClientApp} location={handlerLocation} fullPage />
+    <StackHandler app={stackClientApp} location={location.pathname} fullPage />
   );
 }

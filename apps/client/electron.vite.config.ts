@@ -177,5 +177,10 @@ export default defineConfig({
       SentryVitePlugin,
     ],
     envPrefix: "NEXT_PUBLIC_",
+    server: {
+      port: 5173,
+      strictPort: true,
+      allowedHosts: true,
+    },
   },
 });

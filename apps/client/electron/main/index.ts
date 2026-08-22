@@ -1171,6 +1171,14 @@ function getSpaOrigins(): string[] {
   });
 }
 
+function getAuthNavOptions() {
+  return {
+    spaOrigins: getSpaOrigins(),
+    // electron-vite dev uses Vite browser history; packaged builds use hash.
+    hashRouter: !is.dev,
+  };
+}
+
 function getMainWindowSpaHomeUrl(): string {
   if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
     return process.env["ELECTRON_RENDERER_URL"];
@@ -1233,7 +1241,8 @@ function openAuthWindow(startUrl: string): void {
     return;
   }
 
-  const spaOrigins = getSpaOrigins();
+  const authNavOptions = getAuthNavOptions();
+  const { spaOrigins } = authNavOptions;
   authWindow = new BrowserWindow({
     width: 520,
     height: 720,
@@ -1274,9 +1283,9 @@ function openAuthWindow(startUrl: string): void {
   const tryHandoffFromAuthUrl = (
     url: string,
     source: string,
-    event?: Electron.Event
+    event?: Electron.Event,
+    decision = classifyAuthWindowNavigation(url, authNavOptions)
   ): boolean => {
-    const decision = classifyAuthWindowNavigation(url, { spaOrigins });
     const handoffUrl = resolveAuthCallbackHandoff(url, decision);
     if (!handoffUrl) {
       return false;
@@ -1296,10 +1305,10 @@ function openAuthWindow(startUrl: string): void {
     if (isMainFrame === false) {
       return;
     }
-    const decision = classifyAuthWindowNavigation(url, { spaOrigins });
+    const decision = classifyAuthWindowNavigation(url, authNavOptions);
     mainLog("[auth-nav] auth will-navigate", { url, decision: decision.action });
 
-    if (tryHandoffFromAuthUrl(url, "will-navigate", event)) {
+    if (tryHandoffFromAuthUrl(url, "will-navigate", event, decision)) {
       return;
     }
 
@@ -1358,7 +1367,7 @@ function openAuthWindow(startUrl: string): void {
 
   win.webContents.setWindowOpenHandler((details) => {
     const targetUrl = normalizeBrowserUrl(details.url);
-    const decision = classifyAuthWindowNavigation(targetUrl, { spaOrigins });
+    const decision = classifyAuthWindowNavigation(targetUrl, authNavOptions);
     const handoffUrl = resolveAuthCallbackHandoff(targetUrl, decision);
     if (handoffUrl) {
       void loadMainWindowAuthCallback(handoffUrl);
@@ -1401,7 +1410,7 @@ async function loadMainWindowAuthCallback(url: string): Promise<void> {
 }
 
 function attachMainWindowAuthNavigationGuards(window: BrowserWindow): void {
-  const spaOrigins = getSpaOrigins();
+  const authNavOptions = getAuthNavOptions();
   const contents = window.webContents;
 
   const onNavigate = (
@@ -1412,7 +1421,7 @@ function attachMainWindowAuthNavigationGuards(window: BrowserWindow): void {
     if (isMainFrame === false) {
       return;
     }
-    const decision = classifyMainWindowNavigation(url, { spaOrigins });
+    const decision = classifyMainWindowNavigation(url, authNavOptions);
     if (decision.action === "allow") {
       return;
     }
@@ -1527,8 +1536,9 @@ function createWindow(): void {
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     const targetUrl = normalizeBrowserUrl(details.url);
-    const spaOrigins = getSpaOrigins();
-    const decision = classifyMainWindowNavigation(targetUrl, { spaOrigins });
+    const authNavOptions = getAuthNavOptions();
+    const { spaOrigins } = authNavOptions;
+    const decision = classifyMainWindowNavigation(targetUrl, authNavOptions);
     // Always deny popups: SPA stays in main, OAuth uses auth window, else external.
     if (decision.action === "allow" && isSpaOrigin(targetUrl, spaOrigins)) {
       void mainWindow?.loadURL(targetUrl);

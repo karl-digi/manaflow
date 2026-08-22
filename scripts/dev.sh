@@ -683,10 +683,14 @@ else
 fi
 
 # Start the frontend
-echo -e "${GREEN}Starting frontend on port 5173...${NC}"
-(cd "$APP_DIR/apps/client" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev --host 0.0.0.0 2>&1 | tee "$LOG_DIR/client.log" | prefix_output "CLIENT" "$CYAN"') </dev/null &
-CLIENT_PID=$!
-check_process $CLIENT_PID "Frontend Client"
+if [ "$RUN_ELECTRON" = "true" ]; then
+    echo -e "${GREEN}Skipping standalone Vite; electron-vite serves the renderer on port 5173...${NC}"
+else
+    echo -e "${GREEN}Starting frontend on port 5173...${NC}"
+    (cd "$APP_DIR/apps/client" && exec bash -c 'trap "pkill -9 -P $$ 2>/dev/null || true" EXIT; bun run dev --host 0.0.0.0 2>&1 | tee "$LOG_DIR/client.log" | prefix_output "CLIENT" "$CYAN"') </dev/null &
+    CLIENT_PID=$!
+    check_process $CLIENT_PID "Frontend Client"
+fi
 
 # Start the www app. Webpack avoids Next's Turbopack package-root resolution
 # failure when this repository is running from a linked worktree.

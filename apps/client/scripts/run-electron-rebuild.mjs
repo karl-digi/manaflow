@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
+
+const require = createRequire(import.meta.url);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -29,6 +32,53 @@ if (!version) {
   console.error(`Unable to determine Electron version from range: ${versionRange}`);
   process.exit(1);
 }
+
+function electronBinaryPath(electronRoot) {
+  if (process.platform === "darwin") {
+    return resolve(
+      electronRoot,
+      "dist/Electron.app/Contents/MacOS/Electron"
+    );
+  }
+  if (process.platform === "win32") {
+    return resolve(electronRoot, "dist/electron.exe");
+  }
+  return resolve(electronRoot, "dist/electron");
+}
+
+function ensureElectronBinary() {
+  let electronRoot;
+  try {
+    electronRoot = dirname(require.resolve("electron/package.json"));
+  } catch {
+    console.error("electron package is not installed");
+    process.exit(1);
+  }
+
+  const binary = electronBinaryPath(electronRoot);
+  if (existsSync(binary)) {
+    return;
+  }
+
+  console.log(
+    `Electron binary missing at ${binary}; downloading via electron/install.js ...`
+  );
+  const installEnv = { ...process.env };
+  delete installEnv.ELECTRON_SKIP_BINARY_DOWNLOAD;
+  const result = spawnSync(process.execPath, ["install.js"], {
+    cwd: electronRoot,
+    stdio: "inherit",
+    env: installEnv,
+  });
+  if (result.status !== 0 || !existsSync(binary)) {
+    console.error(
+      "Failed to download the Electron binary. Retry `bun run rebuild:electron`."
+    );
+    process.exit(result.status ?? 1);
+  }
+}
+
+ensureElectronBinary();
 
 // On macOS, if the Xcode license hasn't been accepted, invoking clang/cc will
 // print a license notice instead of a version string, which breaks node-gyp's

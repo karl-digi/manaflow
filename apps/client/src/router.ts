@@ -14,9 +14,9 @@ function createRouter() {
         auth: undefined!,
       },
       scrollRestoration: true,
-      // When running under Electron, use hash-based history so
-      // file:// URLs don't break route matching in production builds.
-      history: isElectron ? createHashHistory() : undefined,
+      // Packaged Electron uses hash history; electron-vite dev uses browser history.
+      history:
+        isElectron && import.meta.env.PROD ? createHashHistory() : undefined,
     }),
     queryClient
   );

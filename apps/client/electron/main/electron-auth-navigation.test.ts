@@ -12,30 +12,30 @@ import {
 const SPA = ["http://localhost:5173", "https://cmux.local"] as const;
 
 describe("rewriteHandlerPathToHash", () => {
-  it("rewrites path-style Stack handler to hash router form", () => {
+  it("rewrites path-style Stack handler to hash path with query on search", () => {
     expect(
       rewriteHandlerPathToHash(
         "http://localhost:5173/handler/oauth-callback?code=abc&state=xyz"
       )
     ).toBe(
-      "http://localhost:5173/#/handler/oauth-callback?code=abc&state=xyz"
+      "http://localhost:5173/?code=abc&state=xyz#/handler/oauth-callback"
     );
   });
 
-  it("returns null when already hash-routed with query in hash", () => {
+  it("lifts query out of an already hash-routed callback", () => {
     expect(
       rewriteHandlerPathToHash(
         "http://localhost:5173/#/handler/oauth-callback?code=1"
       )
-    ).toBeNull();
+    ).toBe("http://localhost:5173/?code=1#/handler/oauth-callback");
   });
 
-  it("merges outer search into hash when hash path lacks query", () => {
+  it("returns null when query is already on search and path is in hash", () => {
     expect(
       rewriteHandlerPathToHash(
         "http://localhost:5173/?code=1#/handler/oauth-callback"
       )
-    ).toBe("http://localhost:5173/#/handler/oauth-callback?code=1");
+    ).toBeNull();
   });
 
   it("returns null for non-handler SPA paths", () => {
@@ -81,8 +81,17 @@ describe("classifyMainWindowNavigation", () => {
       )
     ).toEqual({
       action: "rewrite-hash",
-      url: "http://localhost:5173/#/handler/oauth-callback?code=1",
+      url: "http://localhost:5173/?code=1#/handler/oauth-callback",
     });
+  });
+
+  it("leaves path-style handler callbacks alone without a hash router", () => {
+    expect(
+      classifyMainWindowNavigation(
+        "http://localhost:5173/handler/oauth-callback?code=1",
+        { spaOrigins: SPA, hashRouter: false }
+      )
+    ).toEqual({ action: "allow" });
   });
 
   it("routes OAuth hosts to auth-window", () => {
@@ -144,8 +153,17 @@ describe("classifyAuthWindowNavigation", () => {
       )
     ).toEqual({
       action: "rewrite-hash",
-      url: "http://localhost:5173/#/handler/oauth-callback?code=z",
+      url: "http://localhost:5173/?code=z#/handler/oauth-callback",
     });
+  });
+
+  it("hands off path-style callbacks without rewriting when hashRouter is false", () => {
+    expect(
+      classifyAuthWindowNavigation(
+        "http://localhost:5173/handler/oauth-callback?code=z",
+        { spaOrigins: SPA, hashRouter: false }
+      )
+    ).toEqual({ action: "allow" });
   });
 });
 
