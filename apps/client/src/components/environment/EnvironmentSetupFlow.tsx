@@ -28,6 +28,7 @@ import {
   postApiSandboxesByIdEnvMutation,
   postApiSandboxesByIdRunScriptsMutation,
 } from "@cmux/www-openapi-client/react-query";
+import { getApiIntegrationsGithubFrameworkDetection } from "@cmux/www-openapi-client";
 import {
   resolveBrowserPreviewUrl,
   resolveBrowserPreviewWebsocketUrl,
@@ -173,17 +174,16 @@ export function EnvironmentSetupFlow({
       try {
         // Use the first repo for framework detection
         const repo = selectedRepos[0];
-        const response = await fetch(
-          `/api/integrations/github/framework-detection?repo=${encodeURIComponent(repo)}`
-        );
-        if (!response.ok) {
-          console.error("Framework detection failed:", response.statusText);
+        const { data, error, response } = await getApiIntegrationsGithubFrameworkDetection({
+          query: { repo },
+        });
+        if (error || !data) {
+          console.error(
+            "Framework detection failed:",
+            error ?? response.statusText,
+          );
           return;
         }
-        const data = (await response.json()) as {
-          maintenanceScript: string;
-          devScript: string;
-        };
 
         // Only update scripts if user hasn't edited them yet
         if (!hasUserEditedScriptsRef.current) {

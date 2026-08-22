@@ -9,6 +9,13 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import crypto from "node:crypto";
 import { formatExecCommandForLog } from "./exec-command-log";
+import {
+  DEFAULT_HOOKSCRIPT_VOLUME,
+  generateExecdAuthToken,
+  parseExecdAuthTokenFromConfig,
+  upsertDescriptionToken,
+  upsertRuntimeEnv,
+} from "./execd-auth";
 
 /**
  * Configuration for PveLxcClient.
@@ -22,6 +29,12 @@ export interface PveLxcClientConfig {
   verifyTls?: boolean;
   /** Resolve a snapshot ID to a template VMID. If not provided, templateVmid must be specified in StartContainerOptions. */
   snapshotResolver?: (snapshotId: string) => Promise<{ templateVmid: number }> | { templateVmid: number };
+  /**
+   * PVE volume spec for the pre-start hookscript that carries the execd token
+   * into the generated LXC config on hosts without the env config option
+   * (PVE < 9.1). Must already be set on the template; clones inherit it.
+   */
+  hookscriptVolume?: string;
 }
 
 /**
@@ -245,7 +258,17 @@ interface PveContainerStatus {
 interface PveContainerConfig {
   net0?: string; // Format: name=eth0,bridge=vmbr0,ip=10.100.0.X/24,gw=10.100.0.1
   hostname?: string;
+  env?: string;
+  description?: string;
+  hookscript?: string;
   [key: string]: string | number | undefined;
+}
+
+class ExecdUnauthorizedError extends Error {
+  constructor() {
+    super("execd returned 401 Unauthorized");
+    this.name = "ExecdUnauthorizedError";
+  }
 }
 
 /**
@@ -275,12 +298,15 @@ export class PveLxcClient {
   private httpsAgent: Agent;
   /** Optional snapshot resolver for resolving snapshot IDs to template VMIDs */
   private snapshotResolver?: (snapshotId: string) => Promise<{ templateVmid: number }> | { templateVmid: number };
+  /** Template-inherited hookscript volume used for PVE 8 execd token injection. */
+  private hookscriptVolume: string;
 
   // In-memory store for HTTP service URLs (computed from VMID, not persisted)
   // Note: Instance metadata (teamId, userId, etc.) is now tracked in Convex
   // via sandboxInstanceActivity table, not stored here.
   private instanceServices: Map<number, HttpService[]> = new Map();
   private instanceHostnames: Map<number, string> = new Map();
+  private instanceExecTokens: Map<number, string> = new Map();
 
   constructor(config: PveLxcClientConfig) {
     this.apiUrl = config.apiUrl.replace(/\/$/, "");
@@ -288,6 +314,10 @@ export class PveLxcClient {
     this.node = config.node || null; // Will be auto-detected if not provided
     this.publicDomain = config.publicDomain || null;
     this.snapshotResolver = config.snapshotResolver;
+    this.hookscriptVolume =
+      config.hookscriptVolume ||
+      process.env.PVE_HOOKSCRIPT_VOLUME ||
+      DEFAULT_HOOKSCRIPT_VOLUME;
     // PVE often uses self-signed certificates, so we need a custom agent
     // We use undici's fetch directly to ensure the dispatcher option works
     this.httpsAgent = new Agent({
@@ -545,6 +575,131 @@ export class PveLxcClient {
   }
 
   /**
+   * Raw PVE API request that returns HTTP status without throwing on 4xx.
+   * Does not log the response body so token-bearing config updates stay redacted.
+   */
+  private async apiRequestRaw(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<{ status: number }> {
+    let url = `${this.apiUrl}${path}`;
+    const headers: Record<string, string> = {
+      Authorization: `PVEAPIToken=${this.apiToken}`,
+    };
+
+    let requestBody: string | undefined;
+    if (body) {
+      const encoded = new URLSearchParams(
+        Object.entries(body).map(([k, v]) => [k, String(v)]),
+      ).toString();
+
+      if (method === "GET" || method === "DELETE") {
+        url += (path.includes("?") ? "&" : "?") + encoded;
+      } else {
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
+        requestBody = encoded;
+      }
+    }
+
+    const response = await undiciFetch(url, {
+      method,
+      headers,
+      body: requestBody,
+      dispatcher: this.httpsAgent,
+    });
+    return { status: response.status };
+  }
+
+  private async getContainerConfig(vmid: number): Promise<PveContainerConfig> {
+    const node = await this.getNode();
+    return this.apiRequest<PveContainerConfig>(
+      "GET",
+      `/api2/json/nodes/${node}/lxc/${vmid}/config`,
+    );
+  }
+
+  private cacheExecdAuthToken(vmid: number, token: string): void {
+    this.instanceExecTokens.set(vmid, token);
+  }
+
+  private async getExecdAuthToken(vmid: number): Promise<string> {
+    const cached = this.instanceExecTokens.get(vmid);
+    if (cached) {
+      return cached;
+    }
+
+    const config = await this.getContainerConfig(vmid);
+    const fromConfig = parseExecdAuthTokenFromConfig({
+      env: typeof config.env === "string" ? config.env : undefined,
+      description:
+        typeof config.description === "string" ? config.description : undefined,
+    });
+    if (fromConfig) {
+      this.cacheExecdAuthToken(vmid, fromConfig);
+      return fromConfig;
+    }
+    return "";
+  }
+
+  /**
+   * Inject a disposable execd token before first boot. Tries the PVE 9.1+ env
+   * config option, then the PVE 8 description + inherited hookscript fallback.
+   */
+  private async injectExecdAuthToken(vmid: number): Promise<void> {
+    const token = generateExecdAuthToken();
+    const node = await this.getNode();
+    const config = await this.getContainerConfig(vmid);
+    const envStatus = await this.apiRequestRaw(
+      "PUT",
+      `/api2/json/nodes/${node}/lxc/${vmid}/config`,
+      { env: upsertRuntimeEnv(typeof config.env === "string" ? config.env : "", token) },
+    );
+
+    if (envStatus.status >= 200 && envStatus.status < 300) {
+      this.cacheExecdAuthToken(vmid, token);
+      console.log(
+        `[PveLxcClient] Injected execd auth token for container ${vmid} via runtime env`,
+      );
+      return;
+    }
+
+    if (envStatus.status !== 400) {
+      throw new Error(
+        `update container runtime env failed (HTTP ${envStatus.status})`,
+      );
+    }
+
+    const hookscript =
+      typeof config.hookscript === "string" ? config.hookscript : "";
+    if (hookscript !== this.hookscriptVolume) {
+      throw new Error(
+        `clone ${vmid} did not inherit hookscript ${this.hookscriptVolume} from its template; the clone's hookscript can only be changed by root@pam, so it must be pre-set on the base template (see scripts/pve/README.md for staging)`,
+      );
+    }
+
+    const descriptionStatus = await this.apiRequestRaw(
+      "PUT",
+      `/api2/json/nodes/${node}/lxc/${vmid}/config`,
+      {
+        description: upsertDescriptionToken(
+          typeof config.description === "string" ? config.description : "",
+          token,
+        ),
+      },
+    );
+    if (descriptionStatus.status < 200 || descriptionStatus.status >= 300) {
+      throw new Error(
+        `update container config failed (HTTP ${descriptionStatus.status})`,
+      );
+    }
+    this.cacheExecdAuthToken(vmid, token);
+    console.log(
+      `[PveLxcClient] Injected execd auth token for container ${vmid} via hookscript description`,
+    );
+  }
+
+  /**
    * Wait for a PVE task to complete
    */
   private async waitForTask(
@@ -665,7 +820,8 @@ export class PveLxcClient {
   private async httpExec(
     host: string,
     command: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    token?: string,
   ): Promise<ExecResult | null> {
     // Support both full URLs (http/https) and bare hosts
     let execUrl: string;
@@ -689,16 +845,28 @@ export class PveLxcClient {
     });
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
       const response = await undiciFetch(execUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body,
         signal: AbortSignal.timeout(effectiveTimeoutMs + 30000),
       });
 
+      if (response.status === 401) {
+        throw new ExecdUnauthorizedError();
+      }
+
       if (!response.ok) {
+        console.error(
+          `[PveLxcClient] HTTP exec ${response.status} for ${host}`,
+        );
         return null;
       }
 
@@ -745,6 +913,9 @@ export class PveLxcClient {
         stderr: stderr.trimEnd(),
       };
     } catch (error) {
+      if (error instanceof ExecdUnauthorizedError) {
+        throw error;
+      }
       console.error(
         `[PveLxcClient] HTTP exec failed for ${host}:`,
         error instanceof Error ? error.message : error
@@ -808,9 +979,37 @@ export class PveLxcClient {
       );
     }
 
+    let token = await this.getExecdAuthToken(vmid);
+    let retriedUnauthorized = false;
+
     for (const host of hosts) {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        const httpResult = await this.httpExec(host, command, options?.timeoutMs);
+        let httpResult: ExecResult | null;
+        try {
+          httpResult = await this.httpExec(
+            host,
+            command,
+            options?.timeoutMs,
+            token,
+          );
+        } catch (error) {
+          if (error instanceof ExecdUnauthorizedError) {
+            if (!retriedUnauthorized) {
+              retriedUnauthorized = true;
+              this.instanceExecTokens.delete(vmid);
+              token = await this.getExecdAuthToken(vmid);
+              console.warn(
+                `[PveLxcClient] HTTP exec unauthorized for ${host}, retrying with refreshed token`,
+              );
+              attempt -= 1;
+              continue;
+            }
+            throw new Error(
+              `HTTP exec unauthorized for container ${vmid}: execd requires a Bearer token and none could be loaded from the container config`,
+            );
+          }
+          throw error;
+        }
 
         if (httpResult) {
           const commandForLog = formatExecCommandForLog(command);
@@ -1380,6 +1579,7 @@ export class PveLxcClient {
     // Note: Convex sandboxInstanceActivity is updated separately via recordStopInternal
     this.instanceServices.delete(vmid);
     this.instanceHostnames.delete(vmid);
+    this.instanceExecTokens.delete(vmid);
   }
 
   /**
@@ -1467,8 +1667,9 @@ export class PveLxcClient {
           throw cloneError;
         }
 
-        // Clone succeeded - start the container with rollback on failure
+        // Clone succeeded - inject execd token, then start with rollback on failure
         try {
+          await this.injectExecdAuthToken(newVmid);
           await this.startContainer(newVmid);
         } catch (startError) {
           // Clone succeeded but start failed - rollback by deleting the container
@@ -1630,6 +1831,14 @@ export class PveLxcClient {
         }
       }
       this.instanceHostnames.set(vmid, hostname);
+      try {
+        await this.getExecdAuthToken(vmid);
+      } catch (error) {
+        console.warn(
+          `[PveLxcClient] Failed to load execd token for ${vmid}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
 
       return new PveLxcInstance(
         this,
