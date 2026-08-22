@@ -24,6 +24,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { z } from "zod";
 
 const searchSchema = z.object({
@@ -83,6 +84,7 @@ function EnvironmentsPage() {
   const provisioningTriggeredRef = useRef(false);
   const successHandledRef = useRef(false);
   const loggedErrorRef = useRef<unknown>(null);
+  const [provisionRetryKey, setProvisionRetryKey] = useState(0);
 
   // Fetch sandbox config to normalize snapshotId to canonical form
   const { data: sandboxConfig } = useRQQuery(getApiConfigSandboxOptions());
@@ -143,6 +145,7 @@ function EnvironmentsPage() {
     activeSelectedRepos,
     activeSnapshotId,
     teamSlugOrId,
+    provisionRetryKey,
   ]);
 
   // Handle provisioning success - react to mutation data instead of using onSuccess callback
@@ -179,10 +182,21 @@ function EnvironmentsPage() {
     if (error && error !== loggedErrorRef.current) {
       loggedErrorRef.current = error;
       console.error("Failed to provision instance:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to provision instance";
+      toast.error(message);
       // Don't reset provisioningTriggeredRef here - it causes infinite retry loops
-      // when combined with effect dependencies. User must navigate away and back to retry.
+      // when combined with effect dependencies. Use Retry provisioning instead.
     }
   }, [setupInstanceMutation.error]);
+
+  const handleRetryProvisioning = useCallback(() => {
+    setupInstanceMutation.reset();
+    provisioningTriggeredRef.current = false;
+    successHandledRef.current = false;
+    loggedErrorRef.current = null;
+    setProvisionRetryKey((key) => key + 1);
+  }, [setupInstanceMutation]);
 
   useEffect(() => {
     if (activeStep !== "configure") {
@@ -295,6 +309,22 @@ function EnvironmentsPage() {
     return (
       <FloatingPane header={<TitleBar title="Environments" actions={headerActions} />}>
         <div className="flex flex-col grow select-none relative h-full overflow-hidden">
+          {setupInstanceMutation.error && !activeInstanceId ? (
+            <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+              <div className="flex items-center justify-between gap-3">
+                <span>
+                  Failed to provision the sandbox. Check execd auth and retry.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRetryProvisioning}
+                  className="shrink-0 rounded-md border border-red-300 px-2 py-1 text-xs hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900/40"
+                >
+                  Retry provisioning
+                </button>
+              </div>
+            </div>
+          ) : null}
           <EnvironmentSetupFlow
             teamSlugOrId={teamSlugOrId}
             selectedRepos={activeSelectedRepos}
