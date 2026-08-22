@@ -2,7 +2,7 @@ name: Weekly PVE LXC Snapshot
 
 on:
   schedule:
-    - cron: "0 22 * * *" # Every day 6am HKT
+    - cron: "0 22 * * 6" # Every Sunday 06:00 HKT (Saturday 22:00 UTC)
   workflow_dispatch:
 
 concurrency:
