@@ -348,11 +348,21 @@ jobs:
             force_deploy="${MANUAL_FORCE_DEPLOY}"
           fi
 
+          # Coolify GET /api/v1/deploy now returns HTTP 405
+          # ("This endpoint has changed to a POST request."). uuid/force stay
+          # query params; POST also accepts the same fields as JSON.
+          payload="$(jq -nc --arg uuid "${COOLIFY_RESOURCE_UUID}" --arg force "${force_deploy}" '{
+            uuid: $uuid,
+            force: ($force == "true")
+          }')"
+
           response="$(curl -sS -w '\n%{http_code}' \
             --connect-timeout 10 --max-time 30 \
-            -X GET \
+            -X POST \
             -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${COOLIFY_API_TOKEN}" \
+            -d "${payload}" \
             "${base_url}/api/v1/deploy?uuid=${COOLIFY_RESOURCE_UUID}&force=${force_deploy}" || true)"
 
           http_code="$(echo "${response}" | tail -n1)"
