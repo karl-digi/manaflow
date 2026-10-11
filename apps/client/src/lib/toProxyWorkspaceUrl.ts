@@ -122,6 +122,14 @@ function applyNoVncViewerDefaults(
     }
     url.searchParams.set(key, value);
   }
+
+  // noVNC opens `path` (default websockify) without forwarding tkn. Electron
+  // webviews often omit the VNC session cookie on the WebSocket upgrade, so
+  // put the token on the websockify URL when the viewer already has tkn.
+  const tkn = url.searchParams.get("tkn") || url.searchParams.get("token");
+  if (tkn && !(preserveExistingSearchParams && url.searchParams.has("path"))) {
+    url.searchParams.set("path", `websockify?tkn=${tkn}`);
+  }
 }
 
 export function toProxyWorkspaceUrl(

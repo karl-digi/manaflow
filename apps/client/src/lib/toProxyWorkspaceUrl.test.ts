@@ -57,6 +57,16 @@ describe("toVncViewerUrl", () => {
     );
   });
 
+  it("forwards tkn onto the noVNC websockify path", () => {
+    const result = toVncViewerUrl(
+      "https://vnc-201.example.com/?tkn=secret-token",
+    );
+
+    expect(result).toBe(
+      "https://vnc-201.example.com/vnc.html?tkn=secret-token&autoconnect=1&resize=scale&path=websockify%3Ftkn%3Dsecret-token",
+    );
+  });
+
   it("preserves explicit noVNC query params on an existing viewer URL", () => {
     const result = toVncViewerUrl(
       "https://vnc-201.example.com/vnc.html?autoconnect=0&resize=remote",
