@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,25 @@ func (vp *vncProxy) Close() {
 	}
 }
 
+// vncPostAuthRedirect strips tkn from the viewer URL and points noVNC's
+// websockify path at the same token so RFB auth does not depend on cookies.
+func vncPostAuthRedirect(path string, query url.Values, token string) string {
+	q := url.Values{}
+	for key, values := range query {
+		if key == "tkn" || key == "token" {
+			continue
+		}
+		q[key] = append([]string{}, values...)
+	}
+	if strings.TrimSpace(q.Get("path")) == "" && token != "" {
+		q.Set("path", "websockify?tkn="+token)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		return path + "?" + encoded
+	}
+	return path
+}
+
 func (vp *vncProxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
@@ -124,17 +144,13 @@ func (vp *vncProxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If we just validated a token, redirect to strip it from URL
+	// If we just validated a token, redirect to strip it from the document URL.
+	// noVNC then opens `path` (default /websockify) without forwarding tkn.
+	// Electron webviews often omit the vnc_session cookie on the WebSocket
+	// upgrade (Chrome cookies still work), so keep token auth on websockify.
 	if newSessionID != "" && token != "" {
-		q := r.URL.Query()
-		q.Del("tkn")
-		q.Del("token")
-		redirectURL := r.URL.Path
-		if encoded := q.Encode(); encoded != "" {
-			redirectURL += "?" + encoded
-		}
 		http.SetCookie(w, vp.sessionCookie(newSessionID))
-		http.Redirect(w, r, redirectURL, http.StatusFound)
+		http.Redirect(w, r, vncPostAuthRedirect(r.URL.Path, r.URL.Query(), token), http.StatusFound)
 		return
 	}
 
